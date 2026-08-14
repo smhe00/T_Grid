@@ -38,6 +38,18 @@ with open_database("data/tgrid.db") as conn:
 - journal 模式使用 SQLite 默认的 `delete`，在 Windows 文件数据库上安全。
 - 调用方负责关闭连接，或使用 `open_database` 上下文管理器自动关闭。
 
+## 离线 CLI（preflight）
+
+```bash
+python -m tgrid --help
+python -m tgrid --version
+python -m tgrid preflight --config config/config.example.yaml --database data/tgrid.db --log logs/preflight.jsonl
+```
+
+安装后 console script `tgrid` 指向同一入口。`preflight` 只做只读配置校验和本地资源 preflight（加载配置、拒绝 `live_trading=true`、配置 JSONL 日志、初始化/校验 SQLite、按序记录 `startup_begin`→`preflight_ok`→`shutdown_complete`、关闭全部资源），**不连接 QMT、不读取行情/账户、不产生任何交易**。三个路径参数均为 required，必须两两不同。
+
+退出码：`0` 成功、`1` 受控失败、`2` 用法错误、`130` 中断。受控失败只向 stderr 输出一行简洁错误，不打印 traceback。
+
 ## 结构化日志
 
 ```python
@@ -80,7 +92,7 @@ python -m compileall -q src tests
 ## 目录
 
 ```text
-src/tgrid/        # 包源码（config / models / risk / persistence / reporting）
+src/tgrid/        # 包源码（config / models / risk / persistence / reporting / main）
 tests/unit/       # 单元测试
 config/           # 示例配置（真实配置不入库）
 work/             # 双 Agent 协作控制面（任务/状态/交接）

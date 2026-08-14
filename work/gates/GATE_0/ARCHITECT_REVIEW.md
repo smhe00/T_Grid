@@ -1,5 +1,35 @@
 # Gate 0 Architect Review
 
+## G0-T004 / Iteration 4
+
+Result: `G0-T004 PASS`
+
+178 项独立回归、compileall、CLI smoke、BaseException cleanup、真实文件移动与 AST 禁止
+API/assert 扫描全部通过。REV-G0T004-006 已关闭，Lease 已释放。
+
+G0-T004 的离线 CLI 与确定性 startup/shutdown 生命周期已验收；Gate 0 仍有 Event Queue 与总报告。
+
+## G0-T004 / Iteration 3
+
+Result: `CHANGES_REQUIRED`
+
+176 项独立回归通过，REV-G0T004-005 指定路径已关闭；但 DB close 或 shutdown-complete emit
+抛 SystemExit/GeneratorExit 时，位于同一 finally suite 后方的 logger shutdown 被跳过，registry
+与 handler 仍打开。进入只调整最外层嵌套 finally 的 Iteration 4。
+
+Gate 0 未通过，不得进入 Event Queue 或后续 Gate。
+
+## G0-T004 / Iteration 2
+
+Result: `CHANGES_REQUIRED`
+
+173 项独立回归、compileall 与 CLI smoke 通过，上一轮四项直接问题已基本修复；但独立
+BaseException Failure Injection 证明 DB cleanup 仍可被跳过：failure-event emit 的
+KeyboardInterrupt 返回 130 时未调用 DB close，SystemExit/GeneratorExit 传播时也未关闭 DB。
+进入仅处理资源 finally 结构的 Iteration 3。
+
+Gate 0 未通过，不得进入 Event Queue 或后续 Gate。
+
 当前子任务：G0-T001  
 Iteration: 3  
 Result: `G0-T001 PASS`
@@ -57,6 +87,16 @@ Result: `G0-T003 PASS`
 文件句柄释放与 AST 禁止 API/assert 扫描全部通过。REV-G0T003-006/-007 已关闭。
 
 G0-T003 logging 基础已验收；Gate 0 整体仍未完成，下一子任务由架构师发布。
+
+## G0-T004 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+167 项独立回归与 CLI smoke 通过；但 DB close 失败仍记录 `shutdown_complete`，cleanup 阶段
+KeyboardInterrupt 可跳过 logger shutdown，logger 建立前未知异常会逃出 `main()`，且未知异常原文
+会泄露到 stderr。进入聚焦 Iteration 2。
+
+Gate 0 未通过，不得进入 Event Queue 或后续 Gate。
 
 ## G0-T003 / Iteration 2
 

@@ -1,3 +1,63 @@
+# Architecture Review — G0-T004 / Iteration 4
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T18:19:15+08:00`
+
+REV-G0T004-006 已关闭。独立 178 项回归、compileall、CLI smoke、成功事件顺序与禁止 API/assert
+扫描全部通过；DB-close SystemExit 和 shutdown-complete GeneratorExit 均原样传播，同时 logger
+shutdown 调用一次、registry 为空，真实 DB/log 文件可移动。Lease 已释放，范围符合任务。
+
+G0-T004 离线 CLI 与 startup/shutdown 编排通过。Gate 0 仍有 Event Queue 与总报告任务。
+
+---
+
+# Architecture Review — G0-T004 / Iteration 3
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T18:15:18+08:00`
+
+独立 176 项回归、compileall 与 CLI smoke 通过；failure-event KeyboardInterrupt、startup
+SystemExit/GeneratorExit 均已执行 DB close 与 logger shutdown。但 DB close、shutdown-complete emit
+和 logger shutdown 仍在同一个 finally suite：前两步抛 SystemExit/GeneratorExit 会跳过 logger
+shutdown，实际留下 registry 与打开的 handler。详见 REV-G0T004-006。
+
+Gate 0 未通过，不得进入 Event Queue 或后续 Gate。
+
+---
+
+# Architecture Review — G0-T004 / Iteration 2
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T18:09:51+08:00`
+
+独立 173 项回归、compileall、CLI smoke 均通过，REV-G0T004-001、-003、-004 的直接问题已关闭，
+DB close 的普通 Exception/KeyboardInterrupt 也不会再跳过 logger shutdown。但 DB close 仍不在覆盖
+后续流程的 `finally` 中：failure-event emit 的 KeyboardInterrupt 以及按契约不应捕获的
+SystemExit/GeneratorExit 都会在 DB 已打开后跳过 close。详见 `FIX_REQUEST.md` 顶部
+REV-G0T004-005。
+
+Gate 0 未通过，不得进入 Event Queue 或后续 Gate。
+
+---
+
+# Architecture Review — G0-T004 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T18:03:43+08:00`
+
+独立 167 项回归、compileall、`python -m tgrid --help/--version`、成功 preflight、路径/live/DB/log
+基础注入均通过，Lease 已释放且代码范围符合任务。但 cleanup 失败仍伪记 `shutdown_complete`，
+cleanup 阶段 KeyboardInterrupt 会跳过 logger shutdown，logger 建立前未知异常会逃出 main，未知异常
+原文会泄露到 stderr。详见 `FIX_REQUEST.md` 顶部。
+
+以下内容均为已关闭历史记录。
+
+---
+
 # Architecture Review — G0-T003 / Iteration 1
 
 Status: `CHANGES_REQUIRED`

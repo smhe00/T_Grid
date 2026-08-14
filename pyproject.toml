@@ -15,5 +15,8 @@ dependencies = [
     "PyYAML>=6.0",
 ]
 
+[project.scripts]
+tgrid = "tgrid.main:main"
+
 [tool.setuptools.packages.find]
 where = ["src"]

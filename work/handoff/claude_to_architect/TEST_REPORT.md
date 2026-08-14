@@ -1,4 +1,4 @@
-# Test Report — G0-T003 / Iteration 3
+# Test Report — G0-T004 / Iteration 4
 
 ## Environment
 - Python 3.12.10
@@ -10,48 +10,51 @@
 ```text
 python -m unittest discover -s tests -p "test_*.py" -v
 python -m compileall -q src tests
+python -m tgrid --help
+python -m tgrid --version
 ```
 
 ## Results
 
 ```text
-Ran 142 tests in 0.886s
+Ran 178 tests in 1.608s
 OK
 ```
 
-`compileall` 退出码 0。
+`compileall` 退出码 0；`python -m tgrid --version` / `--help` 退出 0。
 
-完整逐条输出已存档于 `work/reports/tests/G0-T003-test-output.txt`（含 AST 扫描）。
+完整逐条输出已存档于 `work/reports/tests/G0-T004-test-output.txt`（含 CLI smoke 与 AST 扫描）。
 
-## Fix Verification（Iteration 3）
+## Fix Verification（Iteration 4）
 
 | Issue | 验证点 | 结果 |
 |---|---|---|
-| REV-G0T003-006 | Event 控制交错：shutdown 等待 in-flight emit；完成后仅一条完整 JSON，旧路径不重建；shutdown 后 emit 抛 `LoggingEmitError` | PASS |
-| REV-G0T003-007 | 4 线程并发配置同名：无异常、单 TGrid-owned handler、registry 一致、可 shutdown | PASS |
+| REV-G0T004-006 | DB close SystemExit(9) 传播 + logger shutdown 调用一次 + registry 空 | PASS |
+| REV-G0T004-006 | shutdown_complete GeneratorExit 传播 + logger shutdown 调用一次 + registry 空 | PASS |
 
 ## Coverage by Requirement（累计）
 
 | 要求 | 测试 | 结果 |
 |---|---|---|
-| Event Contract / UTF-8 / 多行 / context | `TestEventContract.*` | PASS |
-| 校验（空 event/保留字段/非字符串 key/不可序列化） | `TestValidation.*` | PASS |
-| 路径校验 | `TestPathValidation.*` | PASS |
-| 生命周期（重配置/隔离/root/propagate/shutdown） | `TestLifecycle.*` | PASS |
-| write/flush 失败传播 | `TestFailureInjection.*` | PASS |
-| 并发 200 条 | `TestConcurrency.*` | PASS |
-| 异常层级 | `TestExceptionHierarchy` | PASS |
-| Iteration 2 修复 | `TestIteration2Fixes.*` | PASS |
-| Iteration 3 并发 | `TestLifecycleConcurrency.*` | PASS |
+| parser/help/version/缺子命令/缺参 | `TestArgparse.*` | PASS |
+| 成功路径 + 三事件 + user_version=1 | `test_success_returns_zero_and_writes_three_events` | PASS |
+| 重复 preflight 幂等 | `test_repeat_preflight_idempotent` | PASS |
+| live_trading=true 拒绝 / 路径冲突 / alias | `TestPreflightRejections.*` | PASS |
+| 注入 initialize/emit/DB close/shutdown 失败 | `TestFailureInjection.*` | PASS |
+| startup+shutdown 同时失败 | `test_startup_and_shutdown_both_fail` | PASS |
+| KeyboardInterrupt 130 + 清理 | `test_keyboard_interrupt_returns_130` | PASS |
+| stdout/stderr 契约、无敏感泄漏 | `TestOutputContract.*` | PASS |
+| 子进程 smoke | `TestSubprocessSmoke.*` | PASS |
+| Iteration 2/3/4 修复 | `TestIteration2Fixes` / `TestIteration3Fixes` / `TestIteration4Fixes` | PASS |
 | AST 扫描 | `TestForbiddenApiScan.*` | PASS |
-| 原 101 项回归 | `test_config`/`test_models`/`test_persistence` | PASS（142 项总通过） |
+| 原 142 项回归 | `test_config`/`test_models`/`test_persistence`/`test_logging` | PASS（178 项总通过） |
 
 ## Failure Injection（累计）
 
-Iteration 1 的 7 项 + Iteration 2 的 5 项 + Iteration 3：emit/shutdown 确定性交错、并发同名配置。
+Iteration 1 的 8 项 + Iteration 2 的 6 项 + Iteration 3 的 3 项 + Iteration 4：DB close SystemExit、shutdown_complete GeneratorExit。
 
-全部 fail closed，无静默丢日志、半行 JSON 或 handler 泄漏。
+全部 fail closed，无 QMT、无订单、无伪成功、无敏感泄漏、资源清理完整（含所有 BaseException 路径）。
 
 ## Additional Verification
-- AST 扫描：`src/tgrid/` 全部 10 个 `.py` 无 `ast.Assert`、无 `xtquant` import、无 `order_stock`/`cancel_order`。
-- per-logger RLock 保证 emit/shutdown/configure 原子排序，无 sleep 依赖。
+- AST 扫描：`src/tgrid/` 全部 12 个 `.py` 无 `ast.Assert`、无 `xtquant` import、无 `order_stock`/`cancel_order`。
+- CLI smoke：`--version` 输出 `tgrid 0.1.0`、`--help` 显示 `preflight`。

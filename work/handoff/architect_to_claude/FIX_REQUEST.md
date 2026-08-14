@@ -1,3 +1,188 @@
+# Closed Fix Request — G0-T004 / Iteration 4
+
+> REV-G0T004-006 已由架构师独立重放关闭；G0-T004 已 PASS。本文件以下内容均为验收历史。
+
+只修复 logger shutdown 仍可被 cleanup/event 的 `BaseException` 跳过这一项，不新增功能。
+
+## P0 — REV-G0T004-006：最外层 cleanup 不是嵌套 finally，logger 仍可泄漏
+
+### Evidence
+
+Iteration 3 已把 DB close 放入 `finally`，但 `_close_db()`、`shutdown_complete` emit 与
+`shutdown_logger()` 仍顺序位于同一个 finally suite。前两者一旦抛出未捕获且不应吞掉的
+`SystemExit`/`GeneratorExit`，Python 会直接离开该 suite，跳过 logger shutdown。
+
+独立注入结果：
+
+```text
+db_close_system_exit.propagated=9
+db_close_system_exit.shutdown_calls=[]
+db_close_system_exit.registry_open=(True, True)
+
+shutdown_event_generator_exit.propagated=True
+shutdown_event_generator_exit.shutdown_calls=[]
+shutdown_event_generator_exit.registry_open=(True, True)
+```
+
+### Required Behavior / Tests
+
+- 将 DB close + 条件性 `shutdown_complete` emit 包在内层 `try`，把 `shutdown_logger()` 放在其
+  对应的最外层 `finally`，使任何 `BaseException` 都不能跳过 logger shutdown 尝试。
+- 不得吞掉或转换 `SystemExit`/`GeneratorExit`；原异常须在 cleanup 尝试完成后原样传播。
+- 测试 DB close 抛 `SystemExit`，以及 `shutdown_complete` emit 抛 `GeneratorExit`（或对调）：
+  断言异常传播、shutdown_logger 调用一次、registry 为空、真实 log 文件可移动。
+- 保持上一轮 failure-event KeyboardInterrupt、startup SystemExit/GeneratorExit 的修复及全部既有行为。
+- 完整运行回归、compileall、CLI smoke 与 AST 扫描并更新证据。
+
+## Iteration 4 Completion
+
+1. 只修 REV-G0T004-006。
+2. 更新报告并设置 `REVIEW_READY / owner=architect / iteration=4`，释放 Lease 后停止。
+
+---
+
+# Closed Fix Request — G0-T004 / Iteration 3
+
+> REV-G0T004-005 的三条指定入口已关闭；最外层 logger cleanup 缺口由 REV-G0T004-006 跟踪。
+
+只修复一个仍未关闭的资源生命周期问题，不扩大到 Event Queue、QMT、策略或交易功能。
+
+## P0 — REV-G0T004-005：DB cleanup 不在 finally，BaseException 可跳过 close
+
+### Evidence
+
+独立注入在 DB 已获取后让 `preflight_ok` 先抛普通异常，再让 `preflight_failed` emit 抛
+`KeyboardInterrupt`：
+
+```text
+failure_event_keyboard_interrupt.rc=130
+failure_event_keyboard_interrupt.db_close_called=False
+failure_event_keyboard_interrupt.logger_registered=False
+```
+
+同样在 DB 已获取后由 `preflight_ok` 抛 `SystemExit(7)` / `GeneratorExit`：两者均按契约向外传播，
+logger 也完成 shutdown，但 `db_close_called=False`。根因是 DB close 仍是正常控制流中的普通代码块，
+只有 logger shutdown 位于 `finally`；任何未被捕获、且按契约不应吞掉的 `BaseException` 都可跳过 DB close。
+
+### Required Behavior / Tests
+
+- DB 成功获取后，close 必须位于覆盖后续 startup、failure-event 和 shutdown-complete emit 的
+  `finally`（或等价的不可跳过 cleanup 结构）中；logger shutdown 仍必须是更外层 cleanup。
+- `preflight_failed` emit 抛 `KeyboardInterrupt` 时返回 130，并且 DB close 已调用、logger registry
+  为空；不得泄漏 primary exception 文本。
+- `preflight_ok` 抛 `SystemExit` 或 `GeneratorExit` 时异常必须原样向外传播，不能转成 1/130；但 DB close
+  与 logger shutdown 都必须已尝试。
+- 增加以上三个回归测试，并对已打开的真实 DB/log 文件验证返回/传播后可移动。
+- 完整运行 173 项既有回归、compileall、CLI smoke 与 AST 扫描；修正报告中“已覆盖 failure-event
+  KeyboardInterrupt”的不准确陈述。
+
+## Iteration 3 Completion
+
+1. 只修 REV-G0T004-005，不新增功能。
+2. 更新完整测试证据与报告，明确 `FIXED`/`NOT_FIXED`/`DISAGREE`。
+3. 设置 `REVIEW_READY / owner=architect / iteration=3`，使用真实本机时间，释放 Lease并停止。
+
+---
+
+# Closed Fix Request — G0-T004 / Iteration 2
+
+> REV-G0T004-001 至 -004 的直接问题已修复；本节保留为验收历史。第 2 轮遗漏的 DB cleanup
+> BaseException 路径由 REV-G0T004-005 单独跟踪。
+
+只修复以下 CLI 生命周期与输出边界问题，不扩大到 Event Queue、QMT、策略或交易功能。
+
+## P0 — REV-G0T004-001：DB close 失败仍记录 shutdown_complete
+
+### Evidence
+
+注入已成功打开、但 `close()` 抛 `OSError` 的连接：
+
+```text
+db_close_failure rc 1
+events ['startup_begin', 'preflight_ok', 'shutdown_complete']
+```
+
+代码只检查 `primary is None and not interrupted`，没有检查 cleanup failure，因此把未完成 shutdown
+写成成功完成，违反成功事件真实性与失败不得伪报成功。
+
+### Required Behavior / Tests
+
+- 只有 DB 已成功关闭且没有 primary/interrupted/cleanup failure 时才允许写 `shutdown_complete`。
+- DB close 失败必须返回 1，日志不得含 `shutdown_complete`；logger 仍须 shutdown。
+- 可写稳定的 `preflight_failed` 或 `cleanup_failed`（只含异常类型），但不得包含原始异常文本。
+
+## P0 — REV-G0T004-002：KeyboardInterrupt 在 cleanup 阶段会跳过剩余资源清理
+
+### Evidence
+
+注入 `db_conn.close()` 抛 `KeyboardInterrupt`：
+
+```text
+interrupt_during_db_close rc 130
+logger_registered True
+events ['startup_begin', 'preflight_ok']
+```
+
+当前 outer `main()` 捕获中断并返回 130，但 `_run_preflight()` 的后续 logger shutdown 没有位于能覆盖
+cleanup 自身异常的 `finally`，导致 handler/文件句柄残留。
+
+### Required Behavior / Tests
+
+- logger 建立后，DB close、失败事件写入或其他 cleanup 步骤发生 KeyboardInterrupt/Exception 时，
+  后续可独立执行的清理仍必须尝试；不得捕获 `SystemExit`/`GeneratorExit`。
+- 使用嵌套 `try/finally` 或等价状态机，保证 DB cleanup 不能跳过 logger shutdown。
+- 至少测试 KeyboardInterrupt 发生在 `preflight_ok`（DB 已打开）、failure-event emit、DB close 三个位置；
+  返回 130，DB close 与 logger shutdown 调用符合可达顺序，registry 最终为空，文件可移动。
+
+## P1 — REV-G0T004-003：logger 建立前未知异常逃出 main
+
+### Evidence
+
+注入 `configure_jsonl_logger` 抛 `RuntimeError`：
+
+```text
+configure_unknown ESCAPED RuntimeError SECRET_CONFIGURE_XYZ
+```
+
+`main()` 最外层只捕获 `TGridError` 与 `OSError`，违反未知异常 fail closed 和“受控失败无 traceback”。
+
+### Required Behavior / Tests
+
+- `main()` 在不捕获 `SystemExit`/`GeneratorExit` 的前提下，将其他未知 `Exception` 转为退出 1；
+  `KeyboardInterrupt` 仍为 130。
+- logger 配置前的 `load_config`/path/configure 未知异常均不得逃出或打印 traceback。
+- 正常 argparse `SystemExit(0/2)` 行为保持不变。
+
+## P1 — REV-G0T004-004：未知异常原文泄露到用户输出
+
+### Evidence
+
+注入 DB 初始化异常：
+
+```text
+sensitive_error rc 1
+secret_in_stderr True
+stderr 'tgrid: error: ACCOUNT_SECRET_XYZ\n'
+```
+
+### Required Behavior / Tests
+
+- 对内部未知异常，stderr 只报告稳定、非敏感摘要（至少异常类型），不得输出异常原文、repr、
+  traceback、完整配置或注入 secret。
+- 已定义的 `TGridError` 可保留经过模块控制的安全消息与字段路径；内部 `RuntimeError`/未知异常必须
+  采用安全格式。
+- cleanup error 同样适用；测试以唯一 secret token 注入 primary 与 cleanup，断言 stdout/stderr/JSONL
+  均不含 token，且退出非零。
+
+## Iteration 2 Completion
+
+1. 只修 REV-G0T004-001 至 -004。
+2. 完整运行回归、compileall、CLI smoke、AST 与上述 Failure Injection。
+3. 更新完整输出和报告，逐 Issue 标记 `FIXED`/`NOT_FIXED`/`DISAGREE`。
+4. 设置 `REVIEW_READY / owner=architect / iteration=2`，使用真实本机时间，释放 Lease并停止。
+
+---
+
 # Closed Fix Request — G0-T003 / Iteration 3
 
 > REV-G0T003-006 与 -007 已由架构师独立验证并关闭；本节仅保留为验收历史。

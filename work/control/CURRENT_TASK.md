@@ -1,29 +1,28 @@
-# Task G0-T003 — 结构化 JSONL Logging 基础
+# Task G0-T004 — 离线 CLI 与 Startup/Shutdown 编排
 
 ## Goal
 
-建立 Gate 0 的可靠日志基础：调用方显式指定文件路径，输出可机器解析、可审计的 UTF-8 JSONL，
-并对配置、序列化和写入失败执行 fail closed。当前任务只实现 logging，不实现 CLI、Event Queue、
-QMT、策略或交易功能。
+建立 Gate 0 的离线命令行入口与确定性 startup/shutdown 生命周期，把已经验收的配置、SQLite 与
+JSONL logging 基础组合成一个只读配置校验和本地 preflight 流程。当前任务不得连接 QMT、读取真实
+账号或产生任何交易行为。
 
 ## In Scope
 
-1. 新增 `tgrid.reporting` 包及结构化 logging 模块。
-2. 仅使用 Python 标准库 `logging`、`json` 等，不增加第三方运行时依赖。
-3. 提供显式日志文件路径的配置 API、结构化事件写入 API 和显式 shutdown/close API。
-4. 输出一行一个 JSON object 的 UTF-8 JSONL，适合后续 Gate 审计与故障定位。
-5. 重复初始化、handler 生命周期、并发写入和错误边界可预测且有测试。
-6. 新增明确的 logging 异常层级与 Failure Injection。
+1. 新增 `tgrid.main` 与 `tgrid.__main__`，并在 `pyproject.toml` 注册 `tgrid` console script。
+2. 提供 `--help`、`--version` 与 `preflight` 子命令。
+3. `preflight` 只执行：显式参数校验、加载配置、拒绝 live trading、配置 JSONL logger、初始化/
+   验证 SQLite、记录 startup/shutdown 事件、关闭全部资源。
+4. 定义稳定退出码与无 traceback 的用户级错误输出。
+5. 对所有部分启动失败和 shutdown 失败进行可测试、fail-closed 的资源清理。
 
 ## Out of Scope
 
-- CLI、进程主入口、startup/shutdown 编排；后续 Gate 0 子任务实现。
-- Event Queue、状态机、调度器或后台线程。
-- SQLite audit/domain 表或把日志写入数据库。
+- Event Queue、后台 worker、定时器或常驻进程；后续 Gate 0 子任务实现。
 - QMT/XtQuant、行情、账号、持仓、委托、成交、下单或撤单。
 - 策略计算、SimBroker、dry-run、shadow/live execution。
-- 上传、远程传输、告警、邮件、云日志或日志查看 UI。
-- 自动读取配置文件、环境变量、账号信息或默认真实路径。
+- `run`/`trade`/`live` 命令、自动重试或自动恢复。
+- 自动发现配置、数据库、日志路径，或读取环境变量中的真实路径/账号。
+- 修改已经验收的 config、persistence、reporting 实现。
 - Git push；Claude 不得 commit。
 
 ## Allowed Files
@@ -31,13 +30,14 @@ QMT、策略或交易功能。
 Claude 只能新增或修改：
 
 ```text
+pyproject.toml
 README.md
 src/tgrid/__init__.py
+src/tgrid/__main__.py
+src/tgrid/main.py
 src/tgrid/risk/__init__.py
 src/tgrid/risk/exceptions.py
-src/tgrid/reporting/__init__.py
-src/tgrid/reporting/logging.py
-tests/unit/test_logging.py
+tests/unit/test_cli.py
 work/control/WORKFLOW_STATE.yaml
 work/control/CLAUDE_HEARTBEAT.md
 work/locks/WORKTREE_LEASE.yaml
@@ -45,7 +45,7 @@ work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md
 work/handoff/claude_to_architect/TEST_REPORT.md
 work/handoff/claude_to_architect/QUESTIONS.md
 work/gates/GATE_0/CLAUDE_REPORT.md
-work/reports/tests/G0-T003-test-output.txt
+work/reports/tests/G0-T004-test-output.txt
 ```
 
 `WORKTREE_LEASE.yaml` 只在工作期间存在，交接前必须释放删除。
@@ -55,20 +55,22 @@ work/reports/tests/G0-T003-test-output.txt
 ```text
 TGrid_双Agent协作与Gate验收协议_V1.0.md
 TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md
-pyproject.toml
 .gitignore
 config/**
 src/tgrid/config.py
 src/tgrid/models.py
 src/tgrid/persistence/**
+src/tgrid/reporting/**
 tests/unit/test_config.py
 tests/unit/test_models.py
 tests/unit/test_persistence.py
+tests/unit/test_logging.py
 work/control/CURRENT_TASK.md
 work/control/ARCHITECT_HEARTBEAT.md
 work/gates/GATE_0/TASK.md
 work/gates/GATE_0/G0-T001_RESULT.md
 work/gates/GATE_0/G0-T002_RESULT.md
+work/gates/GATE_0/G0-T003_RESULT.md
 work/gates/GATE_0/ARCHITECT_REVIEW.md
 work/handoff/architect_to_claude/**
 work/design/**
@@ -79,113 +81,152 @@ work/design/**
 
 ## Design References
 
-- 设计文档 §29：SAFE_HALT 后仍须保留日志。
-- §33：推荐目录结构与真实日志不得提交 Git。
-- §34：INV-009 fail closed、INV-011 禁止生产风控依赖 `assert`。
-- §35：Gate 0 必须实现并测试 logging，禁止 QMT 下单代码。
-- §52：当前阶段禁止 QMT、行情、策略和真实账号访问。
+- 设计文档 §29：SAFE_HALT 保留日志且不得自动平仓。
+- §30：配置、数据库及未知异常必须 fail closed。
+- §33：`main.py` 推荐入口与真实数据/日志不得提交 Git。
+- §34：INV-009 fail closed、INV-010 幂等、INV-011 禁止生产安全依赖 `assert`。
+- §35：Gate 0 必须实现 CLI 并测试 startup/shutdown、invalid config，禁止 QMT 下单代码。
+- §52：当前阶段明确禁止 QMT、行情、策略和真实账号访问。
 - 协作协议 §7–§12、§18、§22、§29–§32。
 
-## Event Contract
+## CLI Contract
 
-每条成功日志必须恰好写入一个 JSON object 和一个换行符，至少包含：
+必须支持：
 
 ```text
-schema_version  整数，当前固定为 1
-timestamp       UTC ISO-8601，必须带时区
-level           标准大写级别名称
-logger          logger 名称
-event           调用方显式传入的非空事件名
-message         字符串消息
-context         JSON object；无扩展字段时为空 object
+python -m tgrid --help
+python -m tgrid --version
+python -m tgrid preflight --config <path> --database <path> --log <path>
 ```
 
-要求：
+安装后 console script `tgrid` 必须指向同一 `main(argv=None) -> int` 入口。
 
-- 中文、换行、引号等内容必须通过 JSON 转义保持单行并可无损解析。
-- `context` key 必须是非空字符串；不得覆盖上述保留字段。
-- 不可 JSON 序列化的值必须同步抛出明确 logging 异常，不得静默丢日志或只写半行。
-- 本模块不得自动采集配置、环境变量、账号或任何真实交易信息。
+### Explicit Paths
 
-## Logging Lifecycle Contract
+- `preflight` 的三个路径参数全部 required，不提供默认路径，不读取环境变量。
+- 在任何写入前将路径规范化并验证 config/database/log 两两不同；相同路径或可解析为同一路径的
+  alias 必须拒绝，避免日志或 SQLite 覆盖配置。
+- config 只读；database 与 log 可由已验收模块创建父目录。
 
-1. 调用方必须显式传入日志文件路径；空路径、目录路径和不可用路径明确失败。
-2. 可以创建不存在的父目录，但不得自动选择 `data/`、用户目录或其他默认真实路径。
-3. 只配置 TGrid 自己的 named logger，不得清空、替换或改变 root logger 的既有 handlers/level。
-4. TGrid logger 必须 `propagate=False`，避免重复写入 root。
-5. 同一 logger 重复配置时不得产生重复 handler 或重复行；旧的 TGrid-owned handler 必须 flush/close。
-6. shutdown/close 必须幂等并释放文件句柄；Windows 上关闭后文件应可移动/删除。
-7. 标准库 logging 的内部错误不得被静默吞掉；配置、序列化和写入失败必须转换为明确异常并保留异常链。
-8. 不得依赖 `logging.raiseExceptions` 才能暴露生产错误。
+### Preflight Order
 
-## Invariants
+```text
+parse explicit CLI arguments
+normalize and validate distinct paths
+load_config(config_path)
+reject config.global.live_trading == true
+configure_jsonl_logger(..., log_path)
+emit startup_begin
+initialize_database(database_path)
+emit preflight_ok
+close database
+emit shutdown_complete
+shutdown_logger
+return 0
+```
 
-1. 成功返回表示日志文件已可写且 logger 生命周期已正确建立。
-2. 任何失败不得留下半条 JSON、重复 handler 或仍占用的失败文件句柄。
-3. 每条成功事件都是独立、完整、可解析的一行 JSON。
-4. 重复配置与重复 shutdown 均确定且幂等。
-5. 并发调用不得产生交错、截断或不可解析 JSON。
-6. 生产安全与错误检查不得依赖 Python `assert`。
-7. 不得包含 QMT、策略、订单或真实交易能力；`live_trading_allowed` 保持 `false`。
+实现可调整内部函数划分，但不得改变安全顺序：live trading 与路径冲突必须在数据库/日志写入前拒绝。
+
+## Exit Contract
+
+```text
+0    preflight 成功或 --help/--version 正常完成
+1    TGrid 配置、logging、database、startup/shutdown 等受控失败
+2    argparse 用法/缺参错误（标准 argparse 行为）
+130  KeyboardInterrupt
+```
+
+- 受控失败向 stderr 输出一行简洁错误，禁止 traceback。
+- stdout 只输出稳定、简洁的成功信息或 help/version；不得输出配置内容、账号或敏感数据。
+- 不捕获 `SystemExit`/`GeneratorExit`；`KeyboardInterrupt` 单独映射 130。
+
+## Logging Contract
+
+成功 preflight 的 JSONL event 顺序必须是：
+
+```text
+startup_begin
+preflight_ok
+shutdown_complete
+```
+
+context 只允许非敏感、稳定字段，例如 `schema_version` 不得由调用方覆盖；不得记录完整配置、环境变量、
+原始异常文本、账号信息或证券数量。失败发生在 logger 建立后时，应尽力记录稳定事件名与异常类型，
+但日志失败本身必须使 CLI 非零退出，不能伪报成功。
+
+## Lifecycle / Failure Rules
+
+1. 任一步失败均返回非零且不得继续到后续业务步骤。
+2. logger 配置后，无论 DB 初始化、事件写入还是其他受控异常，最终都必须尝试 shutdown logger。
+3. DB 成功打开后，无论后续步骤是否失败都必须 close；Windows 上返回后 DB/log 文件可移动。
+4. shutdown 中出现失败不能被吞掉；若启动异常与清理异常同时发生，保留主要失败并在安全边界报告清理失败，
+   不得返回 0。
+5. `preflight` 可重复运行：SQLite migration 不重复，JSONL 追加新的一组完整生命周期事件。
+6. Gate 0 无任何可开启 live trading 的路径；配置中 `live_trading: true` 必须在创建 DB/log 前拒绝。
+7. 生产安全不得依赖 Python `assert`。
 
 ## Acceptance Criteria
 
-1. 公共 API 命名清晰并在 docstring/README 说明调用方负责显式路径和 shutdown 生命周期。
-2. 单条事件输出满足 Event Contract，UTF-8/中文/嵌入换行可无损 round-trip。
-3. level 至少支持标准 logging 整数级别；非法 level 明确拒绝。
-4. `context` 只接受字符串 key 与 JSON-compatible value；保留字段冲突、非字符串 key、不可序列化值均 fail closed。
-5. 重复配置同一 logger 不重复输出，旧 handler 被关闭；不同 logger 互不干扰。
-6. root logger 的 handlers、level 和 propagate 行为不被修改。
-7. shutdown 后不再持有文件句柄，重复 shutdown 不报错。
-8. 多线程并发至少写入 100 条事件，行数完整、每行可解析且 event/message 不丢失。
-9. 文件配置/打开失败抛显式 logging 异常；事件 emit/flush 失败抛显式 logging 异常，不得只写 stderr 后继续。
-10. 日志文件/临时产物不提交仓库；测试全部使用临时目录。
-11. 原有 101 项测试全部继续通过。
-12. 无新增运行时依赖、无 QMT import、无券商/策略/交易代码、无生产 `assert`。
-13. README 明确当前新增结构化日志基础，但仍没有 CLI、QMT 或交易能力。
+1. `python -m tgrid --help`、`--version` 与 console entry point 配置正确。
+2. 缺少子命令或 required 参数时使用 argparse 标准 usage，退出 2。
+3. 合法、`live_trading=false` 配置的 preflight 返回 0，创建/验证 DB 与 JSONL，并按契约输出三事件。
+4. 配置中 `live_trading=true` 返回 1，且 DB/log 均未创建。
+5. 三路径冲突或 alias 冲突返回 1，并在任何数据库/日志写入前停止。
+6. invalid config、损坏 DB、日志打开失败、emit 失败均返回 1、无 traceback、无 success 文本。
+7. 部分启动失败后所有已获取资源关闭；故障注入后文件在 Windows 可移动/删除。
+8. 正常与失败 shutdown 顺序有测试；清理失败不能改变为成功。
+9. 重复 preflight 两次，migration history 仍一条，日志为两组按序事件，不覆盖原日志。
+10. 用户级输出不包含完整配置、数据库内容、原始 traceback 或敏感字段。
+11. 原有 142 项测试全部继续通过。
+12. 无新增第三方运行时依赖、无 QMT import、无券商/策略/交易代码、无生产 `assert`。
+13. README 明确 CLI 仅做离线 preflight，无 QMT/交易能力，并给出全部显式参数示例。
 
 ## Required Tests
 
 至少覆盖：
 
-- 基本 JSONL 字段、UTC timestamp、级别和 UTF-8 round-trip。
-- message 含换行/引号时仍只产生一条可解析物理行。
-- 空 context 与多个合法 context 字段。
-- 空 event、非法 level、保留字段冲突、非字符串 context key、不可序列化值。
-- 空路径、目录路径、不存在父目录创建、文件打开失败。
-- 同一 logger 重复配置不重复写行且旧 handler 关闭。
-- 不同 logger 隔离；root logger 配置前后完全不变。
-- shutdown/重复 shutdown；关闭后文件可重命名或删除。
-- 注入 handler write/flush 失败并验证显式异常传播。
-- 100 条以上多线程并发写入，逐行 `json.loads` 并核对唯一事件集合。
+- parser/help/version、缺子命令、缺 required 参数与 exit code。
+- `main(argv)` 成功路径及 `python -m tgrid` 子进程最小 smoke（不调用 QMT）。
+- 成功 JSONL 三事件顺序、SQLite `user_version=1` 与 migration history 幂等。
+- `live_trading=true` 在 DB/log 创建前拒绝。
+- config/database、config/log、database/log 相同或 alias 路径冲突。
+- invalid YAML/配置、损坏 DB、日志目录路径/打开失败。
+- 注入 `initialize_database`、`emit`、DB close、`shutdown_logger` 失败，核对退出码和清理调用顺序。
+- startup 失败与 shutdown 失败同时发生时仍非零且无 traceback。
+- KeyboardInterrupt 返回 130，并清理已获取资源。
+- 重复 preflight 两次：DB migration 不重复、日志六事件按两组排列。
+- stdout/stderr 契约和敏感信息不泄漏。
 - AST 扫描生产源码无 `assert`、无 `xtquant`、无 `order_stock`/`cancel_order`。
-- 原 101 项测试回归。
+- 原 142 项测试回归。
 
 必须实际运行：
 
 ```text
 python -m unittest discover -s tests -p "test_*.py" -v
 python -m compileall -q src tests
+python -m tgrid --help
+python -m tgrid --version
 ```
 
 ## Failure Injection
 
 至少注入并保存证据：
 
-1. 目标路径是目录。
-2. 父路径不可创建或 FileHandler 打开失败。
-3. context 含不可 JSON 序列化对象。
-4. handler stream 在 emit 或 flush 时抛 `OSError`。
-5. 重复配置同一 logger 后写一条事件。
-6. message 含换行与非 ASCII 字符。
+1. invalid YAML / `live_trading=true`。
+2. 三类路径冲突。
+3. 损坏 SQLite 文件。
+4. log 目标为目录或 FileHandler 打开失败。
+5. startup event / preflight event emit 失败。
+6. DB close 与 logger shutdown 失败。
+7. KeyboardInterrupt 发生在 logger 建立后或 DB 打开后。
 
-所有异常必须 fail closed；不得产生伪成功报告、半行 JSON 或 handler 泄漏。
+所有异常必须 fail closed；不得连接 QMT、不得产生订单、不得把失败打印为成功。
 
 ## Deliverables
 
 1. Allowed Files 内的实现与测试。
 2. 更新 `IMPLEMENTATION_REPORT.md`、`TEST_REPORT.md`、`QUESTIONS.md`。
-3. `work/reports/tests/G0-T003-test-output.txt` 保存完整输出与 Failure Injection 证据。
+3. `work/reports/tests/G0-T004-test-output.txt` 保存完整输出、CLI smoke 与 Failure Injection 证据。
 4. 更新 `CLAUDE_REPORT.md`，明确 Gate 0 尚未完成。
 
 ## Stop Condition
@@ -196,7 +237,7 @@ python -m compileall -q src tests
 2. 原子更新 `WORKFLOW_STATE.yaml`：
    - `state: "REVIEW_READY"`
    - `owner: "architect"`
-   - 保持 `gate: 0`、`task_id: "G0-T003"`、`iteration: 1`
+   - 保持 `gate: 0`、`task_id: "G0-T004"`、`iteration: 1`
    - 更新真实本机 `last_update`；未 commit 时 `git_head_commit` 保持基线并在 notes 说明。
 3. 释放 Lease。
 4. 停止写入，保持只读等待架构师 Review。
