@@ -12,6 +12,7 @@ venv/
 # Local / secret configuration must never be committed
 config/config.local.yaml
 config/*.local.yaml
+config/*.local.json
 
 # Runtime data, logs, and database artifacts
 data/

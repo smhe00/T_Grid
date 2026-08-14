@@ -4,7 +4,7 @@ QMT 低频做 T 交易引擎（开发中）。
 
 > **当前状态：Gate 0 / Gate 1 只读边界。** 本仓库目前有配置读取、配置数据模型、显式风险异常类型、SQLite 持久化基础，以及一个**严格只读的 QMT Adapter 边界**（`tgrid.adapters.qmt_readonly`）。它**没有任何行情、账户、持仓、下单、撤单或真实交易能力**，也没有策略计算能力；Adapter 只通过依赖注入的 client 调用固定只读方法，不 import XtQuant、不连接真实 QMT。
 
-## 已实现（G0-T001 / G0-T002 / G1-T002 / G1-T003 / G1-T004 / G1-T005）
+## 已实现（G0-T001 / G0-T002 / G1-T002 / G1-T003 / G1-T004 / G1-T005 / G1-T006）
 
 - `tgrid.config.load_config(path)`：从调用方显式传入的 YAML 路径读取并校验配置，返回有类型的 `RootConfig`。
 - 配置数据模型（`GlobalConfig` / `SymbolConfig` / `RootConfig`），全部为不可变 dataclass。
@@ -128,6 +128,28 @@ summary = run_gate1_readonly_probe(
   repr/str/len/iter 均不被调用。
 - 异常：`Gate1ProbeError` / `Gate1ProbeConfigError` / `Gate1ProbeExecutionError`。
 - 不 import XtQuant、不连接 QMT、不读真实账号/行情；全部测试使用 fake client 构造真实 Adapter。
+
+## Gate 1 只读 XtQuant Runtime Bridge（G1-T006）
+
+```python
+from tgrid.integrations.qmt_gate1_runtime import (
+    build_simulation_runtime,
+    make_opaque_account,
+)
+
+# 仅当用户授权真实模拟只读验收后使用（config/gate1_qmt.local.json 已就绪）
+trader_bridge, market_bridge, token = build_simulation_runtime(
+    "config/gate1_qmt.local.json"
+)
+# 将 trader_bridge/market_bridge 注入已通过的 Adapter，再调用 run_gate1_readonly_probe(...)
+```
+
+- 这是生产 `src/tgrid` 中唯一授权导入 XtQuant 的模块，且经 `importlib` **延迟加载**；核心模块保持离线。
+- Trader bridge 只暴露已批准 Adapter 所需八 callable；账号在 `subscribe` 阶段按 SHA-256 指纹（路径 +
+  账号）在内存中唯一匹配，`OpaqueAccount` 不含账号数据，绝不记录/返回/持久化账号 ID。
+- 严格解析 `config/gate1_qmt.local.json` 声明的 reverse_repo runtime 与 **version-2 hashed binding**，
+  无 fallback；未知/缺失字段、明文账号、路径 hash 不符、0/2 账号匹配等全部 fail closed。
+- 无 order/cancel/download/quote 订阅面；`live_trading_allowed=false`；输出零敏感数据。
 
 ## 运行前提
 

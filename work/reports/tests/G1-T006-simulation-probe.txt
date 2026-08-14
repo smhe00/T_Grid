@@ -1,0 +1,25 @@
+# G1-T006 simulation probe (sanitized)
+
+This file is a sanitized, non-verbatim summary of the prior single data-free
+simulation read-only probe.  All raw output (vendor banner, local QMT path,
+port, account fingerprint) has been removed per the data-free output contract.
+
+Authoritative evidence: work/reports/tests/G1-T006-test-output.txt
+
+Historical result: operations 1-12 PASS; market_data.get_trading_calendar was
+unsupported by the simulation client; get_trading_period was also unsupported.
+An earlier auxiliary get_trading_dates check passed.  Iterations 2-6 made no
+Claude-side QMT access.
+
+Final controlled architect run (2026-08-14):
+- Two dependency preflights stopped before connection: the TGrid interpreter
+  lacked XtQuant, while the reverse_repo venv lacked PyYAML.
+- The authorized simulation-only runner was then started with the TGrid source
+  and the reverse_repo-installed XtQuant package path.  Its only retained result
+  was: ERROR_TYPE=Gate1ProbeExecutionError and process exit 0.
+- No raw stdout/stderr, operation-specific inference, account data, QMT path,
+  port, fingerprint, asset, position, order, trade, or quote payload was retained.
+- The safe project error is consistent with the known optional capability gap,
+  but this final output alone does not identify a failing operation.
+- No order, cancel, retry, live-account switch, download, or quote subscription
+  was performed.

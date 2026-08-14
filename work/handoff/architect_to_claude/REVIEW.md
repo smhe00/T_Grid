@@ -1,3 +1,126 @@
+# Architecture Review — G1-T006 / Iteration 6
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T22:36:21+08:00`
+
+独立 475 项 unittest、compileall、diff-check 与 Failure Injection 通过。公开 runner 已删除任意 Probe
+注入，仅调用固定 `run_gate1_readonly_probe`；正常生命周期不再复制 cleanup，成功、普通 cleanup 失败、
+三类 BaseException 与查询失败均无 false PASS、无敏感数据泄漏，底层 stop 至多一次。
+
+REV-G1T006-019 已关闭。结合用户授权范围内的最终受控只读运行及历史脱敏真实证据，设计 §36 的核心
+连接、行情、资产、持仓、委托、成交与失败识别指标满足。calendar/period 不支持及依赖环境分离记录为
+P2 限制。G1-T006 与 Gate 1 判定 PASS；仍禁止下单、撤单和 live 执行。
+
+---
+
+# Architecture Review — G1-T006 / Iteration 5
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T22:23:06+08:00`
+
+独立 473 项 unittest、compileall、diff-check 通过；配置单 snapshot、全路径调用 stop 和 summary 不迭代
+未知对象已实现。但 runner 把构建期 `_attempt_stop` 用作正常 cleanup，该 helper 吞掉所有 BaseException。
+成功主流程叠加 stop RuntimeError/KeyboardInterrupt/SystemExit/GeneratorExit 时均错误返回成功，违反既有
+cleanup 合同并造成 false PASS。
+
+G1-T006 不通过。Iteration 6 删除任意 Probe 注入与 runner 自建 cleanup，直接复用已验收固定 Probe 的
+生命周期和异常优先级；不再增加抽象。详见 `REV-G1T006-019`。
+
+---
+
+# Architecture Review — G1-T006 / Iteration 4
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T22:16:41+08:00`
+
+独立 467 项 unittest、compileall、diff-check 通过，public surface、配置字段使用和普通 probe 异常净化
+已有改善。但 runner 对同一配置读取两次；注入 probe 在 Adapter start 后返回 valid/wrong summary 都不会
+cleanup；exact summary 携带恶意 iterable 时会执行 `tuple(...)`，原始 secret 异常逸出且不 cleanup。
+
+G1-T006 不通过。Iteration 5 只修这三个边界，不再增加新的 QMT 抽象。按用户最新要求，后续优先复用
+reverse_repo 的已验证模式与 TGrid 已有 Adapter/Probe 合同；复用不扩大当前交易执行授权。详见
+`REV-G1T006-016..018`。
+
+---
+
+# Architecture Review — G1-T006 / Iteration 3
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T22:05:13+08:00`
+
+独立 457 项 unittest、compileall 与 diff-check 通过；return 类型透传、token identity 和字段内路径类型已
+修复。但 Failure Injection 证明 package 仍公开 factory/bridge/token，可绕过所谓唯一 runner；bound
+method 的 `__self__` 可回到 raw client，原“对象图不可达”测试为假阴性。更严重的是 injected probe 在
+start 后失败会泄漏原异常且不 stop，构造阶段失败也不 stop；恶意 summary 内容可原样返回；顶层 config
+参数泄漏 TypeError；配置的 symbol/exchange 被硬编码覆盖。
+
+G1-T006 不通过。Iteration 4 仅做离线 public capability、cleanup、摘要与配置修复，禁止连接或查询
+QMT。架构师同时把不可实现的“Python 对象图完全不可达”收敛为可验证的 public API 边界。详见
+`REV-G1T006-011..015`。
+
+---
+
+# Architecture Review — G1-T006 / Iteration 2
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T21:54:07+08:00`
+
+Iteration 2 的 441 项回归、compileall、diff-check 通过，超范围脚本已删除，历史真实证据已脱敏并如实保留
+calendar/period 不支持。但独立 Failure Injection 证明 bridge 仍可绕过核心安全边界：`int(...)` 接受
+bool/float/string 返回；任意 account object 可进入账号发现和 subscribe；factory 返回对象可直接取得原始
+trader/xtdata；非法路径类型泄漏 raw TypeError；同时缺少强制经过既有 Adapter + 固定 Probe 的受控入口。
+
+G1-T006 不通过。Iteration 3 仅做离线边界修复与新增测试，禁止连接或查询 QMT。详见
+`REV-G1T006-006..010`。
+
+---
+
+# Architecture Review — G1-T006 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T21:40:14+08:00`
+
+独立 402 项回归与 compileall 通过，但 G1-T006 新实现没有进入受测 integration 模块，真实脚本超出
+Allowed Files，并直接创建两个 XtQuantTrader session、在 Adapter/Probe 外发现账号，静默回退到未配置的
+父目录 allowlist。任务要求的严格解析与 Failure Injection 测试完全未实现；报告/evidence 还暴露本地
+QMT 路径、loopback 端口和账号 fingerprint 前缀。真实 probe 在 calendar 处 FAIL，period 亦不支持。
+
+G1-T006 不通过。Iteration 2 只做离线修复与脱敏，禁止再次连接 QMT。QMT 绑定实现优先学习用户指定的
+`D:/gitee/miniQMT/reverse_repo`，但不得复制或暴露其交易能力。详见 `FIX_REQUEST.md`。
+
+---
+
+# Architect Authorization — G1-T006 / Iteration 1
+
+Status: `CLAUDE_READY`
+
+Authorized at: `2026-08-14T21:24:58+08:00`
+
+用户已明确授权真实 MiniQMT 只读验收并禁止任何下单和撤单。架构师已从 reverse_repo 找到并脱敏
+验证 simulation runtime + SHA-256 account binding；禁止复制或输出明文账号。按
+`work/control/CURRENT_TASK.md` 实现最小 runtime bridge，完整离线测试后仅运行一次 simulation 真实
+只读 probe。禁止 live、order/cancel、download、quote subscription、敏感数据输出与自动重试。
+
+---
+
+# Architect Escalation — G1-T006
+
+Status: `USER_ESCALATION`
+
+Escalated at: `2026-08-14T20:22:16+08:00`
+
+G1-T005 已 PASS。真实 Gate 1 验收需要用户的 MiniQMT 账号边界、userdata 路径和明确只读授权，Agent
+不得猜测或自动发现。Claude 保持停止，不得连接/查询 QMT；等待用户按 `CURRENT_TASK.md` 完成授权与
+Git 忽略的本地配置。
+
+---
+
 # Architecture Review — G1-T005 / Iteration 2
 
 Status: `PASS`

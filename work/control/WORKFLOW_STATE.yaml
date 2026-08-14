@@ -1,18 +1,18 @@
 project: TGrid
 design_version: "1.1"
 gate: 1
-task_id: "G1-T005"
+task_id: "G1-T006"
 state: "ARCHITECT_PLANNING"
 owner: "architect"
-iteration: 2
+iteration: 6
 last_actor: "architect"
-last_update: "2026-08-14T20:22:16+08:00"
+last_update: "2026-08-14T22:36:21+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "81e1abcc6e50bae7629335a2e40633ba3a870bff"
-git_head_commit: "81e1abcc6e50bae7629335a2e40633ba3a870bff"
+git_base_commit: "237d31292ede492c4552d2e6da7c528df539d844"
+git_head_commit: "237d31292ede492c4552d2e6da7c528df539d844"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G1-T005 PASS after independent 402-test, compileall, AST and primary/cleanup exception-priority verification. REV-G1T005-001 closed; fixed 15-step data-free orchestration and at-most-once cleanup hold. No real QMT/account/market access; live_trading_allowed remains false. Architect preparing real-readonly user escalation."
+notes: "Gate 1 / G1-T006 PASS. Iteration 6 closed REV-G1T006-019 by removing public probe injection and duplicate cleanup, reusing the fixed G1-T005 Probe lifecycle. Independent review: 475 tests OK, compileall/diff/AST clean, success and cleanup/runtime/BaseException Failure Injection passed. Authorized real simulation evidence satisfies Gate 1 core connection, account, asset, position, order, trade, market-data and failure-recognition criteria. get_trading_calendar/get_trading_period remain unsupported P2 capabilities; PyYAML and XtQuant currently require a combined dependency path before a production CLI. No order/cancel/live action occurred; live_trading_allowed=false. Preparing gate1: pass commit and Gate 2 offline task."
