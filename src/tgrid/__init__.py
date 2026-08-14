@@ -7,7 +7,11 @@ account-access capability; the read-only adapter only talks to an injected
 client object.
 """
 
-from tgrid.adapters import ReadOnlyTraderAdapter, ReadOnlyTraderState
+from tgrid.adapters import (
+    ReadOnlyMarketDataAdapter,
+    ReadOnlyTraderAdapter,
+    ReadOnlyTraderState,
+)
 from tgrid.config import load_config, parse_config
 from tgrid.events import EventQueue, EventQueueState
 from tgrid.models import ACCUMULATE_MODE, GlobalConfig, RootConfig, SymbolConfig
@@ -37,6 +41,10 @@ from tgrid.risk.exceptions import (
     LoggingConfigError,
     LoggingEmitError,
     LoggingError,
+    MarketDataAdapterConfigError,
+    MarketDataQueryError,
+    MarketDataReadOnlyError,
+    MarketDataValidationError,
     MigrationError,
     PersistenceError,
     QmtAdapterConfigError,
@@ -96,4 +104,9 @@ __all__ = [
     "QmtAdapterLifecycleError",
     "QmtConnectionError",
     "QmtQueryError",
+    "MarketDataReadOnlyError",
+    "MarketDataAdapterConfigError",
+    "MarketDataValidationError",
+    "MarketDataQueryError",
+    "ReadOnlyMarketDataAdapter",
 ]

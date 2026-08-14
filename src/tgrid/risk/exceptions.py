@@ -123,3 +123,19 @@ class QmtConnectionError(QmtReadOnlyError):
 
 class QmtQueryError(QmtReadOnlyError):
     """A read-only query failed or returned None."""
+
+
+class MarketDataReadOnlyError(TGridError):
+    """Base class for read-only MarketData adapter failures."""
+
+
+class MarketDataAdapterConfigError(MarketDataReadOnlyError):
+    """The injected client is missing a required read-only query method."""
+
+
+class MarketDataValidationError(MarketDataReadOnlyError):
+    """A query argument violates the read-only validation contract."""
+
+
+class MarketDataQueryError(MarketDataReadOnlyError):
+    """A read-only query failed or returned None."""

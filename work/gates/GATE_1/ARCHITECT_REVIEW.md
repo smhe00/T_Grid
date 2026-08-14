@@ -1,5 +1,23 @@
 # Gate 1 Architect Review
 
+## G1-T003 / Iteration 2
+
+Result: `G1-T003 PASS`
+
+独立 325 项回归、compileall、AST 和 Sequence Failure Injection 通过。REV-G1T003-001 已关闭：
+Sequence 仅物化一次，验证与底层调用使用同一 snapshot；len/iterator 异常不泄漏，changing sequence
+不能在验证后替换内容。未导入/连接/查询 XtQuant，未增加订阅、下载、账号或交易能力。
+
+本裁决仅通过离线 MarketData 查询边界；Gate 1 尚未通过，`live_trading_allowed=false`。
+
+## G1-T003 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+320 项回归、compileall、AST 与常规异常图通过；额外 Sequence Failure Injection 证明参数被多次观察，
+可泄漏 `__len__`/第二次迭代的裸异常 secret，或在验证后把空代码传给底层。进入聚焦 Iteration 2，
+只修单次 snapshot 和验证异常边界。不得连接/查询真实 QMT 或增加订阅、下载、账号、交易能力。
+
 ## G1-T002 / Iteration 2
 
 Result: `G1-T002 PASS`

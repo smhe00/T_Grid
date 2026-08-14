@@ -1,3 +1,55 @@
+# Closed Fix Request — G1-T003 / Iteration 2
+
+> REV-G1T003-001 已关闭；G1-T003 裁决为 PASS。
+
+只修复 Sequence 参数的单次快照、验证与异常净化边界；保持八个固定只读方法和现有 API。
+
+## P0 — REV-G1T003-001：Sequence 被多次观察，可泄漏裸异常并绕过成员验证
+
+### Evidence
+
+`_require_symbol_sequence()` 当前先 `len(value)`、再迭代验证；public method 随后又执行
+`list(value)`。注入合法 `collections.abc.Sequence` 的独立 Failure Injection 得到：
+
+```text
+len() 抛 RuntimeError("LEN_SECRET_7A")
+  -> 裸 RuntimeError: LEN_SECRET_7A
+
+第一次迭代返回合法代码，第二次 list() 抛 RuntimeError("SECOND_PASS_SECRET_9B")
+  -> 裸 RuntimeError: SECOND_PASS_SECRET_9B
+
+第一次迭代返回 "600000.SH"，第二次返回 ""
+  -> 验证通过，底层收到 ['']
+```
+
+因此任意 Sequence 的 `__len__`/`__iter__` 普通异常可直接泄漏 message，且可变/有状态 Sequence 能在
+验证与调用之间更换内容，违反 Validation Contract 2/4、Acceptance Criteria 3/4 和“验证后才调用”边界。
+
+### Required Fix / Tests
+
+1. 对每个 sequence 参数只观察/物化一次，得到私有 list snapshot；成员验证与底层调用必须使用同一个
+   snapshot，不得再读取原对象，不得先 `len()` 后重复迭代。
+2. sequence snapshot 期间的普通 Exception 转为安全 `MarketDataValidationError`；异常只含参数名与固定
+   约束，`__cause__ is None`、`__context__ is None`，不得包含原 message/repr/traceback。
+3. KeyboardInterrupt/SystemExit/GeneratorExit 在 snapshot/iteration 中仍原样传播，不得转换或吞掉。
+4. 新增确定性测试覆盖：len bomb（若实现不再调用 len，证明不受影响）、first-pass iterator bomb、
+   second-observation changing sequence、unique-secret iterator exception；断言底层不接收未验证值。
+5. 原有 list/tuple、空 field list、容器隔离与八个 method mapping 必须保持；完整回归、compileall、AST、
+   证据与报告更新。
+
+## Iteration 2 Completion
+
+只修 REV-G1T003-001；不得扩大 API、导入/连接/查询 XtQuant、增加订阅/下载/账号/交易能力。
+完成后释放 Lease，设置 `REVIEW_READY / owner=architect / iteration=2`，不提交 commit。
+
+---
+
+# No Active Fix Request — G1-T003 / Iteration 1
+
+按 `work/control/CURRENT_TASK.md` 首次实现；当前无 fix request。
+
+---
+
 # Closed Fix Request — G1-T002 / Iteration 2
 
 > REV-G1T002-001/-002 已关闭；G1-T002 裁决为 PASS。

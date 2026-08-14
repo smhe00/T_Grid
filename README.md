@@ -4,7 +4,7 @@ QMT 低频做 T 交易引擎（开发中）。
 
 > **当前状态：Gate 0 / Gate 1 只读边界。** 本仓库目前有配置读取、配置数据模型、显式风险异常类型、SQLite 持久化基础，以及一个**严格只读的 QMT Adapter 边界**（`tgrid.adapters.qmt_readonly`）。它**没有任何行情、账户、持仓、下单、撤单或真实交易能力**，也没有策略计算能力；Adapter 只通过依赖注入的 client 调用固定只读方法，不 import XtQuant、不连接真实 QMT。
 
-## 已实现（G0-T001 / G0-T002 / G1-T002）
+## 已实现（G0-T001 / G0-T002 / G1-T002 / G1-T003）
 
 - `tgrid.config.load_config(path)`：从调用方显式传入的 YAML 路径读取并校验配置，返回有类型的 `RootConfig`。
 - 配置数据模型（`GlobalConfig` / `SymbolConfig` / `RootConfig`），全部为不可变 dataclass。
@@ -15,6 +15,7 @@ QMT 低频做 T 交易引擎（开发中）。
 - `tgrid.reporting`（结构化 JSONL 日志，仅标准库）：`configure_jsonl_logger(name, path)` 显式路径配置、`emit(logger, event, message, level, context)` 写入单行可解析 JSON、`shutdown_logger(name)` 幂等关闭。输出 UTF-8 JSONL（`schema_version`/`timestamp`/`level`/`logger`/`event`/`message`/`context`），中文/换行/引号无损 round-trip；配置/序列化/写入失败抛 `LoggingError` / `LoggingConfigError` / `LoggingEmitError`，不静默吞错、不留半行。
 - `tgrid.events`（单消费者 Event Queue 骨架，仅标准库）：线程安全、容量有界、FIFO、单 worker 的 `EventQueue`，生命周期 `NEW → RUNNING → STOPPING → STOPPED`（handler 抛异常 → `FAILED`）。非阻塞 `enqueue`（满队列抛 `EventQueueFull`）、graceful `stop` + drain、有界 `join`、`raise_if_failed()`。异常：`EventQueueError` / `EventQueueConfigError` / `EventQueueLifecycleError` / `EventQueueFull` / `EventQueueWorkerError`。为后续 QMT callback 隔离提供线程边界，不含 QMT/策略/订单能力。
 - `tgrid.adapters.qmt_readonly`（只读 Trader Adapter 边界，G1-T002）：`ReadOnlyTraderAdapter` + `ReadOnlyTraderState`，只接受依赖注入 client、只调用固定只读方法，显式状态机与安全异常；无通用转发、无 order/cancel 面、不 import XtQuant。异常：`QmtReadOnlyError` / `QmtAdapterConfigError` / `QmtAdapterLifecycleError` / `QmtConnectionError` / `QmtQueryError`。
+- `tgrid.adapters.marketdata_readonly`（只读 MarketData 查询 Adapter 边界，G1-T003）：`ReadOnlyMarketDataAdapter`，构造时冻结 8 个固定只读查询 callable，参数先校验（失败抛 `MarketDataValidationError` 且不调用底层）、序列参数复制、外部异常安全转 `MarketDataQueryError`（cause/context 干净）；无订阅/下载/连接/账号/交易面、不 import XtQuant。异常：`MarketDataReadOnlyError` / `MarketDataAdapterConfigError` / `MarketDataValidationError` / `MarketDataQueryError`。
 
 ## 只读 QMT Adapter 边界（G1-T002）
 
@@ -43,6 +44,38 @@ adapter.stop()                            # 幂等；FAILED 后按需清理恰�
 - **安全边界**：无 `__getattr__`、无通用转发、无 `client` property、无任何 order/cancel/改单方法；
   注入 client 不暴露为公共属性。本模块**不 import XtQuant、不连接 QMT、不读行情/账号**，全部测试
   只用 fake client 离线完成。
+
+## 只读 MarketData 查询 Adapter 边界（G1-T003）
+
+```python
+from tgrid import ReadOnlyMarketDataAdapter
+
+adapter = ReadOnlyMarketDataAdapter(client)   # client 是注入的只读行情/参考数据查询 client
+tick = adapter.get_full_tick(["600000.SH", "000001.SZ"])
+md = adapter.get_market_data(
+    ["close", "volume"], ["600000.SH"], "1d",
+    start_time="20260801", end_time="20260814",
+    count=-1, dividend_type="none", fill_data=True,
+)
+detail = adapter.get_instrument_detail("600000.SH")
+divs = adapter.get_divid_factors("600000.SH", start_time="20260101", end_time="20260814")
+calendar = adapter.get_trading_calendar("SH", start_time="20260801", end_time="20260814")
+dates = adapter.get_trading_dates("SH", start_time="20260801", end_time="20260814", count=-1)
+period = adapter.get_trading_period("600000.SH")
+```
+
+- Adapter 只调用构造时冻结的 8 个固定只读 callable（`get_full_tick` / `get_market_data(_ex)` /
+  `get_instrument_detail` / `get_divid_factors` / `get_trading_calendar` / `get_trading_dates` /
+  `get_trading_period`），不提供订阅、下载、连接、账号或交易能力。
+- 每个查询方法先做参数校验（序列/非空字符串/字符串/bool/`count∈{-1,正整}`），校验失败抛
+  `MarketDataValidationError`（只含参数名与预期类型），且**不调用任何底层方法**；序列参数传给底层前
+  会复制，底层 mutation 不反向污染调用方容器。
+- 外部异常全部转安全项目异常：`MarketDataReadOnlyError` / `MarketDataAdapterConfigError` /
+  `MarketDataValidationError` / `MarketDataQueryError`，`__cause__`/`__context__` 均为 None，
+  不泄漏原异常对象/参数值/client repr；`KeyboardInterrupt`/`SystemExit`/`GeneratorExit` 原样传播。
+- **安全边界**：无 `__getattr__`、无通用转发、无 `client` property；构造后替换 client 属性不可绕过
+  冻结映射。本模块**不 import XtQuant、不连接 QMT、不订阅/下载行情**，全部测试只用 fake client
+  离线完成。
 
 ## 运行前提
 
@@ -127,8 +160,8 @@ print(cfg.symbols["0700.HK"].core_qty)  # 600
 
 - `live_trading` 缺省为 `false`，本阶段不存在任何可开启它的执行路径。
 - 不 `import xtquant`，不出现任何券商下单/撤单调用。
-- `tgrid.adapters.qmt_readonly` 无 order/cancel/改单方法、无动态转发、无 `client` 公共属性；
-  只读 Adapter 边界之外不存在任何 QMT 访问入口。
+- `tgrid.adapters.qmt_readonly` / `tgrid.adapters.marketdata_readonly` 无 order/cancel/改单方法、
+  无订阅/下载/连接面、无动态转发、无 `client` 公共属性；只读 Adapter 边界之外不存在任何 QMT 访问入口。
 - 生产风控不得依赖 Python `assert`；风险/配置异常均为显式类型。
 
 ## 测试

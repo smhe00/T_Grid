@@ -1,18 +1,18 @@
 project: TGrid
 design_version: "1.1"
 gate: 1
-task_id: "G1-T002"
+task_id: "G1-T003"
 state: "ARCHITECT_PLANNING"
 owner: "architect"
 iteration: 2
 last_actor: "architect"
-last_update: "2026-08-14T19:40:15+08:00"
+last_update: "2026-08-14T19:54:38+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "73cbe3be6abf3744fd16b322c45fb4a17ee6bb40"
-git_head_commit: "73cbe3be6abf3744fd16b322c45fb4a17ee6bb40"
+git_base_commit: "a2f5fa3cb826e14a89bc478492f900d93d25b9fa"
+git_head_commit: "a2f5fa3cb826e14a89bc478492f900d93d25b9fa"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G1-T002 PASS after independent 287-test, compileall, AST, exception-graph, descriptor and frozen-callable verification. No XtQuant import/connection or real account/market access; live_trading_allowed remains false. Architect preparing next bounded Gate 1 task."
+notes: "G1-T003 PASS after independent 325-test, compileall, AST and Sequence failure-injection verification. REV-G1T003-001 closed; one safe snapshot is shared by validation and invocation. No XtQuant import/connection/query or subscription/download/account/trading capability; live_trading_allowed remains false. Architect preparing next bounded Gate 1 task."

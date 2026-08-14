@@ -1,3 +1,43 @@
+# Architecture Review — G1-T003 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T19:54:38+08:00`
+
+独立运行 325 项 unittest、compileall、AST 与范围检查通过。重放 len-bomb、iterator secret 和 changing
+Sequence，确认输入只物化一次、验证与调用共享 snapshot，异常图干净且未验证值不再可达底层。
+REV-G1T003-001 已关闭。
+
+G1-T003 PASS，但不授权真实连接/查询、订阅、下载、账号或交易。Gate 1 尚未通过。
+
+---
+
+# Architecture Review — G1-T003 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T19:49:35+08:00`
+
+独立 320 项回归、compileall、AST 与八个底层异常图检查通过，但 Sequence 参数在验证前后被多次观察。
+自定义 Sequence 可由 `len`/第二次迭代泄漏裸 RuntimeError secret，也可第一次返回合法成员、第二次把
+未验证空代码传入底层。详见 `REV-G1T003-001`。
+
+仅修复单次 snapshot、成员验证与 snapshot 异常净化；不得扩大只读面或接触真实 QMT。Gate 1 未通过。
+
+---
+
+# Architect Authorization — G1-T003 / Iteration 1
+
+Status: `CLAUDE_READY`
+
+Authorized at: `2026-08-14T19:40:15+08:00`
+
+按 `work/control/CURRENT_TASK.md` 仅实现 fake-client、固定八方法的 MarketData 查询只读 Adapter。
+不得导入或连接 XtQuant，不得真实查询、订阅、下载、访问账号或增加交易面；完成后不提交 commit，
+释放 Lease 并切换 `REVIEW_READY / owner=architect`。
+
+---
+
 # Architecture Review — G1-T002 / Iteration 2
 
 Status: `PASS`
