@@ -1,3 +1,35 @@
+# Architecture Review — G2-T004 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-15T00:23:10+08:00`
+
+独立运行 597 项 unittest、compileall、diff-check 与 AST 禁止能力扫描全部通过。另以 Event 驱动双连接
+FI 在 conn1 持有 `BEGIN IMMEDIATE` 写锁且未 commit 时令 conn2 实际发起竞争，失败方得到固定安全错误、
+无 active transaction；释放后最终恰一个状态和一条 audit。BaseException rollback、rollback 失败连接
+失效、恶意 status dunder 隔离边界均复核通过，`REV-G2T004-001..003` 全部关闭。
+
+G2-T004 PASS 只接受离线 SQLite 原子 status CAS + append-only audit writer；不授权状态策略、CRUD、
+Reconciliation、OrderIntent、QMT、下单、撤单或 live trading。下一任务留待 GitHub/web-ChatGPT 接管。
+
+---
+
+# Architecture Review — G2-T004 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-15T00:07:08+08:00`
+
+独立运行 592 项 unittest、compileall、diff-check 通过，常规 sqlite3.Error rollback、active caller transaction
+和顺序 CAS conflict 有效。但独立在 CAS 后、Audit insert 前注入 KeyboardInterrupt/SystemExit/
+GeneratorExit，三种情况均原样逸出却未 rollback：连接保持 `in_transaction=True`，同连接可见 lot 已变为
+SUSPENDED、audit=0。另有恶意 status `__eq__` 被执行并泄漏 RuntimeError secret；当前“两连接”测试并
+无实际交错。详见 REV-G2T004-001..003。
+
+Gate 2 未通过；只授权离线窄修复，不授权 QMT/交易或状态策略。
+
+---
+
 # Architecture Review — G2-T003 / Iteration 2
 
 Status: `PASS`

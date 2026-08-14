@@ -1,18 +1,18 @@
 project: TGrid
 design_version: "1.1"
 gate: 2
-task_id: "G2-T003"
+task_id: "G2-T004"
 state: "ARCHITECT_PLANNING"
 owner: "architect"
 iteration: 2
 last_actor: "architect"
-last_update: "2026-08-14T23:56:25+08:00"
+last_update: "2026-08-15T00:23:10+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "aa13ef9d9a556e0b837b95ba80c78fdddc41ca6d"
-git_head_commit: "aa13ef9d9a556e0b837b95ba80c78fdddc41ca6d"
+git_base_commit: "3fd560c7dd65b10c3f8a99cbaf87be1678cdaca2"
+git_head_commit: "3fd560c7dd65b10c3f8a99cbaf87be1678cdaca2"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G2-T003 PASS after architect independent review. 579 tests pass; compileall/diff-check/AST pass; collision-chain healthy DB remains unchanged and missing-FK tampered schema remains rejected. REV-G2T003-001..002 closed. Scope limited to migration 3 append-only T-Lot audit schema/verifier; no writer/CRUD/state machine/QMT/order/cancel. Preparing next Gate 2 task."
+notes: "G2-T004 iteration 2 PASS. Independent architect review: 597 unittest pass; compileall and diff-check clean; AST forbidden-capability scan passes (24 source files, zero hits); deterministic two-connection BEGIN IMMEDIATE contention replay passes with exactly one committed status/audit and no active losing transaction; BaseException rollback and malicious-status isolation evidence accepted. REV-G2T004-001..003 closed. No schema/state-policy/CRUD/QMT/order/cancel expansion. Next task intentionally not created before GitHub/web-ChatGPT handoff. live_trading_allowed=false."

@@ -12,6 +12,15 @@ from tgrid.persistence.database import (
     open_database,
 )
 from tgrid.persistence.migrations import MAX_SCHEMA_VERSION, MIGRATIONS, Migration
+from tgrid.persistence.t_lot_writer import (
+    TLotNotFoundError,
+    TLotStatusConflictError,
+    TLotTransitionResult,
+    TLotWriteFailedError,
+    TLotWriterError,
+    TLotWriterInputError,
+    transition_t_lot_status,
+)
 
 __all__ = [
     "connect",
@@ -21,4 +30,11 @@ __all__ = [
     "Migration",
     "MIGRATIONS",
     "MAX_SCHEMA_VERSION",
+    "transition_t_lot_status",
+    "TLotTransitionResult",
+    "TLotWriterError",
+    "TLotWriterInputError",
+    "TLotNotFoundError",
+    "TLotStatusConflictError",
+    "TLotWriteFailedError",
 ]

@@ -1,3 +1,75 @@
+# No Active Fix Request — G2-T004 / PASS
+
+Status: `PASS`
+
+Closed at: `2026-08-15T00:23:10+08:00`
+
+`REV-G2T004-001..003` 已经独立复核并关闭。当前没有 Claude 修复授权；下一任务由 GitHub/web-ChatGPT
+架构师显式创建。`live_trading_allowed=false`，不得下单、撤单或扩大 QMT 权限。
+
+---
+
+# Active Fix Request — G2-T004 / Iteration 2
+
+Status: `CHANGES_REQUIRED`
+
+Issued at: `2026-08-15T00:07:08+08:00`
+
+本轮只修三个窄问题；禁止新增 writer API、schema、状态矩阵、CRUD、外部依赖或交易能力。
+
+## P0 — REV-G2T004-001：BaseException 在 CAS 后跳过 rollback
+
+独立在 Audit insert 点分别注入 `KeyboardInterrupt`、`SystemExit`、`GeneratorExit`，三者均得到：
+
+```text
+in_transaction = True
+lot = ('SUSPENDED', 'new')
+audit_count = 0
+```
+
+这形成可被调用者意外 commit 的“状态已改但无 Audit”半完成状态，违反本任务最高不变量。
+
+Required:
+
+- transaction boundary 必须覆盖 `BaseException`；任意主失败都先尝试 rollback，再决定传播/转换。
+- `KeyboardInterrupt/SystemExit/GeneratorExit` 在 rollback 成功后保持原对象/类型传播，不转换为普通项目错误。
+- 普通未知 `Exception` 与 sqlite3.Error 均 rollback 后转换为固定、data-free `TLotWriteFailedError`，
+  `__cause__`/`__context__` 不得可达 secret。
+- rollback 自身的普通异常/BaseException 不得覆盖主异常或泄露 secret；若无法确认 rollback，必须使底层
+  connection 不再可 commit（安全关闭/失效），不得返回仍活跃的半完成事务。
+- 测试矩阵至少覆盖三类主 BaseException、普通 RuntimeError secret，以及主失败 × rollback failure；
+  检查 lot/audit/history/version 与连接可提交性。
+
+## P0 — REV-G2T004-002：status exact-type 校验发生得太晚
+
+`_require_status` 当前直接执行 `value not in T_LOT_STATUSES`。恶意对象的 `__eq__` 会被调用，独立注入
+泄漏 `RuntimeError('STATUS_DUNDER_SECRET')`。
+
+Required:
+
+- expected/new status 必须先按 exact non-empty `str` 验证，再做 membership；拒绝 str subclass、bool、
+  bytes、容器及任意对象，不调用其 `__eq__/str/repr/bool/iter`。
+- 项目错误固定且异常图干净；失败前后 DB 逐值不变。
+
+## P1 — REV-G2T004-003：两连接测试没有确定性交错
+
+当前测试先让 conn1 完整提交并关闭，再打开 conn2；只证明 stale expected status，不是任务要求的两连接
+竞争。
+
+Required:
+
+- 使用 Event/Barrier 或受控 connection seam，在 conn1 已取得 `BEGIN IMMEDIATE` 且尚未 commit 时让 conn2
+  发起同一 expected-status 写入；禁止 sleep。
+- 确定性释放后最多一个成功，另一个为安全 write/conflict 结果；最终 lot 只有一个目标状态、audit 恰一条，
+  无 active transaction/自动 retry。
+
+## Completion
+
+只修 REV-G2T004-001..003；重跑完整测试、compileall、AST、diff-check 和上述独立 FI。更新报告，设置
+`REVIEW_READY / owner=architect / iteration=2`，删除 Lease并停止；不要 commit。
+
+---
+
 # No Active Fix Request — G2-T003 / PASS
 
 Status: `CLOSED — PASS`

@@ -1,6 +1,6 @@
 # Gate 2 / Current Task
 
-当前任务：`G2-T003 — Append-Only T-Lot Audit Log Schema（PASS / Iteration 2）`
+最近完成：`G2-T004 — Atomic T-Lot Status Transition Writer（PASS / Iteration 2）`
 
 唯一规范正文：
 
@@ -8,8 +8,7 @@
 work/control/CURRENT_TASK.md
 ```
 
-G2-T001 已 PASS（commit `7270485`）；G2-T002 已 PASS（commit `aa13ef9`）。本任务只新增 SQLite
-migration 3、T-Lot append-only Audit Log schema 与启动完整性验证；不得实现 writer/CRUD、状态机、
-Reconciliation、OrderIntent 或任何 QMT/交易能力。
+G2-T001/T002/T003/G2-T004 已 PASS。本任务只验收离线 SQLite 单事务 CAS status update + append-only
+Audit Log writer；未实现也未授权业务 transition matrix、CRUD、Reconciliation、OrderIntent、QMT 或交易。
 
-REV-G2T003-001..002 已关闭；下一任务由架构师规划。
+G2-T004 独立复核证据见 `work/gates/GATE_2/G2-T004_RESULT.md`。GitHub/web-ChatGPT 交接前不创建下一任务。

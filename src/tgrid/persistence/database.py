@@ -24,7 +24,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator, List
 
-from tgrid.persistence.migrations import MAX_SCHEMA_VERSION, MIGRATIONS
+from tgrid.persistence.migrations import MAX_SCHEMA_VERSION, MIGRATIONS, T_LOT_STATUSES
 from tgrid.risk.exceptions import (
     DatabaseIntegrityError,
     DatabaseOpenError,
@@ -315,17 +315,9 @@ _T_LOTS_COLUMNS = [
     ("review_status", "TEXT", 0, 0),
 ]
 
-_ALLOWED_T_LOT_STATUSES = frozenset(
-    {
-        "PENDING_BUY",
-        "OPEN",
-        "PENDING_SELL",
-        "CLOSED",
-        "SUSPENDED",
-        "CONVERTED_TO_STRATEGIC",
-        "ERROR",
-    }
-)
+# Shared with the migration CHECKs and the offline T-Lot writer (single source
+# of truth for the seven design statuses).
+_ALLOWED_T_LOT_STATUSES = frozenset(T_LOT_STATUSES)
 
 
 def _trigger_exists(conn: sqlite3.Connection, name: str) -> bool:

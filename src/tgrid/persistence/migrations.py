@@ -43,16 +43,21 @@ BOOTSTRAP_STATEMENTS: Tuple[str, ...] = (
     " VALUES ('project_name', 'TGrid', datetime('now'))",
 )
 
-# Design §6 allowed statuses.  Stored as a single CHECK on t_lots.status.
-_T_LOT_STATUSES = (
-    "'PENDING_BUY'",
-    "'OPEN'",
-    "'PENDING_SELL'",
-    "'CLOSED'",
-    "'SUSPENDED'",
-    "'CONVERTED_TO_STRATEGIC'",
-    "'ERROR'",
+# Design §6 allowed statuses (single shared source of truth: the CHECK
+# constraints and the offline writer both consume this; do not add a second
+# drifting list).
+T_LOT_STATUSES: Tuple[str, ...] = (
+    "PENDING_BUY",
+    "OPEN",
+    "PENDING_SELL",
+    "CLOSED",
+    "SUSPENDED",
+    "CONVERTED_TO_STRATEGIC",
+    "ERROR",
 )
+
+# SQL-quoted literals for the CHECK constraints.
+_T_LOT_STATUSES = tuple("'" + status + "'" for status in T_LOT_STATUSES)
 
 # t_lots (design §6 fields + §16.1 suspended review fields).  Storage-class
 # semantics are enforced at the database level: id/required texts are non-empty,

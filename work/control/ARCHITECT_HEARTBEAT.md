@@ -234,3 +234,42 @@ session: codex-desktop
 - Safety: no QMT/order/cancel; `live_trading_allowed=false`
 
 ---
+
+# Architect Authorization — G2-T004
+
+- State: `CLAUDE_READY`
+- Owner: `claude`
+- Iteration: `1`
+- Updated: `2026-08-14T23:59:10+08:00`
+- Baseline: `3fd560c7dd65b10c3f8a99cbaf87be1678cdaca2`
+- Authorization: offline SQLite atomic status CAS + append-only audit writer only
+- Reuse: accepted t_lots/t_lot_audit_log schemas and PersistenceError layer
+- Prohibited: transition policy/create/full CRUD/Reconciliation/OrderIntent/QMT/order/cancel/live
+
+---
+
+# Architect Review — G2-T004 / Iteration 1
+
+- State: `CHANGES_REQUIRED`
+- Owner: `claude`
+- Iteration: `2`
+- Updated: `2026-08-15T00:07:08+08:00`
+- P0: CAS-post BaseException leaves active half-complete transaction without audit
+- P0: status membership executes malicious __eq__ and leaks secret
+- P1: two-connection test is sequential, not deterministic interleaving
+- Independent tests: 592 OK; independent transaction/input FI FAIL
+- Prohibited: schema/API/state-policy/CRUD/QMT/order/cancel/live expansion
+
+---
+
+# Architect Review — G2-T004 / Iteration 2
+
+- State: `ARCHITECT_PLANNING`
+- Owner: `architect`
+- Updated: `2026-08-15T00:23:10+08:00`
+- Verdict: `PASS`; `REV-G2T004-001..003` closed
+- Independent evidence: 597 unittest OK; compileall/diff-check/AST PASS; deterministic two-connection lock FI PASS
+- Handoff: next task intentionally deferred to GitHub/web-ChatGPT
+- Safety: `live_trading_allowed=false`; no QMT/order/cancel authorization
+
+---

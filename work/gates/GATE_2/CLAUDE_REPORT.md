@@ -1,25 +1,26 @@
-# Gate 2 / Claude Report — G2-T003
+# Gate 2 / Claude Report — G2-T004
 
 ## Status
-G2-T003 Iteration 2 修复完成，交付 `REVIEW_READY`，等待架构师独立 Review。未 commit。
+G2-T004 Iteration 2 修复完成，交付 `REVIEW_READY`，等待架构师独立 Review。未 commit。
 
-## Iteration 2 修复内容（REV-G2T003-001..002）
-- **REV-G2T003-001 — FIXED**：dangling-FK probe 改用 collision-safe `_pick_probe_id` 从 t_lots.id 选择
-  已确认不存在的值，不再使用固定字符串 `__tgrid_probe_no_such_lot`；合法用户使用该 id 时健康 initialize
-  通过且 t_lots/audit/history/user_version 逐值不变；缺外键伪造 schema 预置同一冲突 id 仍被拒绝。
-- **REV-G2T003-002 — FIXED（architect-authorized）**：确认保留 `tests/unit/test_t_lot_schema.py` 的
-  精确机械 diff（MAX_SCHEMA_VERSION/MIGRATIONS/history 2→3），未弱化约束断言；不再作为 unresolved
-  question。
+## Iteration 2 修复内容（REV-G2T004-001..003）
+- **REV-G2T004-001 — FIXED**：writer 事务边界覆盖 `BaseException`。CAS/audit/COMMIT 任一步主失败先
+  `_rollback_or_invalidate` 再传播/转换：KI/SE/GE 保持原对象/类型传播；普通异常/sqlite 错误转固定
+  data-free `TLotWriteFailedError`（`__cause__`/`__context__` 干净）；rollback 自身失败时关闭连接使其
+  不可 commit，且不覆盖主异常。
+- **REV-G2T004-002 — FIXED**：`_require_status` 先 exact non-empty `str` 校验再做 membership，恶意
+  对象 `__eq__` 不再被调用。
+- **REV-G2T004-003 — FIXED**：两连接 CAS 竞争改为 Event 驱动真实交错（conn1 持 BEGIN IMMEDIATE 未提交
+  时 conn2 争锁发起），确定性释放后 conn1 胜、conn2 conflict、恰一条 audit。
 
 ## 证据
-- `work/reports/tests/G2-T003-test-output.txt`（**579 项全部通过** + compileall exit 0 + AST PASS +
-  REV-G2T003-001 独立 FI 重放全文）。
-- HEAD == 基线 `aa13ef9`；本任务文件 `git diff --check` exit 0。
+- `work/reports/tests/G2-T004-test-output.txt`（**597 项全部通过** + compileall exit 0 + AST PASS（24 文件）
+  + REV-G2T004-001..003 独立 FI 重放全文）。
+- HEAD == 基线 `3fd560c`；本任务文件 `git diff --check` exit 0。
 
 ## 范围遵守
-未连接 QMT、未访问账号/行情、未实现 writer/CRUD/Audit 服务/Reconciliation/OrderIntent、未修改
-position/integrations/adapters/probes、未触碰 reverse_repo；`live_trading_allowed=false`；未 commit/push。
-Iteration 2 只改 dangling-FK probe、回归/扩展测试与报告。
+未连接 QMT、未访问账号/行情、未新增 writer API/schema/状态矩阵/CRUD/外部依赖；未修改既有 schema/
+verifier、position/integrations/adapters/probes、reverse_repo；`live_trading_allowed=false`；未 commit/push。
 
 ## Recommendation
 REVIEW_READY（等待 Desktop ChatGPT 独立 Review）。
