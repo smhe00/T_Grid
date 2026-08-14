@@ -286,6 +286,276 @@ _APPLICATION_METADATA_COLUMNS = [
     ("updated_at", "TEXT", 1, 0),
 ]
 
+# t_lots (design §6 + §16.1 suspended review fields).  NOT NULL columns are
+# created with explicit NOT NULL (including the TEXT PRIMARY KEY, since SQLite
+# rowid tables otherwise allow NULL in a primary key column); optional
+# numeric/price columns are nullable.
+_T_LOTS_COLUMNS = [
+    ("id", "TEXT", 1, 1),
+    ("symbol", "TEXT", 1, 0),
+    ("side", "TEXT", 1, 0),
+    ("qty", "INTEGER", 1, 0),
+    ("entry_price", "REAL", 1, 0),
+    ("entry_time", "TEXT", 1, 0),
+    ("target_price", "REAL", 0, 0),
+    ("grid_pct", "REAL", 0, 0),
+    ("status", "TEXT", 1, 0),
+    ("exit_price", "REAL", 0, 0),
+    ("exit_time", "TEXT", 0, 0),
+    ("entry_order_id", "TEXT", 0, 0),
+    ("exit_order_id", "TEXT", 0, 0),
+    ("realized_pnl", "REAL", 0, 0),
+    ("fees", "REAL", 0, 0),
+    ("created_at", "TEXT", 1, 0),
+    ("updated_at", "TEXT", 1, 0),
+    ("suspended_at", "TEXT", 0, 0),
+    ("review_due_at", "TEXT", 0, 0),
+    ("last_reviewed_at", "TEXT", 0, 0),
+    ("review_reason", "TEXT", 0, 0),
+    ("review_status", "TEXT", 0, 0),
+]
+
+_ALLOWED_T_LOT_STATUSES = frozenset(
+    {
+        "PENDING_BUY",
+        "OPEN",
+        "PENDING_SELL",
+        "CLOSED",
+        "SUSPENDED",
+        "CONVERTED_TO_STRATEGIC",
+        "ERROR",
+    }
+)
+
+
+def _trigger_exists(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'trigger' AND name = ?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def _valid_t_lot_row(**overrides) -> dict:
+    """Return a minimal valid t_lots row as a dict (callers must set a unique id)."""
+    row = {
+        "id": "__tgrid_probe",
+        "symbol": "600000.SH",
+        "side": "BUY",
+        "qty": 100,
+        "entry_price": 10.0,
+        "entry_time": "2026-08-14T10:00:00",
+        "status": "OPEN",
+        "created_at": "2026-08-14T10:00:00",
+        "updated_at": "2026-08-14T10:00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+def _insert_row(conn: sqlite3.Connection, row: dict) -> None:
+    names = ", ".join(row)
+    placeholders = ", ".join("?" for _ in row)
+    conn.execute(
+        f"INSERT INTO t_lots ({names}) VALUES ({placeholders})",
+        tuple(row.values()),
+    )
+
+
+def _pick_probe_id(conn: sqlite3.Connection, tag: str) -> str:
+    """Return a probe id confirmed absent from t_lots.
+
+    The verifier must never depend on an undeclared reserved id namespace: a
+    legitimate user row that happens to use a probe-shaped id must neither fail
+    a healthy database (PRIMARY KEY collision on the valid probe) nor let a
+    weakened constraint pass (PK collision raising IntegrityError before the
+    target CHECK is evaluated).  Probing current rows (including rows inserted
+    earlier in this rolled-back transaction) guarantees the chosen id cannot
+    collide, so any IntegrityError a probe raises is caused by the probe's own
+    target field (REV-G2T002-002).
+    """
+    existing = {
+        row[0]
+        for row in conn.execute(
+            "SELECT id FROM t_lots WHERE id IS NOT NULL"
+        ).fetchall()
+    }
+    candidate = tag
+    n = 0
+    while candidate in existing:
+        n += 1
+        candidate = f"{tag}_{n}"
+    return candidate
+
+
+def _expect_integrity(conn: sqlite3.Connection, row: dict, label: str) -> None:
+    """Attempt an invalid t_lots insert; require sqlite3.IntegrityError."""
+    names = ", ".join(row)
+    placeholders = ", ".join("?" for _ in row)
+    try:
+        conn.execute(
+            f"INSERT INTO t_lots ({names}) VALUES ({placeholders})",
+            tuple(row.values()),
+        )
+    except sqlite3.IntegrityError:
+        return
+    raise SchemaVersionError(
+        f"t_lots accepts invalid value for {label}; constraint is missing or not enforced"
+    )
+
+
+def _expect_accept(conn: sqlite3.Connection, row: dict, label: str) -> None:
+    """Insert a row the design declares valid; the schema must accept it."""
+    names = ", ".join(row)
+    placeholders = ", ".join("?" for _ in row)
+    try:
+        conn.execute(
+            f"INSERT INTO t_lots ({names}) VALUES ({placeholders})",
+            tuple(row.values()),
+        )
+    except sqlite3.IntegrityError as exc:
+        raise SchemaVersionError(
+            f"t_lots rejects valid value for {label}; a CHECK is too strict"
+        ) from exc
+
+
+def _verify_t_lot_constraints(conn: sqlite3.Connection) -> None:
+    """Behaviorally verify t_lots constraints inside a rolled-back transaction.
+
+    Text/DDL matching is insufficient: ``CHECK(qty > 0 OR 1=1)``, an
+    unconstrained status column, or a missing numeric storage-type guard would
+    match a regex yet still accept bad rows.  Each probe changes exactly one
+    field of a valid row and uses an id confirmed absent from t_lots, so the
+    only IntegrityError possible is the target field's own CHECK/NOT NULL and a
+    PK collision can never masquerade as constraint evidence.  The whole probe
+    transaction is rolled back so no probe row, user row, migration history or
+    user_version is ever changed (REV-G0T002-003 / REV-G2T002-002/-004).
+    """
+    conn.execute("BEGIN")
+    try:
+        # A valid minimal row must insert (constraints do not reject good data).
+        _expect_accept(
+            conn,
+            _valid_t_lot_row(id=_pick_probe_id(conn, "__tgrid_probe_valid")),
+            label="valid minimal row",
+        )
+
+        invalid_probes = (
+            ("id NULL", {"id": None}),
+            ("id empty", {"id": ""}),
+            ("symbol empty", {"symbol": ""}),
+            ("side empty", {"side": ""}),
+            ("entry_time empty", {"entry_time": ""}),
+            ("created_at empty", {"created_at": ""}),
+            ("updated_at empty", {"updated_at": ""}),
+            ("qty=0", {"qty": 0}),
+            ("qty=-1", {"qty": -1}),
+            ("qty=1.5 fractional", {"qty": 1.5}),
+            ("qty text", {"qty": "abc"}),
+            ("entry_price=0", {"entry_price": 0.0}),
+            ("entry_price=-1", {"entry_price": -1.0}),
+            ("entry_price text", {"entry_price": "abc"}),
+            ("status empty", {"status": ""}),
+            ("status lowercase", {"status": "open"}),
+            ("status unknown", {"status": "UNKNOWN"}),
+            ("status partial", {"status": "PENDING"}),
+            ("target_price=0", {"target_price": 0.0}),
+            ("target_price text", {"target_price": "abc"}),
+            ("grid_pct=0", {"grid_pct": 0.0}),
+            ("grid_pct text", {"grid_pct": "abc"}),
+            ("exit_price=0", {"exit_price": 0.0}),
+            ("exit_price text", {"exit_price": "abc"}),
+            ("realized_pnl text", {"realized_pnl": "abc"}),
+            ("fees negative", {"fees": -1.0}),
+            ("fees text", {"fees": "abc"}),
+            ("review_status invalid", {"review_status": "BOGUS"}),
+        )
+        for label, overrides in invalid_probes:
+            row = _valid_t_lot_row()
+            row.update(overrides)
+            if row["id"]:
+                # A non-empty id is valid; give it a non-colliding probe id so the
+                # NULL/empty id probes (above) are the only ones that change id.
+                row["id"] = _pick_probe_id(conn, f"__tgrid_probe_invalid_{label}")
+            _expect_integrity(conn, row, label=label)
+
+        # Financial semantics (design §6): realized_pnl may be any numeric
+        # (losses/zero/gains); fees must be a non-negative numeric.
+        for tag, pnl in (("pnl_neg", -1.5), ("pnl_zero", 0.0), ("pnl_pos", 5.0)):
+            _expect_accept(
+                conn,
+                _valid_t_lot_row(id=_pick_probe_id(conn, f"__tgrid_probe_{tag}"), realized_pnl=pnl),
+                label=f"realized_pnl={pnl}",
+            )
+        for tag, fees in (("fees_zero", 0.0), ("fees_pos", 0.5)):
+            _expect_accept(
+                conn,
+                _valid_t_lot_row(id=_pick_probe_id(conn, f"__tgrid_probe_{tag}"), fees=fees),
+                label=f"fees={fees}",
+            )
+
+        # review_status: NULL and each allowed value are accepted.
+        allowed_review_statuses = (
+            None, "PENDING", "RESUME_T", "KEEP_SUSPENDED",
+            "CONVERT_TO_STRATEGIC", "MANUAL_EXIT",
+        )
+        for index, review_status in enumerate(allowed_review_statuses):
+            _expect_accept(
+                conn,
+                _valid_t_lot_row(
+                    id=_pick_probe_id(conn, f"__tgrid_probe_review_{index}"),
+                    review_status=review_status,
+                ),
+                label=f"review_status={review_status!r}",
+            )
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def _verify_t_lot_no_delete_trigger(conn: sqlite3.Connection) -> None:
+    """Verify DELETE FROM t_lots is rejected, behaviorally.
+
+    A trigger with the expected name alone is insufficient: a trigger that does
+    not actually abort deletes would pass a name check.  We insert a probe row
+    (id confirmed absent from t_lots) and require ``sqlite3.IntegrityError`` on
+    delete; the whole transaction is rolled back so no probe row remains
+    (REV-G2T002 tamper check).
+    """
+    if not _trigger_exists(conn, "t_lots_no_delete"):
+        raise SchemaVersionError(
+            "t_lots is missing the 't_lots_no_delete' trigger"
+        )
+    conn.execute("BEGIN")
+    try:
+        probe_id = _pick_probe_id(conn, "__tgrid_probe_delete")
+        _insert_row(conn, _valid_t_lot_row(id=probe_id))
+        try:
+            conn.execute("DELETE FROM t_lots WHERE id = ?", (probe_id,))
+        except sqlite3.IntegrityError:
+            return
+        raise SchemaVersionError(
+            "DELETE FROM t_lots is not rejected; the no-delete trigger is "
+            "missing or does not abort deletes"
+        )
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def _verify_t_lot_schema(conn: sqlite3.Connection) -> None:
+    """Verify the on-disk t_lots schema matches migration 2 (design §6/§16.1).
+
+    Called only when MAX_SCHEMA_VERSION >= 2: a version-2 database missing a
+    correct t_lots table, weakened constraints, or a non-enforcing delete
+    trigger fails closed and is never silently repaired.
+    """
+    if MAX_SCHEMA_VERSION < 2:
+        return
+    if not _table_exists(conn, "t_lots"):
+        raise SchemaVersionError("missing table 't_lots'")
+    _verify_columns(conn, "t_lots", _T_LOTS_COLUMNS)
+    _verify_t_lot_constraints(conn)
+    _verify_t_lot_no_delete_trigger(conn)
+
 
 def _verify_bootstrap_schema(conn: sqlite3.Connection) -> None:
     """Verify the on-disk schema actually matches the migration definitions.
@@ -369,6 +639,7 @@ def initialize(path: str) -> sqlite3.Connection:
         _apply_migrations(conn)
         _verify_version_consistency(conn)
         _verify_bootstrap_schema(conn)
+        _verify_t_lot_schema(conn)
     except PersistenceError:
         conn.close()
         raise

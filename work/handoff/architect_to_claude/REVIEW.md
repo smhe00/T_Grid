@@ -1,3 +1,45 @@
+# Architecture Review — G2-T002 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T23:34:18+08:00`
+
+独立运行 555 项 unittest、compileall、diff-check、AST 禁止能力扫描全部通过。重新执行 SQLite Failure
+Injection，确认 NULL id、小数 qty、文本价格被拒绝；realized PnL 允许负/零/正，fees 允许零并拒绝负数/
+文本；旧 probe ID 预置不会拒绝健康数据库或留下残留；弱化 qty 约束即使叠加旧 ID 冲突仍 fail closed。
+
+REV-G2T002-001..005 全部关闭。G2-T002 PASS 只接受 migration 2、T-Lot schema、数据库约束、no-delete
+trigger 与启动 verifier；不授权或宣称 CRUD、Audit、Reconciliation、OrderIntent、QMT 或交易能力。
+
+---
+
+# Architecture Review — G2-T002 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T23:11:49+08:00`
+
+独立 545 项 unittest 与 compileall 通过，但 SQLite Failure Injection 证明 schema 接受 `NULL id`、
+`qty=1.5` 和文本 `entry_price`；零/负 realized PnL 与零 fees 反被拒绝。verifier 的固定 probe ID 与合法
+用户 ID 冲突会拒绝健康数据库，也能用 PK 冲突把缺失约束误判为有效。`test_cli.py` 另超出 Allowed Files。
+
+G2-T002 不通过。Iteration 2 只修 schema 类型/财务语义、probe 隔离、verifier 覆盖与机械测试预期；
+不得实现 CRUD/Audit/Reconciliation/OrderIntent/QMT/交易。详见 `FIX_REQUEST.md`。
+
+---
+
+# Architect Authorization — G2-T002 / Iteration 1
+
+Status: `CLAUDE_READY`
+
+Authorized at: `2026-08-14T22:59:36+08:00`
+
+G2-T001 已以 commit `7270485` PASS。按 `work/control/CURRENT_TASK.md` 只复用并扩展现有 SQLite
+migration/verifier，新增 version 2 t_lots schema、数据库约束、禁止删除 trigger 与语义完整性检查。
+不得实现 CRUD/Audit/Reconciliation/OrderIntent/QMT/交易；完成后不 commit，释放 Lease并交付 Review。
+
+---
+
 # Architecture Review — G2-T001 / Iteration 2
 
 Status: `PASS`

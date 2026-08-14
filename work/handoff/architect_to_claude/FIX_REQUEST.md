@@ -1,3 +1,106 @@
+# No Active Fix Request — G2-T002 / PASS
+
+Status: `CLOSED — PASS`
+
+Closed at: `2026-08-14T23:34:18+08:00`
+
+REV-G2T002-001..005 已由 Iteration 2 修复并通过独立复核。以下 G2-T002 Fix Request 仅保留历史审计，
+不再授权修改。
+
+---
+
+# Active Fix Request — G2-T002 / Iteration 2
+
+Status: `CHANGES_REQUIRED`
+
+Issued at: `2026-08-14T23:11:49+08:00`
+
+本轮只修 schema/verifier/test 的五项问题；禁止新增 Ledger CRUD、Audit、Reconciliation 或交易能力。
+
+## P0 — REV-G2T002-001：SQLite 约束接受 NULL ID、fractional qty 与文本价格
+
+独立结果：
+
+```text
+NULL_ID          ACCEPTED typeof(id)=null
+FRACTIONAL_QTY   ACCEPTED typeof(qty)=real
+TEXT_ENTRY_PRICE ACCEPTED typeof(entry_price)=text
+```
+
+`TEXT PRIMARY KEY` 在当前 SQLite rowid 表中不自动等价于 `NOT NULL`；type affinity 也不会保证真正整数/数值。
+
+Required:
+
+- `id` 显式 `NOT NULL` 且非空。
+- qty 必须数据库级 `typeof(qty)='integer' AND qty > 0`；至少拒绝 1.5、0、负数和非数值文本。
+- entry/target/exit price 与 grid_pct 在非 NULL 时必须是 SQLite integer/real storage class 且为正；文本
+  不能利用 storage-class 排序绕过 `> 0`。
+- 对所有新增/变更约束加入直接插入测试与 tampered-schema verifier 测试。
+
+## P0 — REV-G2T002-002：固定 probe ID 既拒绝健康数据库又制造约束假阳性
+
+预先合法插入：
+
+```text
+__tgrid_probe_valid
+__tgrid_probe_bad
+__tgrid_probe_delete
+```
+
+重新 initialize 健康数据库得到 `UNIQUE constraint failed: t_lots.id`。更严重的是，若
+`__tgrid_probe_bad` 已存在，所有非法值 probe 都可能仅因主键冲突抛 IntegrityError，从而把弱化约束误判
+为有效。
+
+Required:
+
+- 每个 probe 使用与现有行确认不冲突的独立 ID；不得依赖未声明的保留 ID namespace。
+- constraint probes 不能共享同一 ID，也不能把 PK/其它无关约束错误当成目标约束证据。
+- 合法预置上述三个旧 probe ID 后 initialize 必须通过且行内容完全不变。
+- 构造弱化 qty/status schema并预置冲突 ID，verifier 仍必须识别目标约束缺失。
+- 所有 probe 完成或失败后完整 rollback，不残留行。
+
+## P1 — REV-G2T002-003：realized PnL 与 fees 的财务语义错误
+
+当前 `realized_pnl > 0` 拒绝 0 和亏损，`fees > 0` 拒绝零费用。设计 §6 只声明二者为 REAL；实际成交
+可以盈亏为零或负，费用也可以为零。
+
+Required:
+
+- `realized_pnl` 允许负数、零、正数；非 NULL 时只要求真实 numeric storage type。
+- `fees` 至少允许零并拒绝负数/文本；使用 `>= 0` numeric 语义。
+- 修正 verifier 与测试，不再把 realized_pnl=0/negative、fees=0 当非法。
+
+## P1 — REV-G2T002-004：行为 verifier 覆盖不足
+
+当前 verifier 未探测 NULL id、空 id/symbol/side/entry_time/created_at/updated_at、fractional qty、文本
+价格、非法 review_status。列结构相同但弱化这些 CHECK 的 v2 schema可能通过。
+
+Required:
+
+- 用目标明确且互不串扰的行为 probe 覆盖上述约束；验证异常确由目标字段触发。
+- review_status 的允许集合与 NULL 行为均要验证。
+- 现有用户行、migration history 和 user_version 在 probe 前后逐值不变。
+- SQLite 意外异常继续转换为现有 PersistenceError 层。
+
+## P1 — REV-G2T002-005：test_cli.py 超出 Iteration 1 Allowed Files
+
+该文件三条断言（一条 user_version、两条 migration history count）从 1→2 的机械更新是保持回归所必需，
+但原任务未授权。
+
+Required:
+
+- Iteration 2 现仅授权保留这三条精确断言更新；不得改 test_cli.py 其他内容。
+- 报告最终 diff 证明该文件只有一条 version 与两条 history count 预期变化。
+
+## Completion
+
+1. 只修 REV-G2T002-001..005，不新增新数据库入口、CRUD 或状态机。
+2. 完整 unittest、compileall、AST、diff-check，并重放本 Review 全部独立 SQLite FI。
+3. 报告逐项标记 FIXED/NOT_FIXED/DISAGREE，保存完整证据。
+4. 设置 `REVIEW_READY / owner=architect / iteration=2`，释放 Lease并停止；不要 commit。
+
+---
+
 # No Active Fix Request — G2-T001 / PASS
 
 Status: `CLOSED`

@@ -155,3 +155,43 @@ session: codex-desktop
 - Prohibited: Ledger/DB/Reconciliation/OrderIntent/QMT/strategy/order/cancel/live
 
 ---
+
+# Architect Authorization — G2-T002
+
+- State: `CLAUDE_READY`
+- Owner: `claude`
+- Iteration: `1`
+- Updated: `2026-08-14T22:59:36+08:00`
+- Baseline: `72704850a8344eb1173108497402984242f5075f`
+- Authorization: offline SQLite migration 2 + t_lots schema/constraints/no-delete/verifier only
+- Reuse: existing Migration/MIGRATIONS/initialize/open_database/semantic probe patterns
+- Prohibited: CRUD/Audit/Reconciliation/OrderIntent/Position/QMT/strategy/order/cancel/live
+
+---
+
+# Architect Review — G2-T002 / Iteration 1
+
+- State: `CHANGES_REQUIRED`
+- Owner: `claude`
+- Iteration: `2`
+- Updated: `2026-08-14T23:11:49+08:00`
+- P0: NULL id/fractional qty/text price accepted; fixed probe IDs collide and mask weak constraints
+- P1: realized PnL/fees semantics wrong; verifier gaps; test_cli scope correction
+- Independent tests: 545 OK; independent SQLite boundary FI FAIL
+- Authorization: offline minimal fixes REV-G2T002-001..005 only
+- Prohibited: CRUD/Audit/Reconciliation/OrderIntent/QMT/strategy/order/cancel/live
+
+---
+
+# Architect Review — G2-T002 / Iteration 2
+
+- State: `ARCHITECT_PLANNING`
+- Owner: `architect`
+- Iteration: `2`
+- Updated: `2026-08-14T23:34:18+08:00`
+- Verdict: `PASS`; REV-G2T002-001..005 closed
+- Independent tests: 555 OK; compileall/diff-check/AST PASS
+- Independent FI: type/null/financial semantics/probe-collision/weak-schema boundaries PASS
+- Safety: no QMT/order/cancel; `live_trading_allowed=false`
+
+---

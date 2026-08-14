@@ -6,9 +6,13 @@ used to reject databases whose on-disk ``PRAGMA user_version`` (or migration
 history) is newer than this build — we never auto-downgrade.
 
 Migration 1 is the bootstrap: it creates the two Gate-0 foundation tables only
-(``schema_migrations`` and ``application_metadata``).  No trading domain tables
-(``t_lots``, orders, trades, positions, reservations) are created here; those
-belong to Gate 2.
+(``schema_migrations`` and ``application_metadata``).
+
+Migration 2 creates the Gate-2 T-Lot Ledger foundation: the ``t_lots`` table with
+database-level constraints (design §6 + §16.1 suspended review fields) and a
+trigger that forbids ``DELETE FROM t_lots`` so historical lots can never be
+silently removed (all state changes must go through updates recorded by a future
+Audit Log).
 """
 
 from __future__ import annotations
@@ -35,6 +39,65 @@ BOOTSTRAP_STATEMENTS: Tuple[str, ...] = (
     " VALUES ('project_name', 'TGrid', datetime('now'))",
 )
 
+# Design §6 allowed statuses.  Stored as a single CHECK on t_lots.status.
+_T_LOT_STATUSES = (
+    "'PENDING_BUY'",
+    "'OPEN'",
+    "'PENDING_SELL'",
+    "'CLOSED'",
+    "'SUSPENDED'",
+    "'CONVERTED_TO_STRATEGIC'",
+    "'ERROR'",
+)
+
+# t_lots (design §6 fields + §16.1 suspended review fields).  Storage-class
+# semantics are enforced at the database level: id/required texts are non-empty,
+# qty must be a true SQLite integer > 0, prices must be a numeric (integer/real)
+# storage class and positive when present, realized_pnl may be any numeric
+# (losses/zero/gains) and fees must be a non-negative numeric.  Text values can
+# never exploit storage-class ordering to bypass a CHECK.  No DELETE is ever
+# allowed.
+T_LOT_LEDGER_STATEMENTS: Tuple[str, ...] = (
+    "CREATE TABLE t_lots ("
+    " id TEXT NOT NULL PRIMARY KEY CHECK(length(trim(id)) > 0),"
+    " symbol TEXT NOT NULL CHECK(length(trim(symbol)) > 0),"
+    " side TEXT NOT NULL CHECK(length(trim(side)) > 0),"
+    " qty INTEGER NOT NULL CHECK(typeof(qty) = 'integer' AND qty > 0),"
+    " entry_price REAL NOT NULL CHECK(typeof(entry_price) IN ('integer', 'real')"
+    " AND entry_price > 0),"
+    " entry_time TEXT NOT NULL CHECK(length(trim(entry_time)) > 0),"
+    " target_price REAL CHECK(target_price IS NULL OR (typeof(target_price) IN"
+    " ('integer', 'real') AND target_price > 0)),"
+    " grid_pct REAL CHECK(grid_pct IS NULL OR (typeof(grid_pct) IN ('integer',"
+    " 'real') AND grid_pct > 0)),"
+    " status TEXT NOT NULL CHECK(status IN (" + ", ".join(_T_LOT_STATUSES) + ")),"
+    " exit_price REAL CHECK(exit_price IS NULL OR (typeof(exit_price) IN"
+    " ('integer', 'real') AND exit_price > 0)),"
+    " exit_time TEXT,"
+    " entry_order_id TEXT,"
+    " exit_order_id TEXT,"
+    " realized_pnl REAL CHECK(realized_pnl IS NULL OR typeof(realized_pnl) IN"
+    " ('integer', 'real')),"
+    " fees REAL CHECK(fees IS NULL OR (typeof(fees) IN ('integer', 'real')"
+    " AND fees >= 0)),"
+    " created_at TEXT NOT NULL CHECK(length(trim(created_at)) > 0),"
+    " updated_at TEXT NOT NULL CHECK(length(trim(updated_at)) > 0),"
+    " suspended_at TEXT,"
+    " review_due_at TEXT,"
+    " last_reviewed_at TEXT,"
+    " review_reason TEXT,"
+    " review_status TEXT CHECK(review_status IS NULL OR review_status IN "
+    " ('PENDING', 'RESUME_T', 'KEEP_SUSPENDED', 'CONVERT_TO_STRATEGIC', 'MANUAL_EXIT'))"
+    ")",
+    # Forbid any DELETE of a T-Lot: history is never removed.  State changes
+    # must be recorded by future Audit Log updates.
+    "CREATE TRIGGER t_lots_no_delete "
+    "BEFORE DELETE ON t_lots "
+    "BEGIN "
+    " SELECT RAISE(ABORT, 't_lots rows cannot be deleted'); "
+    "END",
+)
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -45,6 +108,9 @@ class Migration:
 
 MIGRATIONS: Tuple[Migration, ...] = (
     Migration(version=1, name="bootstrap", statements=BOOTSTRAP_STATEMENTS),
+    Migration(
+        version=2, name="t_lot_ledger", statements=T_LOT_LEDGER_STATEMENTS
+    ),
 )
 
 MAX_SCHEMA_VERSION: int = max(migration.version for migration in MIGRATIONS)
