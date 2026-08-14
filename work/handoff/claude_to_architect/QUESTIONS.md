@@ -2,5 +2,5 @@
 
 NONE（无阻塞问题）。
 
-注：本任务实现与报告已完成并设置 REVIEW_READY；由于本地 Git 仓库与 GitHub `T_Grid` 无共同祖先，
-无法从当前目录安全执行 ff-only merge / 普通 push，GitHub 侧推送由用户/架构师决定方式。
+注：Iteration 1 对 `CLAUDE_HEARTBEAT.md` 的修改已按 REV-G2T005-001 记录为已识别 scope drift，Iteration 2
+不再改动该文件；Git provenance 现取自 `smhe00/T_Grid` GitHub main（`6a7fa4c3...`）。

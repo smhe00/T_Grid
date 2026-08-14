@@ -4,24 +4,23 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 4
-handoff_id: "G2-T005-FIX-20260815-004"
-authorized_next:
-  - "G2-T005"
+handoff_seq: 5
+handoff_id: "G2-T005-REVIEW2-20260815-005"
+authorized_next: []
 design_version: "1.1"
 gate: 2
 task_id: "G2-T005"
-state: "CHANGES_REQUIRED"
-owner: "claude"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 2
-last_actor: "architect"
-last_update: "2026-08-15T02:50:00+08:00"
+last_actor: "claude"
+last_update: "2026-08-15T03:17:50+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "be85eb8d7381c2c3b75c63de8f33650ad8a8f9e0"
-git_head_commit: "be85eb8d7381c2c3b75c63de8f33650ad8a8f9e0"
+git_base_commit: "6a7fa4c3d8c541754803a24205b224020b7b1a63"
+git_head_commit: "6a7fa4c3d8c541754803a24205b224020b7b1a63"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G2-T005 iteration 1 reviewed by Architect: production transition policy core is acceptable, but Gate remains CHANGES_REQUIRED for four narrow items: REV-G2T005-001 GitHub provenance metadata/report mismatch; REV-G2T005-002 Iteration 1 modified CLAUDE_HEARTBEAT outside Allowed Files; REV-G2T005-003 missing explicit 7x7 status-pair closure test; REV-G2T005-004 missing TLotWriteFailedError writer FI. Iteration 2 is test/report/control-only; production transition policy/writer/schema are forbidden. Temporary Architect files from the interrupted publication are removed in this handoff. Claude may act only on G2-T005 and must STOP WRITE on remote change, dirty worktree, ownership mismatch, or scope drift. live_trading_allowed=false."
+notes: "G2-T005 iteration 2 REVIEW_READY. REV-G2T005-001..004 fixed: (001) Git provenance now from smhe00/T_Grid GitHub main 6a7fa4c3 (no local monorepo SHA); reports describe actual GitHub commit/push status; CLAUDE_HEARTBEAT.md not modified, Iteration 1 change recorded as scope drift. (002) added test_49_status_pair_closure: 7x7=49 pairs, only 5 approved directed edges reachable, 44 pairs + all 7 self-transitions unreachable. (003) added writer write-failed FI: TLotWriteFailedError propagates, exactly 1 call, no swallow/retry, action->status/event_type mapping unchanged. (004) reran full evidence: 618 tests pass (616+2), compileall 0, AST PASS (25 files, forbidden=0), policy raw-SQL none, diff-check clean. Will fast-forward push to GitHub main from 6a7fa4c. live_trading_allowed=false."

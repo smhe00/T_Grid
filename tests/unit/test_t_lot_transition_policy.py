@@ -18,6 +18,7 @@ from tgrid.persistence import (
     TLotTransitionPlan,
     TLotTransitionRejectedError,
     TLotTransitionResult,
+    TLotWriteFailedError,
     apply_t_lot_transition,
     initialize,
     resolve_t_lot_transition,
@@ -101,6 +102,31 @@ class TestResolver(unittest.TestCase):
                 else:
                     with self.assertRaises(TLotTransitionRejectedError):
                         resolve_t_lot_transition(action, status)
+
+    def test_49_status_pair_closure(self):
+        # REV-G2T005-002: of the 7x7 = 49 (from_status, to_status) pairs, only
+        # the five approved directed edges are reachable via some approved
+        # action; the other 44 pairs and all 7 self-transitions are unreachable.
+        expected_edges = {
+            ("PENDING_BUY", "OPEN"),
+            ("OPEN", "PENDING_SELL"),
+            ("PENDING_SELL", "CLOSED"),
+            ("OPEN", "SUSPENDED"),
+            ("SUSPENDED", "OPEN"),
+        }
+        reachable = set()
+        for action in ACTIONS:
+            for status in T_LOT_STATUSES:
+                try:
+                    plan = resolve_t_lot_transition(action, status)
+                except TLotTransitionRejectedError:
+                    continue
+                reachable.add((plan.expected_status, plan.to_status))
+        self.assertEqual(reachable, expected_edges)
+        self.assertEqual(len(reachable), 5)
+        self.assertEqual(49 - len(expected_edges), 44)
+        for status in T_LOT_STATUSES:
+            self.assertNotIn((status, status), reachable)
 
     def test_unknown_action_rejected(self):
         for action in ("UNKNOWN", "SELL", "OPEN_LOT", "CANCEL_ORDER"):
@@ -313,6 +339,37 @@ class TestWriterSpy(unittest.TestCase):
                         actor="s", occurred_at="t",
                     )
                 spy.assert_called_once()
+        finally:
+            conn.close()
+
+    def test_writer_write_failed_not_swallowed_not_retried(self):
+        # REV-G2T005-003: when the G2-T004 writer raises its existing
+        # TLotWriteFailedError, the policy must not swallow it, must not retry,
+        # must call the writer exactly once, and must not alter the
+        # action -> status/event_type mapping.
+        conn = initialize(_temp_db_path())
+        try:
+            with mock.patch(
+                "tgrid.persistence.t_lot_transition_policy.transition_t_lot_status",
+                side_effect=TLotWriteFailedError("write failed"),
+            ) as spy:
+                with self.assertRaises(TLotWriteFailedError):
+                    apply_t_lot_transition(
+                        conn, t_lot_id="L1", expected_status="PENDING_BUY",
+                        action="BUY_FILL_CONFIRMED", audit_id="A", details_json="{}",
+                        actor="s", occurred_at="t",
+                    )
+                spy.assert_called_once_with(
+                    conn,
+                    t_lot_id="L1",
+                    expected_status="PENDING_BUY",
+                    new_status="OPEN",
+                    audit_id="A",
+                    event_type="BUY_FILL_CONFIRMED",
+                    details_json="{}",
+                    actor="s",
+                    occurred_at="t",
+                )
         finally:
             conn.close()
 

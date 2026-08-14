@@ -24,21 +24,21 @@ test_db_close_system_exit_still_shuts_logger (unit.test_cli.TestIteration4Fixes.
 test_shutdown_complete_generator_exit_still_shuts_logger (unit.test_cli.TestIteration4Fixes.test_shutdown_complete_generator_exit_still_shuts_logger) ... ok
 test_failure_no_success_text (unit.test_cli.TestOutputContract.test_failure_no_success_text) ... ok
 test_no_sensitive_data_in_output (unit.test_cli.TestOutputContract.test_no_sensitive_data_in_output) ... ok
-test_alias_path_conflict_rejected (unit.test_cli.TestPreflightRejections.test_alias_path_conflict_rejected) ... tgrid: error: database path and config path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmp7n1yjpbx\.\config.yaml
+test_alias_path_conflict_rejected (unit.test_cli.TestPreflightRejections.test_alias_path_conflict_rejected) ... tgrid: error: database path and config path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmp56tbdpy2\.\config.yaml
 ok
 test_corrupt_db_rejected (unit.test_cli.TestPreflightRejections.test_corrupt_db_rejected) ... tgrid: error: database integrity check failed: file is not a database
 ok
-test_invalid_yaml_rejected (unit.test_cli.TestPreflightRejections.test_invalid_yaml_rejected) ... tgrid: error: C:\Users\peter\AppData\Local\Temp\tmp1l5mw6x7\config.yaml: invalid YAML: while parsing a flow sequence
-  in "C:\Users\peter\AppData\Local\Temp\tmp1l5mw6x7\config.yaml", line 1, column 9
+test_invalid_yaml_rejected (unit.test_cli.TestPreflightRejections.test_invalid_yaml_rejected) ... tgrid: error: C:\Users\peter\AppData\Local\Temp\tmpyatvyxnl\config.yaml: invalid YAML: while parsing a flow sequence
+  in "C:\Users\peter\AppData\Local\Temp\tmpyatvyxnl\config.yaml", line 1, column 9
 expected ',' or ']', but got '<stream end>'
-  in "C:\Users\peter\AppData\Local\Temp\tmp1l5mw6x7\config.yaml", line 2, column 1
+  in "C:\Users\peter\AppData\Local\Temp\tmpyatvyxnl\config.yaml", line 2, column 1
 ok
 test_live_trading_true_rejected_before_db_log (unit.test_cli.TestPreflightRejections.test_live_trading_true_rejected_before_db_log) ... ok
-test_log_path_is_directory_rejected (unit.test_cli.TestPreflightRejections.test_log_path_is_directory_rejected) ... tgrid: error: log file path is a directory: C:\Users\peter\AppData\Local\Temp\tmpqwbzza9v
+test_log_path_is_directory_rejected (unit.test_cli.TestPreflightRejections.test_log_path_is_directory_rejected) ... tgrid: error: log file path is a directory: C:\Users\peter\AppData\Local\Temp\tmpyk166jv4
 ok
-test_path_conflict_rejected (unit.test_cli.TestPreflightRejections.test_path_conflict_rejected) ... tgrid: error: database path and config path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmpn0i2bjzj\config.yaml
-tgrid: error: log path and config path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmpn0i2bjzj\config.yaml
-tgrid: error: log path and database path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmpn0i2bjzj\d.db
+test_path_conflict_rejected (unit.test_cli.TestPreflightRejections.test_path_conflict_rejected) ... tgrid: error: database path and config path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmphn7f0thv\config.yaml
+tgrid: error: log path and config path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmphn7f0thv\config.yaml
+tgrid: error: log path and database path resolve to the same location: C:\Users\peter\AppData\Local\Temp\tmphn7f0thv\d.db
 ok
 test_repeat_preflight_idempotent (unit.test_cli.TestPreflightSuccess.test_repeat_preflight_idempotent) ... ok
 test_success_returns_zero_and_writes_three_events (unit.test_cli.TestPreflightSuccess.test_success_returns_zero_and_writes_three_events) ... ok
@@ -592,6 +592,7 @@ test_manual_noop_not_applied (unit.test_t_lot_transition_policy.TestApplyIntegra
 test_rejected_edge_no_db_touch (unit.test_t_lot_transition_policy.TestApplyIntegration.test_rejected_edge_no_db_touch) ... ok
 test_stale_source_conflicts_via_writer (unit.test_t_lot_transition_policy.TestApplyIntegration.test_stale_source_conflicts_via_writer) ... ok
 test_no_raw_sql_assert_or_trading_api (unit.test_t_lot_transition_policy.TestForbiddenApiScan.test_no_raw_sql_assert_or_trading_api) ... ok
+test_49_status_pair_closure (unit.test_t_lot_transition_policy.TestResolver.test_49_status_pair_closure) ... ok
 test_approved_edges_resolve_correctly (unit.test_t_lot_transition_policy.TestResolver.test_approved_edges_resolve_correctly) ... ok
 test_full_action_status_matrix (unit.test_t_lot_transition_policy.TestResolver.test_full_action_status_matrix) ... ok
 test_invalid_input_types_rejected (unit.test_t_lot_transition_policy.TestResolver.test_invalid_input_types_rejected) ... ok
@@ -606,6 +607,7 @@ test_writer_base_exception_propagates_once (unit.test_t_lot_transition_policy.Te
 test_writer_called_exactly_once_on_success (unit.test_t_lot_transition_policy.TestWriterSpy.test_writer_called_exactly_once_on_success) ... ok
 test_writer_conflict_propagates_once (unit.test_t_lot_transition_policy.TestWriterSpy.test_writer_conflict_propagates_once) ... ok
 test_writer_not_called_on_rejected (unit.test_t_lot_transition_policy.TestWriterSpy.test_writer_not_called_on_rejected) ... ok
+test_writer_write_failed_not_swallowed_not_retried (unit.test_t_lot_transition_policy.TestWriterSpy.test_writer_write_failed_not_swallowed_not_retried) ... ok
 test_active_transaction_rejected_and_caller_state_preserved (unit.test_t_lot_writer.TestActiveTransaction.test_active_transaction_rejected_and_caller_state_preserved) ... ok
 test_audit_constraint_failure_rolls_back (unit.test_t_lot_writer.TestAtomicity.test_audit_constraint_failure_rolls_back) ... ok
 test_base_exception_at_audit_insert_propagates_and_rolls_back (unit.test_t_lot_writer.TestAtomicity.test_base_exception_at_audit_insert_propagates_and_rolls_back) ... ok
@@ -626,7 +628,7 @@ test_out_of_status_rejected (unit.test_t_lot_writer.TestValidation.test_out_of_s
 test_stale_expected_status_raises_conflict (unit.test_t_lot_writer.TestValidation.test_stale_expected_status_raises_conflict) ... ok
 
 ----------------------------------------------------------------------
-Ran 616 tests in 7.143s
+Ran 618 tests in 7.242s
 
 OK
 ===== compileall =====
@@ -635,22 +637,3 @@ compileall_exit=0
 AST_SCAN files=25 forbidden=0
 AST_SCAN_PASS
 POLICY_RAW_SQL_TOKENS none
-===== Independent policy FI replay =====
-== five approved edges (resolver) ==
-approved_resolved=5/5
-== full action x status matrix ==
-matrix_rejected=30/30 self_rejected=all
-== manual/no-op not executable, DB unchanged ==
-KEEP_SUSPENDED     rejected status=SUSPENDED audits=0
-CONVERT_TO_STRATEGIC rejected status=SUSPENDED audits=0
-MANUAL_EXIT        rejected status=SUSPENDED audits=0
-== malicious dunder never called ==
-malicious cause_none=True context_none=True secret=False
-== writer spy: 0 on reject, 1 on success ==
-writer_calls_on_reject=0 writer_calls_on_success=1
-== stale source -> writer conflict, no retry, values unchanged ==
-stale conflict status=PENDING_SELL audits=1
-== terminal source rejected ==
-CLOSED                    rejected
-CONVERTED_TO_STRATEGIC    rejected
-ERROR                     rejected
