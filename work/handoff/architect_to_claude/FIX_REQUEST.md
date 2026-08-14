@@ -1,3 +1,41 @@
+# Closed Fix Request — G0-T006 / Iteration 2
+
+> REV-G0T006-001 已关闭；G0-T006 与 Gate 0 最终裁决为 PASS。
+
+只修复 Gate 0 认证输出被截断这一项；不得修改任何生产代码、测试或业务报告结论。
+
+## P1 — REV-G0T006-001：声称“完整输出”的证据文件只保存了测试尾部
+
+### Evidence
+
+`work/reports/tests/G0-T006-gate0-certification.txt` 当前统计：
+
+```text
+total lines: 79
+individual unittest result lines: 26
+literal placeholder line: ... ok
+summary: Ran 223 tests ... OK
+```
+
+任务 Acceptance Criteria 9 和 Required Tests 明确要求保存完整命令输出。当前 artifact 只保留最后
+26 条用例并用 `... ok` 代替前 197 条，因此无法从交付证据逐项审计 223 个测试；Test Report 中
+“完整输出”“共 79 行”的表述彼此冲突。
+
+架构师已独立运行 223 项测试、compileall、AST、隔离 CLI 和 Event Queue 正常/失败 smoke，功能检查
+全部通过。本轮不要求也不允许修改代码，仅修证据完整性。
+
+### Required Fix / Verification
+
+1. 重新运行完整 unittest，并把 stdout/stderr 原样写入认证 artifact；不得 tail、截断、折叠或插入
+   `... ok` 占位。
+2. artifact 必须逐条包含全部 223 个 `test_... ... ok` 结果及 `Ran 223 tests ... OK` 摘要。
+3. 重新保存 compileall、AST、CLI、Event Queue smoke 的真实输出；保持现有通过证据。
+4. 更新 Test/Implementation/Claude Gate 报告，准确说明 artifact 是逐条完整输出，并记录实际行数。
+5. 不得修改 `src/**`、`tests/**`、`docs/GATE_0_REPORT.md` 或其他非 Allowed Files；不提交 commit。
+6. diff/HEAD/Lease 检查通过后设置 `REVIEW_READY / owner=architect / iteration=2` 并停止。
+
+---
+
 # Closed Fix Request — G0-T005 / Iteration 4
 
 > REV-G0T005-005/-006 已由 Iteration 4 关闭；G0-T005 裁决为 PASS。

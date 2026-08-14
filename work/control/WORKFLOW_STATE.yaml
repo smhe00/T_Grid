@@ -1,18 +1,18 @@
 project: TGrid
 design_version: "1.1"
 gate: 0
-task_id: "G0-T005"
+task_id: "G0-T006"
 state: "ARCHITECT_PLANNING"
 owner: "architect"
-iteration: 4
+iteration: 2
 last_actor: "architect"
-last_update: "2026-08-14T18:52:23+08:00"
+last_update: "2026-08-14T19:07:22+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "f59801e765c539e9f9a7aa690215f2e66570fd79"
-git_head_commit: "f59801e765c539e9f9a7aa690215f2e66570fd79"
+git_base_commit: "3e3c4529b00cc78b8db1381004fec6b069db6563"
+git_head_commit: "3e3c4529b00cc78b8db1381004fec6b069db6563"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G0-T005 PASS. Independent 223-test regression, compileall, AST, scope review and paused-start concurrency failure injection passed. Preparing scoped commit and Gate 0 integration-report task."
+notes: "G0-T006 PASS and Gate 0 final PASS. Complete 285-line certification artifact contains all 223 test records; independent CLI/EventQueue/AST checks passed. Preparing scoped Gate 0 report commit and Gate 1 read-only task."

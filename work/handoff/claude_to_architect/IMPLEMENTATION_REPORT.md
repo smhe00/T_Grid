@@ -1,60 +1,35 @@
-# Implementation Report
+# Implementation Report — G0-T006
 
 ## Task
-G0-T005 — 单一 Event Queue 骨架（Iteration 4，响应 CHANGES_REQUIRED）
+G0-T006 — Gate 0 集成认证与总报告（只读）
 
 ## Summary
-Iteration 4 只修复 `FIX_REQUEST.md` 的 Iteration 4 Active Fix Request：REV-G0T005-005（join 缓存未启动 worker）与 REV-G0T005-006（测试遗留 daemon 控制线程）。
+在已验收基线 `3e3c452` 上执行一次只读、可复现的 Gate 0 集成认证，并生成设计要求的 `docs/GATE_0_REPORT.md`。未修改任何生产代码或测试，未进入 Gate 1，未声明最终裁决。
 
-## Iteration 4 Fixes（逐 Issue 回复）
+## Deliverables
+- `docs/GATE_0_REPORT.md` — 完整 Gate 0 认证报告（实施内容、文件/能力清单、命令与真实结果、5 个已通过子任务/commit、Failure Injection、不变量、已知问题、风险评估、下一 Gate 建议；明确是认证报告而非最终裁决）。
+- `work/reports/tests/G0-T006-gate0-certification.txt` — 完整认证命令输出。
+- 更新 Claude Gate / Implementation / Test / Questions 报告。
 
-### REV-G0T005-005（P0）— join 缓存未启动 worker，start failure 后仍调用 Thread.join → FIXED
-`join()` 重构：等待 `_starting` handshake 结束后，在**同一 lock 内重新读取 `_worker`**，再决定是否 join。
-- start 失败路径清空 `_worker` 后，并发 join 醒来重新读取为 `None` → 安全返回 `True`（无实际 OS 线程），绝不调用 `Thread.join()` 于未启动线程，不泄漏 `RuntimeError: cannot join thread before it is started`。
-- FAILED 状态由 `state`/`failure_type`/`raise_if_failed()` 表达。
-- 新增确定性测试：`test_concurrent_join_after_start_failure_returns_true`（start 暂停→fail + 并发 join，start 抛安全项目异常、join 返回 True 无异常、FAILED/failure_type 正确、唯一 secret 不出现）与 `test_stop_and_start_failure_interleaved_no_deadlock`（stop+start failure+join 交错，无死锁、无虚假 RUNNING、无活线程、无未处理线程异常）。
+## 认证执行内容
+1. Git HEAD 核对 = `3e3c4529b00cc78b8db1381004fec6b069db6563`。
+2. `python -m unittest discover -s tests -p "test_*.py" -v` → 223 项全部通过。
+3. `python -m compileall -q src tests` → 退出 0。
+4. AST 扫描（`src/tgrid/**/*.py`，13 文件）→ 无 `ast.Assert`、无 `xtquant` import、无 `order_stock`/`cancel_order`。
+5. 隔离 CLI（临时目录）：valid preflight 退出 0 + JSONL 事件序 `startup_begin, preflight_ok, shutdown_complete` + SQLite user_version=1、migration history=1；`live_trading=true` 退出 1 且 DB/log 未创建。
+6. Event Queue 集成 smoke：480 事件恰好一次、单 worker、STOPPED、无线程泄漏；handler failure → FAILED + pending 丢弃 + `raise_if_failed` 抛 `EventQueueWorkerError`。
 
-### REV-G0T005-006（P1）— 测试遗留永不结束的 daemon 控制线程 → FIXED
-删除不可清理的 `test_bounded_join_returns_false_when_start_never_completes`（无限循环 daemon controller），替换为 `test_bounded_join_returns_false_while_start_paused_then_recovers`：用可释放 Event 暂停 start，验证 bounded join 返回 False，再 `stop()` + `release` + join 所有控制/worker 线程；测试结束断言 controller 与目标 thread_name 均无存活线程。
+## Test Commands / Evidence
+见 `work/reports/tests/G0-T006-gate0-certification.txt`。
 
-## Files Changed（Iteration 4）
-- `src/tgrid/events.py` — `join()` 在 handshake 后锁内重读 `_worker`。
-- `tests/unit/test_events.py` — 新增 `TestIteration4Fixes`（2 项）；重写泄露测试。
-- `work/reports/tests/G0-T005-test-output.txt` — 重新生成。
+## Iteration 2 Fix（REV-G0T006-001）
+重新生成认证 artifact：完整 unittest stdout/stderr **原样逐条保存**（223 个 `test_...` 用例行 + `Ran 223 tests ... OK`），不再截断、不再用 `... ok` 占位。artifact 共 285 行、27 个 `[PASS]` 检查行，末尾 `ALL CHECKS PASSED`；compileall/AST/CLI/Event Queue smoke 真实输出一并保存。未修改任何生产代码、测试或 `docs/GATE_0_REPORT.md`。
 
-## Design Mapping
-不变；完善 start/join handshake 竞态与测试可清理性（协议 §22 原子/健壮、§34 fail-closed）。
+## Test Results
+全部认证检查 `PASS`；无 traceback、无 `Exception in thread`、无 secret、无残留线程。
 
 ## Deviations
 NONE
-
-## Tests Added（Iteration 4）
-- `TestIteration4Fixes.test_concurrent_join_after_start_failure_returns_true`
-- `TestIteration4Fixes.test_stop_and_start_failure_interleaved_no_deadlock`
-- 重写 `TestIteration3Fixes.test_bounded_join_returns_false_while_start_paused_then_recovers`
-
-## Test Commands
-```text
-python -m unittest discover -s tests -p "test_*.py" -v
-python -m compileall -q src tests
-```
-
-## Test Results
-223 项全部通过（`Ran 223 tests ... OK`；221 项迭代3回归 + 新增 2 项）；`compileall` 退出码 0。完整输出见 `work/reports/tests/G0-T005-test-output.txt`（无未处理线程异常）。
-
-## Failure Injection（累计）
-Iteration 1/2/3 的 12 类 + Iteration 4：start failure + 并发 join、stop + start failure + join 交错、start 暂停可恢复 bounded join。
-
-全部 fail closed，无裸 threading 异常、无 secret、无死锁、无活线程泄漏。
-
-## Invariant Check
-1–9 全部满足；新增：join 在 handshake 后锁内重读 worker、start failure 后 join 安全返回 True、测试无遗留线程。
-
-## Static / Type / Lint Check
-`compileall` 退出码 0；AST 扫描 `src/tgrid/` 无 `ast.Assert`、无 `xtquant` import、无 `order_stock`/`cancel_order`。
-
-## Git Diff Summary
-未 commit（`git_head_commit` 保持基线 `f59801e`）。变更仅限 Allowed Files。未修改权威文档、`CURRENT_TASK.md`、`ARCHITECT_HEARTBEAT.md`、`GATE_0/TASK.md`、`work/design/**`，未触碰父目录。
 
 ## Known Issues
 NONE
@@ -63,4 +38,4 @@ NONE
 NONE
 
 ## Recommendation
-REVIEW_READY
+REVIEW_READY（等待 Desktop ChatGPT 最终 Gate 0 裁决）

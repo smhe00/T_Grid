@@ -1,3 +1,31 @@
+# Architecture Review — G0-T006 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T19:07:22+08:00`
+
+REV-G0T006-001 已关闭：artifact 共 285 行，包含全部 223 个 `test_` 用例起始记录、完整
+`Ran 223 tests ... OK` 摘要及其余认证输出，无截断或占位。生产代码、测试、配置均无 diff。
+
+G0-T006 PASS；结合 G0-T001 至 G0-T005 的独立证据，Gate 0 最终裁决为 PASS。下一 Gate 仅授权
+QMT 只读范围，继续禁止下单、撤单、策略执行和 live trading。
+
+---
+
+# Architecture Review — G0-T006 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T19:02:32+08:00`
+
+独立 223 项回归、compileall、AST、隔离 CLI、Event Queue 正常/失败 smoke 与范围检查全部通过，
+`docs/GATE_0_REPORT.md` 内容满足设计结构。但认证 artifact 仅 79 行，只包含 26 条测试结果，并用
+`... ok` 折叠其余用例，未满足“保存完整输出”的明确验收条件。详见 REV-G0T006-001。
+
+只补齐完整证据文件及相应报告表述；不得修改代码或测试。Gate 0 暂不裁决，不得进入 Gate 1。
+
+---
+
 # Architecture Review — G0-T005 / Iteration 4
 
 Status: `PASS`

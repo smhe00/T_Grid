@@ -1,5 +1,24 @@
 # Gate 0 Architect Review
 
+## G0-T006 / Iteration 2 — Final Gate 0 Review
+
+Result: `PASS`
+
+完整证据已补齐：285 行 artifact 含 223 个用例记录、compileall、AST、隔离 CLI 与 Event Queue
+smoke，末尾 `ALL CHECKS PASSED`；无代码/测试 diff，HEAD/Lease/范围正确。
+
+G0-T001 至 G0-T006 全部通过，`docs/GATE_0_REPORT.md` 已生成。Gate 0 最终 PASS；只授权进入
+Gate 1 的 QMT 只读范围，继续禁止 `order_stock`、`cancel_order` 与 live trading。
+
+## G0-T006 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+功能与范围独立复核全部通过，总报告结构合格；但认证输出只保留 26/223 条 unittest 结果并使用
+`... ok` 占位，不是任务要求的完整证据。进入只补齐 artifact 的 Iteration 2，不改代码。
+
+Gate 0 尚未裁决，不得进入 Gate 1。
+
 ## G0-T005 / Iteration 4
 
 Result: `G0-T005 PASS`
