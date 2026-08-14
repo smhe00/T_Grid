@@ -1,89 +1,120 @@
-# Implementation Report — G2-T004
+# Implementation Report — G2-T005
 
 ## Task
-G2-T004 — Atomic T-Lot Status Transition Writer。Iteration 2 只修 REV-G2T004-001..003；不新增
-writer API、schema、状态矩阵、CRUD、外部依赖或交易能力。
+G2-T005 — T-Lot Business Transition Policy Guard（闭集 action → 唯一状态边，复用 G2-T004 原子 writer）。
+纯离线、fail-closed；不连接 QMT、不生成 OrderIntent、不实现真实人工授权。
 
 ## Summary
-Iteration 1 的 592 项回归通过但独立 FI 发现三个边界缺陷。Iteration 2 完成：
-- 事务边界覆盖 `BaseException`：CAS/audit/COMMIT 任一步主失败先 rollback（或无法确认时失效连接），
-  再决定传播/转换；KI/SE/GE 保持原对象/类型传播，普通异常/sqlite 错误转固定 data-free
-  `TLotWriteFailedError`，异常图干净；rollback 自身异常不覆盖主异常。
-- status 校验先 exact non-empty `str` 再做 membership，不再调用任意对象 `__eq__`。
-- 两连接 CAS 竞争测试改为 Event 驱动的真实交错（conn1 持 BEGIN IMMEDIATE 未提交时 conn2 发起写入并
-  争锁），确定性释放后最多一个成功。
+在 G2-T004 已验收的 `transition_t_lot_status` 之上新增业务状态转换策略层：
+- 纯函数 resolver `resolve_t_lot_transition(action, expected_status)` → frozen `TLotTransitionPlan`；
+- guarded apply `apply_t_lot_transition(...)`：先解析策略（拒绝时不触碰数据库），再恰好一次调用
+  G2-T004 writer；
+- 五条批准边闭集；`KEEP_SUSPENDED`/`CONVERT_TO_STRATEGIC`/`MANUAL_EXIT` 明确不可执行；
+  `CLOSED`/`CONVERTED_TO_STRATEGIC`/`ERROR` 无自动出边；self-transition 全拒绝。
 
-## Review Issues — Iteration 2 逐项回复
+## Files Changed
+- `src/tgrid/persistence/t_lot_transition_policy.py`（新增）：`T_LOT_ACTIONS` 闭集、
+  `_T_LOT_TRANSITIONS` 固定边表（action → (to_status, event_type)）、`_MANUAL_OR_NOOP_ACTIONS`、
+  `_TERMINAL_STATUSES`、`TLotTransitionPlan`（frozen）、异常
+  `TLotTransitionPolicyError(TLotWriterError)` / `TLotTransitionRejectedError`、
+  `resolve_t_lot_transition` / `apply_t_lot_transition`。
+- `src/tgrid/persistence/__init__.py`：仅导出本任务批准的 resolver/apply/plan/exceptions。
+- `tests/unit/test_t_lot_transition_policy.py`（新增，19 项）。
+- `work/reports/tests/G2-T005-test-output.txt`（新增完整证据）。
 
-### REV-G2T004-001 — BaseException 在 CAS 后跳过 rollback — **FIXED**
-- `transition_t_lot_status` 重构：`try: BEGIN IMMEDIATE → CAS → audit INSERT → COMMIT` 包在一个事务
-  边界内，`except TLotWriterError` / `except Exception`（含 sqlite3.Error）/ `except BaseException` 分别
-  捕获，全部先 `_rollback_or_invalidate` 再传播/转换。
-- `KeyboardInterrupt/SystemExit/GeneratorExit` 在 rollback 成功后保持原对象/类型传播，不转换为项目错误
-  （独立重放 `propagated=True cause_none=True context_none=True in_txn=False status=OPEN audits=0`）。
-- 普通未知 `Exception` 与 sqlite3.Error：rollback 后转固定、data-free `TLotWriteFailedError`，
-  `__cause__`/`__context__` 均 None（重放 `secret_in_msg=False`）。
-- `_rollback_or_invalidate`：ROLLBACK 成功则返回；ROLLBACK 自身抛普通异常/BaseException 时关闭连接
-  使底层不可再 commit（重放 `conn_closed=True`），且不覆盖主异常。
-- 测试矩阵：三类主 BaseException、普通 RuntimeError secret、主失败 × rollback failure（普通与
-  BaseException 两变体），均检查 lot/audit/history/version 与连接可提交性。
+未修改 `t_lot_writer.py` / `migrations.py` / `database.py` 及任何既有测试/实现（G2-T005 Forbidden）。
 
-### REV-G2T004-002 — status exact-type 校验发生得太晚 — **FIXED**
-- `_require_status` 现在先调用 `_require_exact_nonempty_str`（`type(value) is str and value != ""`），
-  再做 `value in T_LOT_STATUSES`；拒绝 str subclass、bool、bytes、容器及任意对象，不调用其
-  `__eq__/str/repr/bool/iter`。
-- 回归：恶意 `__eq__` 对象注入 → `TLotWriterInputError`，message/`__cause__`/`__context__` 无 secret，
-  失败前后 DB 逐值不变（`test_malicious_status_dunder_not_called`）。
+## Exact Transition Matrix
+| action | expected_status | to_status | event_type |
+|---|---|---|---|
+| `BUY_FILL_CONFIRMED` | `PENDING_BUY` | `OPEN` | `BUY_FILL_CONFIRMED` |
+| `PREPARE_SELL` | `OPEN` | `PENDING_SELL` | `PREPARE_SELL` |
+| `SELL_FILL_CONFIRMED` | `PENDING_SELL` | `CLOSED` | `SELL_FILL_CONFIRMED` |
+| `SUSPEND_T` | `OPEN` | `SUSPENDED` | `SUSPEND_T` |
+| `RESUME_T` | `SUSPENDED` | `OPEN` | `RESUME_T` |
 
-### REV-G2T004-003 — 两连接测试没有确定性交错 — **FIXED**
-- `test_two_connections_deterministic_cas_race` 重写为 Event/线程驱动：conn2 先初始化就绪；conn1 持
-  `BEGIN IMMEDIATE`（含未提交 CAS+audit）时由 `in_txn` Event 通知；conn2 等待 `in_txn` 后发起同一
-  expected-status 写入（`BEGIN IMMEDIATE` 在 conn1 写锁上真实争锁）；`release` 确定性释放后 conn1
-  commit、conn2 冲突。无 sleep。
-- 结果：conn1 成功（1 条 audit），conn2 `TLotStatusConflictError`，最终 lot 唯一目标状态 SUSPENDED、
-  audit 恰一条、两连接均无 active transaction、无 retry。
+其余任意 (action, status) 组合全部拒绝（全 5×7 矩阵测试：35 组合中 5 批准、30 拒绝，含全部
+self-transition 与 terminal-source）。
 
-## Files Changed（Iteration 2 增量）
-- `src/tgrid/persistence/t_lot_writer.py`：`_require_status` 先 exact-str 校验；`_safe_rollback` →
-  `_rollback_or_invalidate`（ROLLBACK 失败关闭连接）；writer 主流程 `try/except BaseException` 事务边界。
-- `tests/unit/test_t_lot_writer.py`：新增 5 项（三类 BaseException、RuntimeError secret、主失败×rollback
-  失败普通/BaseException、恶意 status dunder）；两连接测试改为确定性交错。
+## Reuse Evidence
+- `apply_t_lot_transition` 直接调用 G2-T004 `transition_t_lot_status`（import 复用，不复制 SQL/CAS/rollback）；
+  writer 独占事务/回滚/异常语义，policy 不自行 `BEGIN/UPDATE/INSERT/COMMIT/ROLLBACK`。
+- 七状态复用 `T_LOT_STATUSES`（migrations 单一来源），未新建第三份状态列表。
+- 新异常继承 `TLotWriterError` → `PersistenceError` 层，未建新的无关异常根。
 
-（Iteration 1 已交付的 writer API / frozen result / 异常 / migrations 共享状态 / exports 保持不变。）
+## Rejected Manual / No-op Actions
+- `KEEP_SUSPENDED`：no-op review decision，拒绝，绝不以 `SUSPENDED -> SUSPENDED` 制造假审计。
+- `CONVERT_TO_STRATEGIC`：需显式人工授权机制，本任务拒绝执行。
+- `MANUAL_EXIT`：需真实人工成交/对账证据，本任务不得直接映射 `CLOSED`。
+
+## Deviations
+NONE
+
+## Tests Added
+`tests/unit/test_t_lot_transition_policy.py`，19 项：
+1. 五条批准边 resolver 正确（frozen plan、event_type 固定映射）。
+2. 全 action×status 矩阵（35 组合）负向覆盖。
+3. self-transition 全拒绝（无批准边为自环，其余拒绝）。
+4. unknown action 拒绝。
+5. manual/no-op 三动作拒绝。
+6. terminal source（CLOSED/CONVERTED_TO_STRATEGIC/ERROR）拒绝。
+7. wrong source 拒绝。
+8. 空/NULL/非 exact-str/str subclass/bool/bytes/container 输入拒绝，无 dunder。
+9. 恶意 action `__eq__` / 恶意 status `__eq__` 不被调用，异常 message/`__cause__`/`__context__` 干净。
+10. SQLite 集成：五条批准边逐条 apply → DB status 与 audit（event_type/from/to）完全一致。
+11. 拒绝边零 DB 写入（lot/history 逐值不变、0 audit）。
+12. manual/no-op apply → DB 不变。
+13. stale source 走底层 CAS conflict，无 retry、值不变。
+14. writer spy：拒绝前 0 call；成功恰 1 call 且参数为 plan 推导值。
+15. writer conflict / BaseException 不吞、不重试、恰好一次。
+16. 新模块 AST：无 raw SQL token（BEGIN/UPDATE/INSERT INTO/DELETE FROM/COMMIT/ROLLBACK）、无
+    `assert`、无 xtquant、无 order/cancel。
+
+## Failure Injection
+- 恶意 action/status 对象注入 secret `__eq__` → 不调用 dunder，异常无 secret、异常图干净。
+- 全矩阵负向、self-transition、terminal-outbound、action/source mismatch。
+- manual/no-op 三动作不可执行且 DB 不变。
+- writer spy：reject 0 call / accept 1 call；writer 抛 conflict/BaseException 不吞不重试。
+- stale source 真实 conflict，无 upsert/猜测/retry。
+- 独立重放（artifact 内全文）全部符合边界。
 
 ## Test Commands / Results
 ```text
-python -m unittest discover -s tests -p "test_*.py" -v   -> Ran 597 tests ... OK（592 基线 + 5 新增）
+python -m unittest discover -s tests -p "test_*.py" -v   -> Ran 616 tests ... OK（597 基线 + 19 新增）
 python -m compileall -q src tests                         -> exit 0
-AST scan src/tgrid（24 文件）                             -> PASS，forbidden=0
+AST scan src/tgrid（25 文件）                             -> PASS，forbidden=0
+policy 模块 raw-SQL token 扫描                            -> none
 git diff --check（本任务文件）                            -> exit 0
-独立 FI 重放（REV-G2T004-001..003）                       -> 全部符合边界
 ```
-完整输出：`work/reports/tests/G2-T004-test-output.txt`。
-
-## Failure Injection
-- 三类 BaseException 注入 audit insert 点 → 传播原对象、rollback、lot/audit 逐值不变。
-- RuntimeError secret → `TLotWriteFailedError`，message/`__cause__`/`__context__` 无 secret。
-- COMMIT+ROLLBACK 双失败 → 连接失效（不可 commit），主异常（转换/BaseException）传播。
-- 恶意 status `__eq__` → 不调用 dunder，`TLotWriterInputError`。
-- 两连接确定性竞争 → 一个成功一个 conflict，一条 audit。
+完整输出：`work/reports/tests/G2-T005-test-output.txt`。
 
 ## Invariant Check
-1. status update 与 audit insert all-or-nothing（含 BaseException 主失败）：通过。
-2. CAS rowcount != 1 fail closed，不猜测/重试/upsert：通过。
-3. expected 不匹配时原 lot/audit 逐值不变：通过。
-4. audit 失败时 lot/updated_at 完整回滚：通过。
-5. 不接受已有事务，不提交/回滚调用者事务：通过。
-6. 不执行未知对象 str/repr/bool/iter：通过（status 先 exact-str）。
-7. SQLite 异常转固定 data-free PersistenceError，异常图干净：通过。
-8. 无 assert 承担安全、无自动 retry：通过。
-9. `live_trading_allowed=false`，无 QMT/order/cancel/download/subscribe：通过。
+1. apply 不接受任意 new_status/event_type：通过（仅闭集 action 推导）。
+2. 未列出组合在 writer 前拒绝、DB 逐值不变：通过。
+3. 一个成功 apply 恰好调用一次 G2-T004 writer：通过（spy）。
+4. stale expected 由底层 CAS fail closed，无预读/猜测/retry：通过。
+5. `KEEP_SUSPENDED` 不以 self-transition 造假审计：通过。
+6. `CONVERT_TO_STRATEGIC`/`MANUAL_EXIT` 本任务绝不执行：通过。
+7. terminal 状态无自动出边：通过。
+8. 输入拒绝不调用未知对象 dunder，异常固定/data-free/无 secret 图：通过。
+9. 未删除/弱化 G2-T004 writer 或 schema/verifier 测试：通过。
+10. `live_trading_allowed=false`，无 QMT/order/cancel/download/subscribe：通过。
+
+## Static / Type / Lint Check
+- AST 扫描 25 文件：无 `ast.Assert`、无 xtquant、无 order/cancel。
+- 新模块无 raw SQL token；`git diff --check` 本任务文件 exit 0。
+
+## Git Diff Summary
+- 变更：新增 t_lot_transition_policy.py + test_t_lot_transition_policy.py + 报告/证据/控制文件 +
+  `persistence/__init__.py` 导出；`t_lot_writer.py`/`migrations.py`/`database.py` 未改。
+- **未 commit/push**：本地 Git 仓库（miniQMT monorepo）与 GitHub `T_Grid` 无共同祖先，无法安全执行
+  协议要求的 ff-only merge / 普通 push；由用户/架构师决定 GitHub 侧的推送方式。
 
 ## Known Issues
 NONE
 
 ## Questions
-NONE。
+NONE（见 QUESTIONS.md）。
 
 ## Recommendation
 REVIEW_READY

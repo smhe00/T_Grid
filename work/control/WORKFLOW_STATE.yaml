@@ -4,24 +4,23 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 2
-handoff_id: "G2-T005-AUTH-20260815-002"
-authorized_next:
-  - "G2-T005"
+handoff_seq: 3
+handoff_id: "G2-T005-REVIEW-20260815-003"
+authorized_next: []
 design_version: "1.1"
 gate: 2
 task_id: "G2-T005"
-state: "CLAUDE_READY"
-owner: "claude"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 1
-last_actor: "architect"
-last_update: "2026-08-15T00:51:00+08:00"
+last_actor: "claude"
+last_update: "2026-08-15T01:48:05+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "439bbd96bece598f1aed7471db72c6267ee257a7"
-git_head_commit: "439bbd96bece598f1aed7471db72c6267ee257a7"
+git_base_commit: "8e44c5e10c61eb41bc91291ad8da48e728c74161"
+git_head_commit: "8e44c5e10c61eb41bc91291ad8da48e728c74161"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G2-T005 authorized by Architect after user confirmation. Scope is the offline fail-closed T-Lot business transition policy/guard over the already-PASS G2-T004 atomic writer. Only five explicitly listed lifecycle edges are authorized; KEEP_SUSPENDED is not a status transition, and CONVERT_TO_STRATEGIC/MANUAL_EXIT remain non-executable until a later explicit manual-authorization design. No schema change, Reconciliation, OrderIntent, QMT/order/cancel/download/subscribe, or live trading. Claude may act only on this new handoff and must STOP WRITE on remote change, dirty worktree, ownership mismatch, or scope drift."
+notes: "G2-T005 iteration 1 REVIEW_READY. Closed-set T-Lot business transition policy guard added over the PASS G2-T004 atomic writer: resolve_t_lot_transition maps action+expected_status to a unique frozen plan (5 approved edges: BUY_FILL_CONFIRMED, PREPARE_SELL, SELL_FILL_CONFIRMED, SUSPEND_T, RESUME_T); apply_t_lot_transition resolves first (rejects before any DB write) then calls the writer exactly once with a fixed event_type. KEEP_SUSPENDED/CONVERT_TO_STRATEGIC/MANUAL_EXIT deliberately non-executable; CLOSED/CONVERTED_TO_STRATEGIC/ERROR have no outbound edge. 616 tests pass (597+19); compileall 0; AST PASS (25 files, forbidden=0); policy module raw-SQL tokens none; independent FI replay matches boundaries (matrix 30/30 rejected, writer spy 0/1, manual/noop DB unchanged, dunder/secret isolated). t_lot_writer/migrations/database untouched. NOTE: local git repo has no common ancestor with GitHub T_Grid, so ff-only merge/push could not be performed from this directory; GitHub push deferred to user/architect. live_trading_allowed=false."
