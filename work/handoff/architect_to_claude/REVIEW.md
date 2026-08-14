@@ -1,3 +1,17 @@
+# Architecture Review — G1-T001 / Iteration 1
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T19:18:26+08:00`
+
+独立确认默认 Python 无 XtQuant、父仓库 `.venv` 静态存在 XtQuant 及候选只读 API；TGrid 生产
+AST 仍无 xtquant/order/cancel/assert，范围、HEAD、Lease 与敏感信息边界均正确。未连接、导入、
+实例化或查询 QMT。artifact 实际 112 行，两个 handoff 的 105 行统计笔误已校正。
+
+G1-T001 PASS，但不代表任何真实连接或数据能力通过。下一任务仍限离线只读 Adapter 边界。
+
+---
+
 # Architecture Review — G0-T006 / Iteration 2
 
 Status: `PASS`

@@ -1,0 +1,112 @@
+# TGrid G1-T001 environment probe (offline, no import/connect/subscribe/query)
+# generated: 2026-08-14T19:14:06.247315+08:00
+# interpreter: C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64\python.exe
+
+=== 1. ACTIVE INTERPRETER (TGrid default) ===
+executable: C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64\python.exe
+version: 3.12.10
+prefix: C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64
+platform: win32
+sys.path:
+  [0] C:\Users\peter\AppData\Local\Temp
+  [1] C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64\python312.zip
+  [2] C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64\DLLs
+  [3] C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64\Lib
+  [4] C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64
+  [5] C:\Users\peter\AppData\Local\Python\pythoncore-3.12-64\Lib\site-packages
+
+=== 2. find_spec (importlib, no import) active interpreter ===
+  xtquant: MISSING (spec None)
+  xtquant.xtdata: MISSING ModuleNotFoundError name='xtquant'
+  xtquant.xttrader: MISSING ModuleNotFoundError name='xtquant'
+  xtquant.xttype: MISSING ModuleNotFoundError name='xtquant'
+
+=== 3. XtQuant package static surface (AST reflection, xtquant never imported) ===
+parsed xtdata.py (142396 bytes)
+parsed xttrader.py (70040 bytes)
+parsed xttype.py (15321 bytes)
+
+-- candidate read-only allowlist (static presence) --
+  XtQuantTrader.start: FOUND ('self',)
+  XtQuantTrader.connect: FOUND ('self',)
+  XtQuantTrader.subscribe: FOUND ('self', 'account')
+  XtQuantTrader.query_stock_asset: FOUND ('self', 'account')
+  XtQuantTrader.query_stock_positions: FOUND ('self', 'account')
+  XtQuantTrader.query_stock_orders: FOUND ('self', 'account', 'cancelable_only')
+  XtQuantTrader.query_stock_trades: FOUND ('self', 'account')
+  XtQuantTrader.stop: FOUND ('self',)
+  XtQuantTrader.run_forever: FOUND ('self',)
+  xtdata.connect: FOUND ('ip', 'port', 'remember_if_success')
+  xtdata.get_full_tick: FOUND ('code_list',)
+  xtdata.get_market_data: FOUND ('field_list', 'stock_list', 'period', 'start_time', 'end_time', 'count', 'dividend_type', 'fill_data')
+  xtdata.get_market_data_ex: FOUND ('field_list', 'stock_list', 'period', 'start_time', 'end_time', 'count', 'dividend_type', 'fill_data')
+  xtdata.subscribe_quote: FOUND ('stock_code', 'period', 'start_time', 'end_time', 'count', 'callback')
+  xtdata.unsubscribe_quote: FOUND ('seq',)
+  xtdata.get_instrument_detail: FOUND ('stock_code', 'iscomplete')
+  xtdata.get_divid_factors: FOUND ('stock_code', 'start_time', 'end_time')
+  xtdata.get_trading_calendar: FOUND ('market', 'start_time', 'end_time')
+  xtdata.get_trading_dates: FOUND ('market', 'start_time', 'end_time', 'count')
+  xtdata.get_stock_list_in_sector: FOUND ('sector_name', 'real_timetag')
+  xtdata.get_trading_period: FOUND ('stock_code',)
+  xtdata.download_history_data: FOUND ('stock_code', 'period', 'start_time', 'end_time', 'incrementally')
+
+-- disconnect detection / callback interface (static presence) --
+  XtQuantTraderCallback.on_connected('self',)
+  XtQuantTraderCallback.on_disconnected('self',)
+  XtQuantTraderCallback.on_account_status('self', 'status')
+  XtQuantTraderCallback.on_stock_asset('self', 'asset')
+  XtQuantTraderCallback.on_stock_order('self', 'order')
+  XtQuantTraderCallback.on_stock_trade('self', 'trade')
+  XtQuantTraderCallback.on_stock_position('self', 'position')
+  XtQuantTraderCallback.on_order_error('self', 'order_error')
+  XtQuantTraderCallback.on_cancel_error('self', 'cancel_error')
+  XtQuantTraderCallback.on_order_stock_async_response('self', 'response')
+  XtQuantTraderCallback.on_cancel_order_stock_async_response('self', 'response')
+  XtQuantTraderCallback.on_smt_appointment_async_response('self', 'response')
+  XtQuantTraderCallback.on_bank_transfer_async_response('self', 'response')
+  XtQuantTraderCallback.on_ctp_internal_transfer_async_response('self', 'response')
+
+-- FORBIDDEN order/cancel surface (static presence, must stay forbidden) --
+  XtQuantTrader.order_stock_async('self', 'account', 'stock_code', 'order_type', 'order_volume', 'price_type', 'price', 'strategy_name', 'order_remark')
+  XtQuantTrader.order_stock('self', 'account', 'stock_code', 'order_type', 'order_volume', 'price_type', 'price', 'strategy_name', 'order_remark')
+  XtQuantTrader.cancel_order_stock('self', 'account', 'order_id')
+  XtQuantTrader.cancel_order_stock_async('self', 'account', 'order_id')
+  XtQuantTrader.cancel_order_stock_sysid('self', 'account', 'market', 'sysid')
+  XtQuantTrader.cancel_order_stock_sysid_async('self', 'account', 'market', 'sysid')
+
+=== 4. windows launcher candidates ===
+(py --list) Python 3.12.10 (default), Python 3.11.9 available
+
+=== 5. referenced venvs in parent repo (find_spec) ===
+D:/gitee/miniQMT/.venv/Scripts/python.exe: Python 3.12.10 -> xtquant FOUND (site-packages/xtquant)
+D:/gitee/miniQMT/.venv-bigquant/Scripts/python.exe: Python 3.11.9 -> xtquant MISSING
+
+=== 6. repo-referenced read-only health mechanism (from docs/etf_qmt_preflight.md) ===
+command: ./.venv/Scripts/python.exe scripts/etf_qmt_readonly_health.py
+args: --qmt-path <QMT_SIM_USERDATA_MINI> ; --account-allowlist config/*.local.json ; --expected-execution-environment
+mechanism: xtdata connect + calendar/daily bars; account count/type/status; SHA-256 account fingerprint whitelist (no plaintext accounts)
+prerequisite: local QMT client running (market data service comes from local QMT install dir)
+
+=== 7. scope/lease/head ===
+git HEAD: (checked separately) 34169aa9873af9ae7f94994ed7301956d491585d == base
+lease: work/locks/WORKTREE_LEASE.yaml holder=claude acquired during this task
+no connection, no import of xtquant, no trader instantiation, no subscribe/query performed
+
+ALL PROBES COMPLETE
+
+=== 8. git diff --check -- T_Grid ===
+git diff --check exit: 0
+
+=== 9. AST scan src/tgrid (production safety boundary) ===
+AST scan: 13 files under src/tgrid
+PASS: no ast.Assert, no xtquant import, no order/cancel call in src/tgrid
+AST scan exit: 0
+
+ALL CHECKS COMPLETE
+
+=== 10. Gate 0 regression re-run (task AC8: not required, run for completeness) ===
+Ran 223 tests in 1.727s
+
+OK
+unittest exit: 0
+compileall exit: 0

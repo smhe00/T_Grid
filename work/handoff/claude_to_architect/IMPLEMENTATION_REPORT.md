@@ -1,41 +1,68 @@
-# Implementation Report — G0-T006
+# Implementation Report — G1-T001
 
 ## Task
-G0-T006 — Gate 0 集成认证与总报告（只读）
+G1-T001 — Gate 1 QMT 只读环境与 API 边界调查（离线）
 
 ## Summary
-在已验收基线 `3e3c452` 上执行一次只读、可复现的 Gate 0 集成认证，并生成设计要求的 `docs/GATE_0_REPORT.md`。未修改任何生产代码或测试，未进入 Gate 1，未声明最终裁决。
+在只读前提下确定本机可用于 TGrid 的 Python/XtQuant 运行环境、Gate 1 所需显式输入及只读 API
+allowlist/forbidden list，生成可审计环境报告。未连接 QMT、未读取账号/行情、未安装依赖、
+未修改任何生产代码或测试，未进入下一 Gate。
 
-## Deliverables
-- `docs/GATE_0_REPORT.md` — 完整 Gate 0 认证报告（实施内容、文件/能力清单、命令与真实结果、5 个已通过子任务/commit、Failure Injection、不变量、已知问题、风险评估、下一 Gate 建议；明确是认证报告而非最终裁决）。
-- `work/reports/tests/G0-T006-gate0-certification.txt` — 完整认证命令输出。
-- 更新 Claude Gate / Implementation / Test / Questions 报告。
+## Files Changed
+- `docs/GATE_1_ENVIRONMENT_REPORT.md` — 新增：解释器环境、find_spec 结果、Capability Matrix、
+  显式输入清单、allowlist/forbidden list、安全验证。
+- `work/reports/tests/G1-T001-environment-probe.txt` — 新增：112 行完整命令输出（interpreter、
+  find_spec、AST 离线反射、git/AST 检查）。
+- `work/gates/GATE_1/CLAUDE_REPORT.md` — 新增：Gate 1 Claude 报告。
+- `work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md` — 本文件。
+- `work/handoff/claude_to_architect/TEST_REPORT.md` — 测试/检查报告。
+- `work/handoff/claude_to_architect/QUESTIONS.md` — 置 NONE。
+- `work/control/CLAUDE_HEARTBEAT.md` — 更新 heartbeat。
+- `work/control/WORKFLOW_STATE.yaml` — 更新 worker 状态字段（REVIEW_READY）。
 
-## 认证执行内容
-1. Git HEAD 核对 = `3e3c4529b00cc78b8db1381004fec6b069db6563`。
-2. `python -m unittest discover -s tests -p "test_*.py" -v` → 223 项全部通过。
-3. `python -m compileall -q src tests` → 退出 0。
-4. AST 扫描（`src/tgrid/**/*.py`，13 文件）→ 无 `ast.Assert`、无 `xtquant` import、无 `order_stock`/`cancel_order`。
-5. 隔离 CLI（临时目录）：valid preflight 退出 0 + JSONL 事件序 `startup_begin, preflight_ok, shutdown_complete` + SQLite user_version=1、migration history=1；`live_trading=true` 退出 1 且 DB/log 未创建。
-6. Event Queue 集成 smoke：480 事件恰好一次、单 worker、STOPPED、无线程泄漏；handler failure → FAILED + pending 丢弃 + `raise_if_failed` 抛 `EventQueueWorkerError`。
-
-## Test Commands / Evidence
-见 `work/reports/tests/G0-T006-gate0-certification.txt`。
-
-## Iteration 2 Fix（REV-G0T006-001）
-重新生成认证 artifact：完整 unittest stdout/stderr **原样逐条保存**（223 个 `test_...` 用例行 + `Ran 223 tests ... OK`），不再截断、不再用 `... ok` 占位。artifact 共 285 行、27 个 `[PASS]` 检查行，末尾 `ALL CHECKS PASSED`；compileall/AST/CLI/Event Queue smoke 真实输出一并保存。未修改任何生产代码、测试或 `docs/GATE_0_REPORT.md`。
-
-## Test Results
-全部认证检查 `PASS`；无 traceback、无 `Exception in thread`、无 secret、无残留线程。
+## Design Mapping
+- 设计 §36（Gate 1 只允许 QMT 连接和只读查询，禁止 order_stock/cancel_order）：本报告据此定义
+  allowlist/forbidden list，所有条目仅静态调查、未调用。
+- 设计 §19（QMT 调用封装在 Adapter 层）：本任务不产生任何 QMT 调用，为后续 Adapter 提供边界清单。
+- 设计 §3.1（callback 只能 enqueue）：断线识别记录 `on_disconnected` 回调静态存在，供后续串行化。
 
 ## Deviations
 NONE
+
+## Tests Added
+本任务为纯调查，不新增单元测试。执行了任务要求的检查项（见 TEST_REPORT）。
+
+## Test Commands / Results
+见 TEST_REPORT.md 与 `work/reports/tests/G1-T001-environment-probe.txt`。
+
+## Failure Injection
+- `find_spec('xtquant')` 在 TGrid 默认解释器缺失 → 如实记录为环境未就绪，不安装、不猜测路径。
+- 候选解释器 import 失败按任务要求只报告异常类型/安全摘要，未打印 traceback 或环境变量。
+- 静态 API 检查未实例化 trader：probe 用 AST 解析源文件（未 `import xtquant`），报告明确声明
+  未发生 connect/query/subscribe。
+
+## Invariant Check
+1. Gate 1 严格 read-only：通过（无任何 XtQuant 代码执行）。
+2. 不访问真实账号/行情/私密配置，不记录敏感值：通过。
+3. 静态存在 ≠ 连接/数据验收：全部能力标注 AVAILABLE_UNVERIFIED。
+4. 环境缺失 fail closed：TGrid 默认解释器无 xtquant → 结论为环境未就绪。
+5. 未修改 Gate 0 已验收代码/测试：通过。
+6. `live_trading_allowed=false`，禁止清单未弱化：通过。
+
+## Static / Type / Lint Check
+- `git diff --check -- T_Grid`：exit 0。
+- AST 扫描 `src/tgrid/**/*.py`（13 文件）：无 `ast.Assert`、无 `xtquant` import、
+  无 `order_stock`/撤单调用，exit 0。
+
+## Git Diff Summary
+- HEAD == 基线 `34169aa9873af9ae7f94994ed7301956d491585d`。
+- 变更范围仅限本任务 Allowed Files（T_Grid 内）；父目录文件未改动。
 
 ## Known Issues
 NONE
 
 ## Questions
-NONE
+NONE（见 QUESTIONS.md）
 
 ## Recommendation
-REVIEW_READY（等待 Desktop ChatGPT 最终 Gate 0 裁决）
+REVIEW_READY
