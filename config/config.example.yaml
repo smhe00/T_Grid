@@ -1,0 +1,52 @@
+# TGrid example configuration.
+#
+# WARNING: quantities and prices below are illustrative examples only. The
+# engine never hard-codes a symbol or a quantity; every value is read from this
+# file. Copy this file to config.local.yaml and edit it for real use (local
+# files are git-ignored).
+
+global:
+  live_trading: false
+  database: data/tgrid.db
+  log_dir: logs
+  bar_period: 5m
+  order_timeout_seconds: 120
+  skip_open_minutes: 15
+  skip_close_minutes: 15
+  volatility_halt_atr: 2.5
+  minimum_cash_buffer: 50000.0
+
+symbols:
+  0700.HK:
+    enabled: true
+    mode: ACCUMULATE
+    core_qty: 600
+    target_qty: 1100
+    t_unit: 100
+    lot_size: 100
+    price_tick: 0.2
+    max_t_lots: 2
+    max_t_capital: 200000.0
+    anchor: VWAP20
+    atr_period: 14
+    atr_k: 1.20
+    min_grid: 0.040
+    max_grid: 0.080
+    exit_multiple: 1.15
+
+  000333.SZ:
+    enabled: false
+    mode: ACCUMULATE
+    core_qty: 0
+    target_qty: 5300
+    t_unit: 100
+    lot_size: 100
+    price_tick: 0.01
+    max_t_lots: 2
+    max_t_capital: 150000.0
+    anchor: VWAP20
+    atr_period: 14
+    atr_k: 1.20
+    min_grid: 0.035
+    max_grid: 0.070
+    exit_multiple: 1.15

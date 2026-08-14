@@ -1,0 +1,60 @@
+# TGrid
+
+QMT 低频做 T 交易引擎（开发中）。
+
+> **当前状态：Gate 0 / 项目骨架。** 本仓库目前只有配置读取、配置数据模型和显式风险异常类型，**没有任何 QMT 连接、行情、账户、持仓、下单、撤单或真实交易能力**，也没有策略计算能力。
+
+## 已实现（G0-T001）
+
+- `tgrid.config.load_config(path)`：从调用方显式传入的 YAML 路径读取并校验配置，返回有类型的 `RootConfig`。
+- 配置数据模型（`GlobalConfig` / `SymbolConfig` / `RootConfig`），全部为不可变 dataclass。
+- 显式风险异常类型（`ConfigError`、`RiskError`、`CoreFloorViolation`、`InsufficientAvailableVolume`、`SellReservationConflict`、`CashReservationConflict`）。
+- 严格 fail-closed 校验：未知字段、缺失必填字段、错误根结构、非法类型/范围、bool 冒充整数、NaN/Infinity 都会被拒绝。
+- 示例配置 `config/config.example.yaml`（仅含 `0700.HK` 与 `000333.SZ` 示例数量，代码不写死任何证券或数量）。
+
+## 运行前提
+
+- Python `>=3.9`
+- 唯一运行时第三方依赖：`PyYAML`（仅用于解析配置文件）
+
+```bash
+pip install -e .
+```
+
+## 读取配置
+
+```python
+from tgrid import load_config
+
+cfg = load_config("config/config.example.yaml")
+print(cfg.global_config.live_trading)  # False
+print(cfg.symbols["0700.HK"].core_qty)  # 600
+```
+
+配置加载**只接收显式文件路径**，绝不隐式读取本地真实配置。任何不合法配置都会抛出 `ConfigError`（携带字段路径），不会回退到宽松默认值。
+
+## 安全边界
+
+- `live_trading` 缺省为 `false`，本阶段不存在任何可开启它的执行路径。
+- 不 `import xtquant`，不出现任何券商下单/撤单调用。
+- 生产风控不得依赖 Python `assert`；风险/配置异常均为显式类型。
+
+## 测试
+
+```bash
+python -m unittest discover -s tests -p "test_*.py" -v
+python -m compileall -q src tests
+```
+
+## 目录
+
+```text
+src/tgrid/        # 包源码（config / models / risk）
+tests/unit/       # 单元测试
+config/           # 示例配置（真实配置不入库）
+work/             # 双 Agent 协作控制面（任务/状态/交接）
+```
+
+## 后续 Gate
+
+SQLite 持久化、logging、CLI、Event Queue、Position Manager、T-Lot Ledger 等按设计文档 Gate 体系依次推进。未经架构师 PASS 不得进入下一 Gate。

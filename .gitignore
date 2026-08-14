@@ -1,0 +1,28 @@
+# Byte-compiled / cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Local / secret configuration must never be committed
+config/config.local.yaml
+config/*.local.yaml
+
+# Runtime data, logs, and database artifacts
+data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+
+# Transient dual-agent worktree ownership; never commit a held lease
+work/locks/WORKTREE_LEASE.yaml
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
