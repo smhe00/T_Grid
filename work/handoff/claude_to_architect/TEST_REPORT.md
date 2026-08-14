@@ -1,4 +1,4 @@
-# Test Report — G0-T001 / Iteration 3
+# Test Report — G0-T002 / Iteration 4
 
 ## Environment
 - Python 3.12.10
@@ -15,48 +15,47 @@ python -m compileall -q src tests
 ## Results
 
 ```text
-Ran 61 tests in 0.084s
+Ran 101 tests in 0.615s
 OK
 ```
 
 `compileall` 退出码 0。
 
-完整逐条输出已存档于 `work/reports/tests/G0-T001-test-output.txt`。
+完整逐条输出已存档于 `work/reports/tests/G0-T002-test-output.txt`（含 AST 扫描与独立语义探针）。
 
-## Fix Verification（Iteration 3）
+## Fix Verification（Iteration 4）
 
 | Issue | 验证点 | 结果 |
 |---|---|---|
-| REV-G0-006 | `? [a, b] : value` 拒绝为 `ConfigError`（含 line 与 key 信息），不泄漏 `TypeError` | PASS |
-| REV-G0-007 | root 层重复 `global` 拒绝，错误含 `duplicate`/`global`/`line` | PASS |
+| REV-G0T002-001 | partial unique index（`WHERE version > 100`）拒绝；合法单列 UNIQUE(name) 接受 | PASS |
 
-## Full Coverage by Requirement（累计）
+## 独立语义 Failure Injection（行为探针）
+
+```text
+unique_wrong_column  REJECTED
+composite_unique     REJECTED
+check_always_true    REJECTED
+partial_unique_name  REJECTED
+```
+
+## Coverage by Requirement（累计）
 
 | 要求 | 测试 | 结果 |
 |---|---|---|
-| 示例配置成功加载 | `test_load_example_config_success` | PASS |
-| 缺省 `live_trading=false` | `test_default_live_trading_false` | PASS |
-| `lot_size`/`price_tick` 未写死 | `test_lot_size_and_price_tick_not_hardcoded` | PASS |
-| 非 `ACCUMULATE` 拒绝 | `test_neutral_rejected` 等 | PASS |
-| `t_unit` 非 `lot_size` 倍数拒绝 | `test_t_unit_not_multiple_of_lot_size_rejected` | PASS |
-| 零/负 `price_tick` 拒绝 | `test_zero/negative_price_tick_rejected` | PASS |
-| `target_qty < core_qty` 拒绝 | `test_target_less_than_core_rejected` | PASS |
-| `max_t_lots < 1` 拒绝 | `test_max_t_lots_less_than_one_rejected` | PASS |
-| bool 冒充整数拒绝 | `test_bool_as_int_rejected` | PASS |
-| NaN/Infinity 拒绝 | `test_nan/infinity_price_tick_rejected` | PASS |
-| 未知/缺失/错误根结构拒绝 | `test_unknown_*` / `test_missing_*` / `test_root_not_mapping_rejected` | PASS |
-| 重复键拒绝（global/symbol 字段、symbol 名、root global） | `TestDuplicateKeys.*` | PASS |
-| 不可哈希/非标量 key fail-closed | `test_unhashable_*` | PASS |
-| 枚举字段 fail-closed | `TestEnumValidation.*` | PASS |
-| symbols 只读映射 | `TestSymbolsReadOnly.*` | PASS |
-| 异常可捕获、不用 assert | `TestRiskExceptions.*` + AST assert 扫描 | PASS |
-
-## Failure Injection（累计）
-
-1. 文件不存在、2. YAML 语法损坏、3. 根节点非 mapping、4. 未知键、5. `t_unit: true`、6. `price_tick: .nan`、7. 非法交易模式、8. 重复键（live_trading / core_qty / symbol / root global）、9. 非法 bar_period / anchor、10. 不可哈希 sequence key、11. symbols 映射各类修改尝试。
-
-全部抛出明确、可审计的 `ConfigError`（或对只读映射的 `AttributeError`/`TypeError`/`FrozenInstanceError`），未回退宽松默认值，无裸 `TypeError` 泄漏。
+| 新数据库初始化 / 幂等 / 重开 | `TestInitialize.*` | PASS |
+| `foreign_keys` / `busy_timeout` / journal mode | `test_foreign_keys_and_busy_timeout` / `test_journal_mode_safe_on_windows` | PASS |
+| 路径校验 | `TestPathValidation.*` | PASS |
+| 未来版本 / 不一致 / 断档 | `TestCorruptionAndVersion.*` | PASS |
+| 损坏字节不变 | `test_corrupt_bytes_rejected_and_file_unchanged` | PASS |
+| migration 中途回滚 | `test_migration_failure_rolls_back_completely` | PASS |
+| 无领域表 | `test_no_domain_tables_created` | PASS |
+| Bootstrap Schema Contract（含 UNIQUE 语义 + partial） | `TestSchemaContractValidation.*` | PASS |
+| 畸形表边界 | `TestMalformedTableBoundary.*` | PASS |
+| CHECK(version > 0) 语义 | `TestVersionCheckConstraint.*` | PASS |
+| AST 安全扫描 | `TestForbiddenApiScan.*` | PASS |
+| 异常层级 | `TestExceptionHierarchy` | PASS |
+| 原 61 项配置回归 | `test_config.py` / `test_models.py` | PASS（101 项总通过） |
 
 ## Additional Verification
-- `import tgrid` 无副作用。
-- AST 扫描：源码无 `ast.Assert`、无 `xtquant` import、无 `order_stock`/`cancel_order` 调用。
+- AST 扫描：`src/tgrid/` 全部 8 个 `.py` 无 `ast.Assert`、无 `xtquant` import、无 `order_stock`/`cancel_order`。
+- 独立语义探针：wrong-UNIQUE / composite-UNIQUE / always-true-CHECK / partial-UNIQUE 全部 REJECTED；合法 schema ACCEPTED。

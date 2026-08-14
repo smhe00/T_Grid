@@ -1,4 +1,277 @@
-# Fix Request — G0-T001 / Iteration 2
+# Active Fix Request — G0-T002 / Iteration 4
+
+## P1 — REV-G0T002-001（OPEN）：partial unique index 仍被误判为完整 name 唯一约束
+
+### Evidence
+
+独立探针将内联 `name TEXT NOT NULL UNIQUE` 替换为：
+
+```sql
+CREATE UNIQUE INDEX uq_partial_name
+ON schema_migrations(name)
+WHERE version > 100;
+```
+
+`PRAGMA index_info` 仍返回单列 `name`，当前 `_get_unique_index_column_sets` 忽略
+`PRAGMA index_list` 的 `partial` 标志，因此 `initialize()` 接受该 schema；但正常 migration
+版本并不受这个索引约束，`name` 实际可重复。
+
+```text
+partial_unique_name ACCEPTED [(1, 'bootstrap', ...)]
+```
+
+### Required Behavior
+
+- 只有覆盖恰好 `("name",)` 且 `partial=0` 的 UNIQUE index 才能满足契约。
+- partial unique index 无论谓词为何，均不得被当作完整单列唯一约束。
+- 保持 Iteration 3 已通过的 wrong-column、composite、CHECK 行为探针及合法 history 无副作用性质。
+
+### Required Test
+
+- 使用 `WHERE version > 100` 的 partial unique index 必须被 `SchemaVersionError`（或其他明确
+  `PersistenceError` 子类）拒绝。
+- 合法 bootstrap schema、`UNIQUE(applied_at)`、composite UNIQUE、永真 CHECK 的现有测试继续通过。
+- 全量回归、compileall、AST 禁止 API 扫描继续通过。
+
+### Scope / Completion
+
+只修改 `src/tgrid/persistence/database.py`、`tests/unit/test_persistence.py` 及本任务允许的
+Claude 报告/测试输出/状态文件。不得进入 logging、CLI、Event Queue、Gate 2 或 QMT。
+完成后设置 `REVIEW_READY / owner=architect / iteration=4`，使用真实本机时间，释放 Lease并停止。
+
+---
+
+# Historical Fix Requests
+
+> 下面内容均为已关闭或已被 Iteration 4 取代的历史记录；当前唯一授权是文件顶部的 Iteration 4 Active Fix Request。
+
+# Active Fix Request — G0-T002 / Iteration 2
+
+> Iteration 2 后 REV-G0T002-002、-004、-005 已关闭。REV-G0T002-001 与 -003 保持 OPEN；当前只处理下面的 Iteration 3 Active Fix Request。
+
+# Iteration 3 Active Fix Request
+
+## P1 — REV-G0T002-001（OPEN）：UNIQUE 约束验证未绑定 name 列
+
+### Evidence
+
+伪造 schema 使用：
+
+```sql
+CREATE TABLE schema_migrations (
+  version INTEGER PRIMARY KEY CHECK(version > 0),
+  name TEXT NOT NULL,
+  applied_at TEXT NOT NULL UNIQUE
+);
+```
+
+列形状正确且 DDL 含 `UNIQUE`，当前 `_verify_bootstrap_schema` 接受。独立行为探针结果：
+
+```text
+unique_wrong_column INITIALIZE_ACCEPTED DUPLICATE_NAME_ACCEPTED
+```
+
+### Required Behavior
+
+- 验证唯一性约束确实覆盖且只覆盖 `schema_migrations.name`，不得只搜索任意 `UNIQUE` 文本。
+- 优先使用 `PRAGMA index_list` + `PRAGMA index_info/index_xinfo` 等 SQLite 结构化元数据。
+- 缺失 name 唯一约束、唯一约束落在错误列或错误组合列时必须 `PersistenceError` 子类。
+
+### Required Test
+
+- 上述 `UNIQUE(applied_at)` 伪造表必须拒绝。
+- `UNIQUE(name, applied_at)` 但 name 单列不唯一时必须拒绝。
+- 合法 bootstrap schema 必须接受。
+
+## P1 — REV-G0T002-003（OPEN）：CHECK 正则接受永真约束
+
+### Evidence
+
+伪造 schema 使用：
+
+```sql
+version INTEGER PRIMARY KEY CHECK(version > 0 OR 1=1)
+```
+
+当前正则匹配到前缀后接受。行为探针结果：
+
+```text
+check_always_true INITIALIZE_ACCEPTED VERSION_ZERO_ACCEPTED
+```
+
+### Required Behavior
+
+- 验证数据库实际拒绝 `version=0` 与负数，而不是仅匹配 DDL 文本。
+- 建议在 `SAVEPOINT` 内执行约束探针，预期 `sqlite3.IntegrityError`，随后完整 rollback/release；不得留下 probe 行或改变 migration history。
+- 若继续解析 DDL，必须能可靠拒绝永真/弱化表达式；不能使用当前前缀正则。
+- 验证过程自身出现意外 SQLite 错误时按 persistence 异常边界 fail closed。
+
+### Required Test
+
+- `CHECK(version > 0 OR 1=1)` 伪造表必须拒绝。
+- 无 CHECK 表必须拒绝。
+- 合法表验证前后 migration history 完全不变。
+
+## Iteration 3 Completion
+
+1. 只修上述两个 OPEN 问题。
+2. 完整运行回归、compileall、AST 扫描与两条独立语义 Failure Injection。
+3. 更新报告/完整测试输出，逐项回复 `FIXED`。
+4. `REVIEW_READY / owner=architect`，释放 Lease并只读等待。
+
+---
+
+# Iteration 2 Historical Request
+
+只修复以下问题，不扩大到 logging、CLI、Event Queue、Gate 2 领域表或 QMT。
+
+## P0 — REV-G0T002-001：版本记录正确时未验证真实 Bootstrap Schema
+
+### Evidence
+
+独立探针初始化合法数据库后执行：
+
+```sql
+DROP TABLE application_metadata;
+```
+
+再次调用 `initialize(path)` 的结果：
+
+```text
+missing_metadata ACCEPTED tables=['schema_migrations']
+```
+
+将 migration 1 的名称改成 `not_bootstrap` 后也被接受：
+
+```text
+name_tamper ACCEPTED [(1, 'not_bootstrap')]
+```
+
+### Why It Matters
+
+`user_version` 与数字版本记录一致并不能证明实际 schema 与代码迁移定义一致。系统会把被删表、错表或被篡改迁移身份的数据库误判为可用，违反 fail-closed 和不可静默修复原则。
+
+### Required Behavior
+
+- 在返回已初始化连接前验证当前版本对应的 Bootstrap Schema Contract。
+- `schema_migrations` 与 `application_metadata` 必须存在，列名、关键类型、NOT NULL、PK/UNIQUE/CHECK 约束满足契约。
+- migration history 的 `(version, name)` 必须逐项匹配代码中的 `MIGRATIONS`，`applied_at` 必须非空。
+- `application_metadata` 必须存在唯一 `project_name=TGrid` 且 `updated_at` 非空。
+- 缺表、错列、错约束、改名或 metadata 缺失/篡改必须抛出明确的 `PersistenceError` 子类，禁止自动重建或修补。
+
+### Required Tests
+
+至少新增：删除 metadata 表、删除 project_name、篡改 project_name、篡改 migration name、缺列/错表结构，全部 fail closed。
+
+---
+
+## P1 — REV-G0T002-002：畸形 migration 表泄漏原始 OperationalError
+
+### Evidence
+
+数据库包含：
+
+```sql
+CREATE TABLE schema_migrations (wrong INTEGER);
+PRAGMA user_version=1;
+```
+
+实际结果：
+
+```text
+malformed_history WRONG_EXCEPTION OperationalError no such column: version
+```
+
+### Required Behavior
+
+- `initialize` / `open_database` 的数据库结构或 SQLite 操作失败必须转换成明确的 `PersistenceError` 子类并保留异常链。
+- 不得通过宽泛捕获吞掉 `KeyboardInterrupt`/`SystemExit`，也不得把编程错误伪装为数据库损坏。
+- 对已识别的 SQLite schema/查询错误做边界转换并关闭连接。
+
+### Required Tests
+
+验证 wrong-column `schema_migrations`、wrong-column `application_metadata` 均抛 `PersistenceError` 子类而非裸 `sqlite3.Error`，且连接/文件仍可审计。
+
+---
+
+## P1 — REV-G0T002-003：schema_migrations 缺少 version > 0 约束
+
+### Evidence
+
+任务的 Bootstrap Schema Contract 明确要求：
+
+```text
+version INTEGER PRIMARY KEY, > 0
+```
+
+当前 DDL 没有 `CHECK(version > 0)`，独立探针结果：
+
+```text
+version_zero INSERT_ACCEPTED
+```
+
+### Required Behavior / Test
+
+- Bootstrap DDL 增加数据库级 `CHECK(version > 0)`。
+- 测试插入 version 0 与负数均触发 `sqlite3.IntegrityError`。
+- schema contract 验证能识别缺失该约束的伪造表并 fail closed。
+
+---
+
+## P1 — REV-G0T002-004：保存的禁止 API 扫描实际执行失败
+
+### Evidence
+
+`G0-T002-test-output.txt` 包含：
+
+```text
+grep: xtquant: No such file or directory
+/usr/bin/bash: line 1: from: command not found
+/usr/bin/bash: line 1: order_stock(: command not found
+```
+
+随后仍打印 `NO forbidden imports/calls`，该证据无效。架构师独立 AST 扫描当前源码确实通过，因此这是测试/报告可信度问题，不代表源码含禁用调用。
+
+### Required Behavior / Test
+
+- 使用 Python AST 测试扫描全部 `src/tgrid/**/*.py`：`ast.Assert`、`xtquant` import、`order_stock`/`cancel_order` Call。
+- 命令任一错误必须非零退出，不得在失败后打印 PASS。
+- 重新生成完整测试输出，不保留上述伪成功文本。
+
+---
+
+## P1 — REV-G0T002-005：journal mode 测试把 off/memory 视为安全
+
+### Evidence
+
+当前测试允许：
+
+```python
+{"delete", "wal", "truncate", "persist", "memory", "off"}
+```
+
+`OFF` 不提供回滚日志保护，`MEMORY` 也不满足文件数据库 crash durability 目标。
+
+### Required Behavior / Test
+
+- 初始化后的文件数据库 journal mode 只允许明确的持久化安全模式，例如 `delete`、`wal`、`truncate`、`persist`。
+- 测试不得把 `off` 或 `memory` 判为 PASS。
+- 若代码主动设置 journal mode，必须检查 SQLite 返回的实际模式；设置失败则 fail closed。
+
+## Architect-Owned Audit Fix
+
+父仓库 `.gitignore` 的通用 `reports/` 规则曾忽略完整测试输出。架构师已在 TGrid `.gitignore` 中显式恢复 `work/reports/**` 跟踪；Iteration 2 交接时应确认 `G0-T001-test-output.txt` 与 `G0-T002-test-output.txt` 均出现在 Git status/diff 中。
+
+## Completion
+
+1. 修复 REV-G0T002-001 至 REV-G0T002-005。
+2. 运行完整回归、compileall、AST 安全扫描及上述 Failure Injection。
+3. 更新 Implementation Report、Test Report、Claude Report 和完整测试输出，逐 Issue 回复 `FIXED`/`NOT_FIXED`/`DISAGREE`。
+4. 更新为 `REVIEW_READY / owner=architect`，使用真实本机时间，释放 Lease并只读等待。
+
+---
+
+# Closed G0-T001 History
 
 > G0-T001 的 REV-G0-001 至 REV-G0-007 已全部关闭。Iteration 3 已由架构师判定 PASS；本文件现仅作为历史证据，不再授权任何修改。
 

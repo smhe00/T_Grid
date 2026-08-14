@@ -2,15 +2,16 @@
 
 QMT 低频做 T 交易引擎（开发中）。
 
-> **当前状态：Gate 0 / 项目骨架。** 本仓库目前只有配置读取、配置数据模型和显式风险异常类型，**没有任何 QMT 连接、行情、账户、持仓、下单、撤单或真实交易能力**，也没有策略计算能力。
+> **当前状态：Gate 0 / 项目骨架。** 本仓库目前只有配置读取、配置数据模型、显式风险异常类型和 SQLite 持久化基础，**没有任何 QMT 连接、行情、账户、持仓、下单、撤单或真实交易能力**，也没有策略计算能力。
 
-## 已实现（G0-T001）
+## 已实现（G0-T001 / G0-T002）
 
 - `tgrid.config.load_config(path)`：从调用方显式传入的 YAML 路径读取并校验配置，返回有类型的 `RootConfig`。
 - 配置数据模型（`GlobalConfig` / `SymbolConfig` / `RootConfig`），全部为不可变 dataclass。
 - 显式风险异常类型（`ConfigError`、`RiskError`、`CoreFloorViolation`、`InsufficientAvailableVolume`、`SellReservationConflict`、`CashReservationConflict`）。
 - 严格 fail-closed 校验：未知字段、缺失必填字段、错误根结构、非法类型/范围、bool 冒充整数、NaN/Infinity 都会被拒绝。
 - 示例配置 `config/config.example.yaml`（仅含 `0700.HK` 与 `000333.SZ` 示例数量，代码不写死任何证券或数量）。
+- `tgrid.persistence`（SQLite 基础，仅标准库 `sqlite3`）：显式路径打开、`PRAGMA foreign_keys=ON`、`busy_timeout`、完整性检查、有序事务化幂等 migration、schema 版本一致性校验，以及 `PersistenceError` / `DatabaseOpenError` / `DatabaseIntegrityError` / `SchemaVersionError` / `MigrationError` 异常。当前只有 `schema_migrations` 与 `application_metadata` 两张基础表，不含任何交易领域表。
 
 ## 运行前提
 
@@ -20,6 +21,21 @@ QMT 低频做 T 交易引擎（开发中）。
 ```bash
 pip install -e .
 ```
+
+## 打开数据库（SQLite 基础）
+
+```python
+from tgrid import open_database
+
+with open_database("data/tgrid.db") as conn:
+    # foreign_keys 已开启，busy_timeout 已设置，schema 已迁移到版本 1
+    print(conn.execute("PRAGMA user_version").fetchone()[0])  # 1
+```
+
+- 数据库路径由调用方显式传入，绝不隐式发现路径。
+- 损坏、未来版本、版本不一致、migration 断档都会抛出显式 `PersistenceError` 子类并 fail closed，绝不删除/覆盖/自动修复数据库文件。
+- journal 模式使用 SQLite 默认的 `delete`，在 Windows 文件数据库上安全。
+- 调用方负责关闭连接，或使用 `open_database` 上下文管理器自动关闭。
 
 ## 读取配置
 
@@ -49,7 +65,7 @@ python -m compileall -q src tests
 ## 目录
 
 ```text
-src/tgrid/        # 包源码（config / models / risk）
+src/tgrid/        # 包源码（config / models / risk / persistence）
 tests/unit/       # 单元测试
 config/           # 示例配置（真实配置不入库）
 work/             # 双 Agent 协作控制面（任务/状态/交接）

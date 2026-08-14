@@ -1,5 +1,88 @@
 # Architecture Review — G0-T001 / Iteration 1
 
+> Current task is now G0-T002. No review has been issued for G0-T002; the remaining content is accepted G0-T001 history.
+
+# Architecture Review — G0-T002 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T17:01:07+08:00`
+
+## Scope and Baseline
+
+- 实现源文件位于 G0-T002 Allowed Files；Lease 已由 Claude 释放。
+- `CURRENT_TASK.md`、架构师 heartbeat、Gate task pointer 等基线差异来自架构师发布 G0-T002，不计入 Claude 越权。
+- 架构师已修正 TGrid `.gitignore`，解除父仓库 `reports/` 规则对 Gate 测试证据的屏蔽；Claude 不需要修改 `.gitignore`。
+
+## Independent Verification
+
+```text
+82 tests — PASS
+compileall — PASS
+AST assert/QMT/order scan — PASS
+```
+
+但独立数据库 Failure Injection 发现 schema 逻辑一致性未验证、畸形 migration 表泄漏原始 SQLite 异常、migration 约束缺失；本任务暂不通过。详见当前 `FIX_REQUEST.md`。
+
+## G0-T002 / Iteration 2 Review
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T17:08:35+08:00`
+
+独立 96 项回归、compileall、AST 扫描、缺表/篡改/异常边界均通过。以下问题已关闭：
+
+- REV-G0T002-002 — CLOSED
+- REV-G0T002-004 — CLOSED
+- REV-G0T002-005 — CLOSED
+
+REV-G0T002-001 与 REV-G0T002-003 尚未满足：当前通过 DDL 文本中是否存在任意 `UNIQUE` 和宽松 CHECK 正则判断约束，存在语义 false positive。详细证据见 Iteration 3 Active Fix Request。
+
+## G0-T002 / Iteration 3 Review
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T17:16:07+08:00`
+
+独立全量回归结果为 `100 tests — PASS`，compileall 与 AST 禁止 API/assert 扫描通过；
+`UNIQUE(applied_at)`、composite UNIQUE、永真 CHECK 均已正确拒绝，合法 schema 验证前后
+history 不变。REV-G0T002-003 已关闭。
+
+REV-G0T002-001 仍有一个窄边界：仅覆盖 `name` 的 partial unique index 会被当作完整唯一约束，
+即使谓词使其不覆盖任何正常 migration 版本。独立探针得到
+`partial_unique_name ACCEPTED`。进入聚焦 Iteration 4，详见 `FIX_REQUEST.md` 顶部。
+
+## G0-T002 / Iteration 4 Review
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T17:19:59+08:00`
+
+REV-G0T002-001 已关闭：实现只接受 `partial=0` 且列集合恰好为 `("name",)` 的唯一索引。
+
+独立证据：
+
+```text
+python -m unittest discover -s tests -p "test_*.py" -v
+Ran 101 tests — OK
+
+python -m compileall -q src tests
+PASS
+
+wrong-column UNIQUE -> REJECTED SchemaVersionError
+composite UNIQUE -> REJECTED SchemaVersionError
+partial UNIQUE(name) -> REJECTED SchemaVersionError
+always-true CHECK -> REJECTED SchemaVersionError
+valid schema -> ACCEPTED; migration history unchanged
+AST assert / xtquant / order_stock / cancel_order scan -> PASS
+Lease released -> PASS
+```
+
+G0-T002 的 Acceptance Criteria、Failure Injection 与安全不变量全部满足。该 PASS 仅接受
+SQLite 初始化与迁移基础；Gate 0 整体尚未完成。
+
+
+
 Status: `CHANGES_REQUIRED`
 
 Reviewer: Desktop ChatGPT / Gate Owner  
@@ -89,4 +172,3 @@ Lease released by Claude -> PASS
 G0-T001 的 Acceptance Criteria、Failure Injection 和安全不变量全部满足。
 
 Gate 0 尚有 SQLite、logging、CLI 和 Event Queue 子任务，因此本结论只授权架构师创建下一 Gate 0 任务，不代表 Gate 0 整体通过。
-

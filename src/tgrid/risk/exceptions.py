@@ -43,3 +43,31 @@ class SellReservationConflict(RiskError):
 
 class CashReservationConflict(RiskError):
     """A buy intent conflicts with cash already reserved for another order."""
+
+
+class PersistenceError(TGridError):
+    """Base class for database lifecycle failures.
+
+    All persistence failures are fail-closed: they never delete, overwrite, or
+    silently "repair" the underlying file.
+    """
+
+
+class DatabaseOpenError(PersistenceError):
+    """The database path is unusable or the file could not be opened."""
+
+
+class DatabaseIntegrityError(PersistenceError):
+    """The database file is corrupt or fails its integrity check."""
+
+
+class SchemaVersionError(PersistenceError):
+    """The on-disk schema version is inconsistent with the supported version.
+
+    Covers future ``user_version``, future migration records, gaps, duplicates,
+    and ``user_version`` vs ``schema_migrations`` mismatch.  Never auto-downgrade.
+    """
+
+
+class MigrationError(PersistenceError):
+    """A schema migration failed and was rolled back."""

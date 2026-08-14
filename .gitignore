@@ -23,6 +23,11 @@ logs/
 # Transient dual-agent worktree ownership; never commit a held lease
 work/locks/WORKTREE_LEASE.yaml
 
+# Parent repository ignores generic reports/ directories. TGrid Gate evidence
+# is intentionally auditable and must remain tracked.
+!work/reports/
+!work/reports/**
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db
