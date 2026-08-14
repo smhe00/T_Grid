@@ -1,3 +1,69 @@
+# No Active Fix Request — G2-T003 / PASS
+
+Status: `CLOSED — PASS`
+
+Closed at: `2026-08-14T23:56:25+08:00`
+
+REV-G2T003-001..002 已由 Iteration 2 修复并通过独立复核。以下 G2-T003 Fix Request 仅保留历史审计，
+不再授权修改。
+
+---
+
+# Active Fix Request — G2-T003 / Iteration 2
+
+Status: `CHANGES_REQUIRED`
+
+Issued at: `2026-08-14T23:49:42+08:00`
+
+本轮只修两个窄问题；禁止新增字段、writer/CRUD、状态机、Reconciliation、OrderIntent 或交易能力。
+
+## P0 — REV-G2T003-001：固定 dangling-FK probe ID 会拒绝健康数据库
+
+独立复现：在健康 v3 数据库合法插入 T-Lot：
+
+```text
+id = __tgrid_probe_no_such_lot
+```
+
+重新 `initialize()` 得到：
+
+```text
+SchemaVersionError: t_lot_audit_log accepts invalid value for t_lot_id dangling
+```
+
+原因是 verifier 把固定字符串当作必然不存在的 `t_lot_id`。该值一旦由合法用户使用，外键探针变成
+合法引用，健康 schema 被误判为缺失外键。
+
+Required:
+
+- dangling-FK probe 必须通过现有 collision-safe helper 从 `t_lots.id` 中选择已确认不存在的值；禁止
+  另设保留 ID namespace 或固定“no such”值。
+- 新增回归：预置 `__tgrid_probe_no_such_lot` 后健康 initialize 通过，t_lots/audit/history/user_version
+  全部逐值不变。
+- 在“缺外键”的伪造 v3 schema中也预置该冲突值，verifier 仍必须因真正 dangling probe 被接受而拒绝
+  弱 schema，不能由无关约束或 PK 冲突假通过。
+- 所有成功/失败路径继续完整 rollback、零 probe 残留。
+
+## P1 — REV-G2T003-002：确认必要的既有 T-Lot 测试版本更新
+
+`tests/unit/test_t_lot_schema.py` 虽未在 Iteration 1 Allowed Files，但其 five-test latest schema/version/
+history 预期必须随 migration 3 更新，才能满足“既有 555 项保持通过”。架构师已核实当前 diff 未弱化
+T-Lot 约束测试。
+
+Required:
+
+- Iteration 2 现明确授权保留当前精确机械 diff：MAX_SCHEMA_VERSION、MIGRATIONS、fresh/upgrade/reopen/
+  rollback 后的 latest version/history 从 2 扩展到 3。
+- 不得改动该文件其它约束、tamper、probe 或业务断言。
+- 报告标记为 architect-authorized scope correction，不再作为 unresolved question。
+
+## Completion
+
+只修 REV-G2T003-001..002；重跑 578 项回归、compileall、AST、full diff-check 与独立碰撞 FI。更新报告，
+设置 `REVIEW_READY / owner=architect / iteration=2`，删除 Lease并停止；不要 commit。
+
+---
+
 # No Active Fix Request — G2-T002 / PASS
 
 Status: `CLOSED — PASS`

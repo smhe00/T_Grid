@@ -353,17 +353,37 @@ def _valid_t_lot_row(**overrides) -> dict:
     return row
 
 
-def _insert_row(conn: sqlite3.Connection, row: dict) -> None:
+def _valid_audit_row(**overrides) -> dict:
+    """Return a minimal valid t_lot_audit_log row as a dict.
+
+    ``t_lot_id`` must be overridden to an id that actually exists in ``t_lots``
+    before the row can be inserted (callers set it from a probe lot).
+    """
+    row = {
+        "id": "__tgrid_probe",
+        "t_lot_id": "__tgrid_probe",
+        "event_type": "STATUS_CHANGE",
+        "from_status": "OPEN",
+        "to_status": "CLOSED",
+        "details_json": "{}",
+        "actor": "system",
+        "created_at": "2026-08-14T10:00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+def _insert_row(conn: sqlite3.Connection, table: str, row: dict) -> None:
     names = ", ".join(row)
     placeholders = ", ".join("?" for _ in row)
     conn.execute(
-        f"INSERT INTO t_lots ({names}) VALUES ({placeholders})",
+        f"INSERT INTO {table} ({names}) VALUES ({placeholders})",
         tuple(row.values()),
     )
 
 
-def _pick_probe_id(conn: sqlite3.Connection, tag: str) -> str:
-    """Return a probe id confirmed absent from t_lots.
+def _pick_probe_id(conn: sqlite3.Connection, table: str, tag: str) -> str:
+    """Return a probe id confirmed absent from ``table``'s ``id`` column.
 
     The verifier must never depend on an undeclared reserved id namespace: a
     legitimate user row that happens to use a probe-shaped id must neither fail
@@ -372,12 +392,13 @@ def _pick_probe_id(conn: sqlite3.Connection, tag: str) -> str:
     target CHECK is evaluated).  Probing current rows (including rows inserted
     earlier in this rolled-back transaction) guarantees the chosen id cannot
     collide, so any IntegrityError a probe raises is caused by the probe's own
-    target field (REV-G2T002-002).
+    target field (REV-G2T002-002).  ``table`` is an internal constant, never
+    caller input.
     """
     existing = {
         row[0]
         for row in conn.execute(
-            "SELECT id FROM t_lots WHERE id IS NOT NULL"
+            f"SELECT id FROM {table} WHERE id IS NOT NULL"
         ).fetchall()
     }
     candidate = tag
@@ -388,34 +409,38 @@ def _pick_probe_id(conn: sqlite3.Connection, tag: str) -> str:
     return candidate
 
 
-def _expect_integrity(conn: sqlite3.Connection, row: dict, label: str) -> None:
-    """Attempt an invalid t_lots insert; require sqlite3.IntegrityError."""
+def _expect_integrity(
+    conn: sqlite3.Connection, table: str, row: dict, label: str
+) -> None:
+    """Attempt an invalid insert into ``table``; require sqlite3.IntegrityError."""
     names = ", ".join(row)
     placeholders = ", ".join("?" for _ in row)
     try:
         conn.execute(
-            f"INSERT INTO t_lots ({names}) VALUES ({placeholders})",
+            f"INSERT INTO {table} ({names}) VALUES ({placeholders})",
             tuple(row.values()),
         )
     except sqlite3.IntegrityError:
         return
     raise SchemaVersionError(
-        f"t_lots accepts invalid value for {label}; constraint is missing or not enforced"
+        f"{table} accepts invalid value for {label}; constraint is missing or not enforced"
     )
 
 
-def _expect_accept(conn: sqlite3.Connection, row: dict, label: str) -> None:
+def _expect_accept(
+    conn: sqlite3.Connection, table: str, row: dict, label: str
+) -> None:
     """Insert a row the design declares valid; the schema must accept it."""
     names = ", ".join(row)
     placeholders = ", ".join("?" for _ in row)
     try:
         conn.execute(
-            f"INSERT INTO t_lots ({names}) VALUES ({placeholders})",
+            f"INSERT INTO {table} ({names}) VALUES ({placeholders})",
             tuple(row.values()),
         )
     except sqlite3.IntegrityError as exc:
         raise SchemaVersionError(
-            f"t_lots rejects valid value for {label}; a CHECK is too strict"
+            f"{table} rejects valid value for {label}; a CHECK is too strict"
         ) from exc
 
 
@@ -436,7 +461,8 @@ def _verify_t_lot_constraints(conn: sqlite3.Connection) -> None:
         # A valid minimal row must insert (constraints do not reject good data).
         _expect_accept(
             conn,
-            _valid_t_lot_row(id=_pick_probe_id(conn, "__tgrid_probe_valid")),
+            "t_lots",
+            _valid_t_lot_row(id=_pick_probe_id(conn, "t_lots", "__tgrid_probe_valid")),
             label="valid minimal row",
         )
 
@@ -476,21 +502,23 @@ def _verify_t_lot_constraints(conn: sqlite3.Connection) -> None:
             if row["id"]:
                 # A non-empty id is valid; give it a non-colliding probe id so the
                 # NULL/empty id probes (above) are the only ones that change id.
-                row["id"] = _pick_probe_id(conn, f"__tgrid_probe_invalid_{label}")
-            _expect_integrity(conn, row, label=label)
+                row["id"] = _pick_probe_id(conn, "t_lots", f"__tgrid_probe_invalid_{label}")
+            _expect_integrity(conn, "t_lots", row, label=label)
 
         # Financial semantics (design §6): realized_pnl may be any numeric
         # (losses/zero/gains); fees must be a non-negative numeric.
         for tag, pnl in (("pnl_neg", -1.5), ("pnl_zero", 0.0), ("pnl_pos", 5.0)):
             _expect_accept(
                 conn,
-                _valid_t_lot_row(id=_pick_probe_id(conn, f"__tgrid_probe_{tag}"), realized_pnl=pnl),
+                "t_lots",
+                _valid_t_lot_row(id=_pick_probe_id(conn, "t_lots", f"__tgrid_probe_{tag}"), realized_pnl=pnl),
                 label=f"realized_pnl={pnl}",
             )
         for tag, fees in (("fees_zero", 0.0), ("fees_pos", 0.5)):
             _expect_accept(
                 conn,
-                _valid_t_lot_row(id=_pick_probe_id(conn, f"__tgrid_probe_{tag}"), fees=fees),
+                "t_lots",
+                _valid_t_lot_row(id=_pick_probe_id(conn, "t_lots", f"__tgrid_probe_{tag}"), fees=fees),
                 label=f"fees={fees}",
             )
 
@@ -502,8 +530,9 @@ def _verify_t_lot_constraints(conn: sqlite3.Connection) -> None:
         for index, review_status in enumerate(allowed_review_statuses):
             _expect_accept(
                 conn,
+                "t_lots",
                 _valid_t_lot_row(
-                    id=_pick_probe_id(conn, f"__tgrid_probe_review_{index}"),
+                    id=_pick_probe_id(conn, "t_lots", f"__tgrid_probe_review_{index}"),
                     review_status=review_status,
                 ),
                 label=f"review_status={review_status!r}",
@@ -527,8 +556,8 @@ def _verify_t_lot_no_delete_trigger(conn: sqlite3.Connection) -> None:
         )
     conn.execute("BEGIN")
     try:
-        probe_id = _pick_probe_id(conn, "__tgrid_probe_delete")
-        _insert_row(conn, _valid_t_lot_row(id=probe_id))
+        probe_id = _pick_probe_id(conn, "t_lots", "__tgrid_probe_delete")
+        _insert_row(conn, "t_lots", _valid_t_lot_row(id=probe_id))
         try:
             conn.execute("DELETE FROM t_lots WHERE id = ?", (probe_id,))
         except sqlite3.IntegrityError:
@@ -555,6 +584,192 @@ def _verify_t_lot_schema(conn: sqlite3.Connection) -> None:
     _verify_columns(conn, "t_lots", _T_LOTS_COLUMNS)
     _verify_t_lot_constraints(conn)
     _verify_t_lot_no_delete_trigger(conn)
+
+
+# t_lot_audit_log (design §6 append-only Audit Log).  id is the explicit NOT
+# NULL TEXT PRIMARY KEY; every required text is non-empty; from/to status are
+# NULL or one of the seven approved T-Lot statuses; details_json is opaque
+# non-empty text in this task (business JSON schema is decoded by a future
+# writer/service).
+_T_LOT_AUDIT_LOG_COLUMNS = [
+    ("id", "TEXT", 1, 1),
+    ("t_lot_id", "TEXT", 1, 0),
+    ("event_type", "TEXT", 1, 0),
+    ("from_status", "TEXT", 0, 0),
+    ("to_status", "TEXT", 0, 0),
+    ("details_json", "TEXT", 1, 0),
+    ("actor", "TEXT", 1, 0),
+    ("created_at", "TEXT", 1, 0),
+]
+
+
+def _verify_t_lot_audit_log_foreign_key(conn: sqlite3.Connection) -> None:
+    """The audit table must reference ``t_lots(id)`` via ``t_lot_id``.
+
+    Uses structured ``PRAGMA foreign_key_list`` metadata (not DDL text) so a
+    missing FK or an FK pointing at the wrong table/column is rejected.
+    """
+    fks = conn.execute("PRAGMA foreign_key_list(t_lot_audit_log)").fetchall()
+    for row in fks:
+        # foreign_key_list columns: (id, seq, table, from, to, on_update,
+        # on_delete, match)
+        if row[2] == "t_lots" and row[3] == "t_lot_id" and row[4] == "id":
+            return
+    raise SchemaVersionError(
+        "t_lot_audit_log is missing foreign key t_lot_id -> t_lots(id)"
+    )
+
+
+def _verify_t_lot_audit_log_constraints(conn: sqlite3.Connection) -> None:
+    """Behaviorally verify t_lot_audit_log constraints inside a rollback.
+
+    Every probe changes exactly one field of a valid row and uses a non-colliding
+    id, so a PRIMARY KEY / foreign-key collision can never masquerade as target
+    constraint evidence; dangling ``t_lot_id`` (no FK) and weakened
+    from/to-status checks are caught by the insert probes.
+    """
+    conn.execute("BEGIN")
+    try:
+        # A valid audit row must reference a lot that actually exists.
+        t_lot_probe_id = _pick_probe_id(conn, "t_lots", "__tgrid_probe_audit_lot")
+        _insert_row(conn, "t_lots", _valid_t_lot_row(id=t_lot_probe_id))
+        _expect_accept(
+            conn,
+            "t_lot_audit_log",
+            _valid_audit_row(
+                id=_pick_probe_id(conn, "t_lot_audit_log", "__tgrid_probe_valid"),
+                t_lot_id=t_lot_probe_id,
+            ),
+            label="valid minimal audit row",
+        )
+
+        # A dangling t_lot_id must be confirmed absent from t_lots (not a fixed
+        # string): a legitimate user lot could otherwise carry the fixed value,
+        # turning the FK probe into a valid reference and rejecting a healthy
+        # database (REV-G2T003-001).
+        dangling_lot_id = _pick_probe_id(conn, "t_lots", "__tgrid_probe_no_such_lot")
+        invalid_probes = (
+            ("id NULL", {"id": None}),
+            ("id empty", {"id": ""}),
+            ("t_lot_id NULL", {"t_lot_id": None}),
+            ("t_lot_id empty", {"t_lot_id": ""}),
+            ("t_lot_id dangling", {"t_lot_id": dangling_lot_id}),
+            ("event_type NULL", {"event_type": None}),
+            ("event_type empty", {"event_type": ""}),
+            ("from_status empty", {"from_status": ""}),
+            ("from_status lowercase", {"from_status": "open"}),
+            ("from_status unknown", {"from_status": "UNKNOWN"}),
+            ("to_status empty", {"to_status": ""}),
+            ("to_status lowercase", {"to_status": "open"}),
+            ("to_status unknown", {"to_status": "UNKNOWN"}),
+            ("details_json NULL", {"details_json": None}),
+            ("details_json empty", {"details_json": ""}),
+            ("actor NULL", {"actor": None}),
+            ("actor empty", {"actor": ""}),
+            ("created_at NULL", {"created_at": None}),
+            ("created_at empty", {"created_at": ""}),
+        )
+        for label, overrides in invalid_probes:
+            row = _valid_audit_row(t_lot_id=t_lot_probe_id)
+            row.update(overrides)
+            if row["id"]:
+                row["id"] = _pick_probe_id(
+                    conn, "t_lot_audit_log", f"__tgrid_probe_invalid_{label}"
+                )
+            _expect_integrity(conn, "t_lot_audit_log", row, label=label)
+
+        # Every approved status is valid for both from_status and to_status, and
+        # NULL is valid for either.
+        allowed_statuses = (
+            "PENDING_BUY", "OPEN", "PENDING_SELL", "CLOSED", "SUSPENDED",
+            "CONVERTED_TO_STRATEGIC", "ERROR",
+        )
+        for index, status in enumerate(allowed_statuses):
+            _expect_accept(
+                conn,
+                "t_lot_audit_log",
+                _valid_audit_row(
+                    id=_pick_probe_id(conn, "t_lot_audit_log", f"__tgrid_probe_from_{index}"),
+                    t_lot_id=t_lot_probe_id,
+                    from_status=status,
+                    to_status=None,
+                ),
+                label=f"from_status={status}",
+            )
+            _expect_accept(
+                conn,
+                "t_lot_audit_log",
+                _valid_audit_row(
+                    id=_pick_probe_id(conn, "t_lot_audit_log", f"__tgrid_probe_to_{index}"),
+                    t_lot_id=t_lot_probe_id,
+                    from_status=None,
+                    to_status=status,
+                ),
+                label=f"to_status={status}",
+            )
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def _verify_t_lot_audit_log_immutable_triggers(conn: sqlite3.Connection) -> None:
+    """Verify both immutable triggers reject UPDATE and DELETE, behaviorally.
+
+    A trigger with the expected name alone is insufficient: a no-op trigger
+    would pass a name check.  We insert a probe lot + audit row, require
+    ``sqlite3.IntegrityError`` on UPDATE and on DELETE, then roll everything
+    back so no probe row remains.
+    """
+    for name in ("t_lot_audit_log_no_update", "t_lot_audit_log_no_delete"):
+        if not _trigger_exists(conn, name):
+            raise SchemaVersionError(f"t_lot_audit_log is missing the '{name}' trigger")
+    conn.execute("BEGIN")
+    try:
+        t_lot_id = _pick_probe_id(conn, "t_lots", "__tgrid_probe_audit_lot")
+        _insert_row(conn, "t_lots", _valid_t_lot_row(id=t_lot_id))
+        audit_id = _pick_probe_id(conn, "t_lot_audit_log", "__tgrid_probe_audit_row")
+        _insert_row(
+            conn,
+            "t_lot_audit_log",
+            _valid_audit_row(id=audit_id, t_lot_id=t_lot_id),
+        )
+        try:
+            conn.execute(
+                "UPDATE t_lot_audit_log SET actor = 'x' WHERE id = ?", (audit_id,)
+            )
+        except sqlite3.IntegrityError:
+            pass
+        else:
+            raise SchemaVersionError(
+                "UPDATE of t_lot_audit_log is not rejected; the no-update "
+                "trigger is missing or does not abort"
+            )
+        try:
+            conn.execute("DELETE FROM t_lot_audit_log WHERE id = ?", (audit_id,))
+        except sqlite3.IntegrityError:
+            return
+        raise SchemaVersionError(
+            "DELETE of t_lot_audit_log is not rejected; the no-delete trigger "
+            "is missing or does not abort"
+        )
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def _verify_t_lot_audit_log_schema(conn: sqlite3.Connection) -> None:
+    """Verify the on-disk t_lot_audit_log schema matches migration 3.
+
+    Called only when MAX_SCHEMA_VERSION >= 3: a version-3 database missing the
+    audit table, columns, foreign key, constraints, or immutable triggers fails
+    closed and is never silently repaired.
+    """
+    if MAX_SCHEMA_VERSION < 3:
+        return
+    if not _table_exists(conn, "t_lot_audit_log"):
+        raise SchemaVersionError("missing table 't_lot_audit_log'")
+    _verify_columns(conn, "t_lot_audit_log", _T_LOT_AUDIT_LOG_COLUMNS)
+    _verify_t_lot_audit_log_foreign_key(conn)
+    _verify_t_lot_audit_log_constraints(conn)
+    _verify_t_lot_audit_log_immutable_triggers(conn)
 
 
 def _verify_bootstrap_schema(conn: sqlite3.Connection) -> None:
@@ -640,6 +855,7 @@ def initialize(path: str) -> sqlite3.Connection:
         _verify_version_consistency(conn)
         _verify_bootstrap_schema(conn)
         _verify_t_lot_schema(conn)
+        _verify_t_lot_audit_log_schema(conn)
     except PersistenceError:
         conn.close()
         raise

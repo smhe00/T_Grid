@@ -11,8 +11,12 @@ Migration 1 is the bootstrap: it creates the two Gate-0 foundation tables only
 Migration 2 creates the Gate-2 T-Lot Ledger foundation: the ``t_lots`` table with
 database-level constraints (design §6 + §16.1 suspended review fields) and a
 trigger that forbids ``DELETE FROM t_lots`` so historical lots can never be
-silently removed (all state changes must go through updates recorded by a future
-Audit Log).
+silently removed.
+
+Migration 3 creates the append-only ``t_lot_audit_log`` table (design §6 "all
+state changes must be recorded by an Audit Log"): every audit row is immutable —
+triggers forbid both ``UPDATE`` and ``DELETE`` — and ``t_lot_id`` must reference
+an existing ``t_lots`` row so no event can ever dangle.
 """
 
 from __future__ import annotations
@@ -99,6 +103,39 @@ T_LOT_LEDGER_STATEMENTS: Tuple[str, ...] = (
 )
 
 
+# Append-only T-Lot Audit Log (design §6 "all state changes must be recorded by
+# an Audit Log"; §7.1 Corporate Action adjustments are written here as JSON
+# payloads whose business schema is decoded by a future writer/service).  Every
+# audit row is immutable and must reference an existing t_lots row.
+T_LOT_AUDIT_LOG_STATEMENTS: Tuple[str, ...] = (
+    "CREATE TABLE t_lot_audit_log ("
+    " id TEXT NOT NULL PRIMARY KEY CHECK(length(trim(id)) > 0),"
+    " t_lot_id TEXT NOT NULL CHECK(length(trim(t_lot_id)) > 0)"
+    " REFERENCES t_lots(id),"
+    " event_type TEXT NOT NULL CHECK(length(trim(event_type)) > 0),"
+    " from_status TEXT CHECK(from_status IS NULL OR from_status IN ("
+    + ", ".join(_T_LOT_STATUSES) + ")),"
+    " to_status TEXT CHECK(to_status IS NULL OR to_status IN ("
+    + ", ".join(_T_LOT_STATUSES) + ")),"
+    " details_json TEXT NOT NULL CHECK(length(trim(details_json)) > 0),"
+    " actor TEXT NOT NULL CHECK(length(trim(actor)) > 0),"
+    " created_at TEXT NOT NULL CHECK(length(trim(created_at)) > 0)"
+    ")",
+    # History events are append-only: no UPDATE and no DELETE may ever touch an
+    # existing audit row; future services record state changes as new rows.
+    "CREATE TRIGGER t_lot_audit_log_no_update "
+    "BEFORE UPDATE ON t_lot_audit_log "
+    "BEGIN "
+    " SELECT RAISE(ABORT, 't_lot_audit_log rows are immutable'); "
+    "END",
+    "CREATE TRIGGER t_lot_audit_log_no_delete "
+    "BEFORE DELETE ON t_lot_audit_log "
+    "BEGIN "
+    " SELECT RAISE(ABORT, 't_lot_audit_log rows cannot be deleted'); "
+    "END",
+)
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -110,6 +147,9 @@ MIGRATIONS: Tuple[Migration, ...] = (
     Migration(version=1, name="bootstrap", statements=BOOTSTRAP_STATEMENTS),
     Migration(
         version=2, name="t_lot_ledger", statements=T_LOT_LEDGER_STATEMENTS
+    ),
+    Migration(
+        version=3, name="t_lot_audit_log", statements=T_LOT_AUDIT_LOG_STATEMENTS
     ),
 )
 

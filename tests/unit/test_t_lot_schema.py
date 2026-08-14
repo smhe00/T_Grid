@@ -66,23 +66,26 @@ def _insert(conn, row):
 
 class TestMigrations(unittest.TestCase):
     def test_max_version_and_history(self):
-        self.assertEqual(MAX_SCHEMA_VERSION, 2)
+        self.assertEqual(MAX_SCHEMA_VERSION, 3)
         self.assertEqual(
             [(m.version, m.name) for m in MIGRATIONS],
-            [(1, "bootstrap"), (2, "t_lot_ledger")],
+            [(1, "bootstrap"), (2, "t_lot_ledger"), (3, "t_lot_audit_log")],
         )
 
     def test_fresh_db_has_t_lots_and_trigger(self):
         path = _temp_db_path()
         conn = initialize(path)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
             tables = _tables(conn)
             self.assertIn("t_lots", tables)
             self.assertIn("schema_migrations", tables)
             self.assertIn("application_metadata", tables)
             self.assertIn("t_lots_no_delete", _triggers(conn))
-            self.assertEqual(_history(conn), [(1, "bootstrap"), (2, "t_lot_ledger")])
+            self.assertEqual(
+                _history(conn),
+                [(1, "bootstrap"), (2, "t_lot_ledger"), (3, "t_lot_audit_log")],
+            )
         finally:
             conn.close()
 
@@ -116,8 +119,11 @@ class TestMigrations(unittest.TestCase):
             conn.close()
         conn = initialize(path)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
-            self.assertEqual(_history(conn), [(1, "bootstrap"), (2, "t_lot_ledger")])
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                _history(conn),
+                [(1, "bootstrap"), (2, "t_lot_ledger"), (3, "t_lot_audit_log")],
+            )
             meta = dict(
                 conn.execute("SELECT key, value FROM application_metadata").fetchall()
             )
@@ -134,10 +140,13 @@ class TestMigrations(unittest.TestCase):
         conn1.close()
         conn2 = initialize(path)
         try:
-            self.assertEqual(conn2.execute("PRAGMA user_version").fetchone()[0], 2)
-            self.assertEqual(_history(conn2), [(1, "bootstrap"), (2, "t_lot_ledger")])
+            self.assertEqual(conn2.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                _history(conn2),
+                [(1, "bootstrap"), (2, "t_lot_ledger"), (3, "t_lot_audit_log")],
+            )
             count = conn2.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            self.assertEqual(count, 2)
+            self.assertEqual(count, 3)
         finally:
             conn2.close()
 
@@ -179,11 +188,15 @@ class TestMigrations(unittest.TestCase):
             self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 1)
         finally:
             conn.close()
-        # Fixing migration 2 (restored) allows a clean re-upgrade.
+        # Fixing migration 2 (restored) allows a clean re-upgrade to the latest
+        # schema (version 3 includes the audit log migration).
         conn = initialize(path)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 2)
-            self.assertEqual(_history(conn), [(1, "bootstrap"), (2, "t_lot_ledger")])
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+            self.assertEqual(
+                _history(conn),
+                [(1, "bootstrap"), (2, "t_lot_ledger"), (3, "t_lot_audit_log")],
+            )
         finally:
             conn.close()
 

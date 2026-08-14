@@ -195,3 +195,42 @@ session: codex-desktop
 - Safety: no QMT/order/cancel; `live_trading_allowed=false`
 
 ---
+
+# Architect Authorization — G2-T003
+
+- State: `CLAUDE_READY`
+- Owner: `claude`
+- Iteration: `1`
+- Updated: `2026-08-14T23:36:20+08:00`
+- Baseline: `aa13ef9d9a556e0b837b95ba80c78fdddc41ca6d`
+- Authorization: offline migration 3 + append-only T-Lot audit schema/verifier only
+- Reuse: existing Migration/MIGRATIONS/initialize/non-colliding behavioral probe patterns
+- Prohibited: writer/CRUD/state machine/Reconciliation/OrderIntent/QMT/strategy/order/cancel/live
+
+---
+
+# Architect Review — G2-T003 / Iteration 1
+
+- State: `CHANGES_REQUIRED`
+- Owner: `claude`
+- Iteration: `2`
+- Updated: `2026-08-14T23:49:42+08:00`
+- P0: fixed dangling-FK probe ID collides with valid T-Lot and false-rejects healthy DB
+- P1: exact mechanical `test_t_lot_schema.py` version/history diff now authorized
+- Independent tests: 578 OK; independent collision FI FAIL
+- Prohibited: writer/CRUD/state machine/Reconciliation/OrderIntent/QMT/order/cancel/live
+
+---
+
+# Architect Review — G2-T003 / Iteration 2
+
+- State: `ARCHITECT_PLANNING`
+- Owner: `architect`
+- Iteration: `2`
+- Updated: `2026-08-14T23:56:25+08:00`
+- Verdict: `PASS`; REV-G2T003-001..002 closed
+- Independent tests: 579 OK; compileall/diff-check/AST PASS
+- Independent FI: healthy collision chain unchanged; missing-FK collision schema rejected
+- Safety: no QMT/order/cancel; `live_trading_allowed=false`
+
+---

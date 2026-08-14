@@ -1,18 +1,18 @@
 project: TGrid
 design_version: "1.1"
 gate: 2
-task_id: "G2-T002"
+task_id: "G2-T003"
 state: "ARCHITECT_PLANNING"
 owner: "architect"
 iteration: 2
 last_actor: "architect"
-last_update: "2026-08-14T23:34:18+08:00"
+last_update: "2026-08-14T23:56:25+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "72704850a8344eb1173108497402984242f5075f"
-git_head_commit: "72704850a8344eb1173108497402984242f5075f"
+git_base_commit: "aa13ef9d9a556e0b837b95ba80c78fdddc41ca6d"
+git_head_commit: "aa13ef9d9a556e0b837b95ba80c78fdddc41ca6d"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G2-T002 PASS after architect independent review. 555 tests pass; compileall and diff-check pass; AST forbidden scan 0; direct SQLite FI confirms NULL id/fractional qty/text price rejection, signed/zero PnL and zero-fee semantics, collision-safe zero-residue probes, and weakened qty schema rejection despite legacy probe-id collision. Scope matches authorized files; no QMT/order/cancel. Preparing next Gate 2 task."
+notes: "G2-T003 PASS after architect independent review. 579 tests pass; compileall/diff-check/AST pass; collision-chain healthy DB remains unchanged and missing-FK tampered schema remains rejected. REV-G2T003-001..002 closed. Scope limited to migration 3 append-only T-Lot audit schema/verifier; no writer/CRUD/state machine/QMT/order/cancel. Preparing next Gate 2 task."

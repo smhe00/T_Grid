@@ -1,3 +1,34 @@
+# Architecture Review — G2-T003 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T23:56:25+08:00`
+
+独立运行 579 项 unittest、compileall、full diff-check 与 AST 禁止能力扫描全部通过。健康数据库连续占用
+旧固定 dangling ID 与 suffix 后重开仍逐值不变；缺失外键的伪造 v3 schema 在同样冲突条件下仍被拒绝。
+REV-G2T003-001..002 全部关闭。
+
+G2-T003 PASS 只接受 migration 3、append-only Audit Log schema、外键/约束/不可变 trigger 与启动
+verifier；不授权或宣称 writer/CRUD、状态机、Reconciliation、OrderIntent、QMT 或交易能力。
+
+---
+
+# Architecture Review — G2-T003 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T23:49:42+08:00`
+
+独立运行 578 项 unittest 与 compileall 通过；schema、外键、UPDATE/DELETE trigger 和常规 tamper 测试
+总体有效。但独立预置合法 T-Lot `id='__tgrid_probe_no_such_lot'` 后重新 initialize，健康数据库被
+`SchemaVersionError: ... accepts invalid value for t_lot_id dangling` 错误拒绝。固定“悬空”值发生碰撞，
+重现 G2-T002 的 probe namespace 问题，详见 REV-G2T003-001。
+
+`tests/unit/test_t_lot_schema.py` 的当前 diff 经核实仅为 migration 3 导致的 latest-version/history 机械
+更新，现由 REV-G2T003-002 明确授权保留。没有授权其它改动。Gate 2 未通过；无 QMT/交易授权。
+
+---
+
 # Architecture Review — G2-T002 / Iteration 2
 
 Status: `PASS`
