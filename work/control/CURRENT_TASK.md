@@ -1,108 +1,152 @@
-# Current Task — G1-T006
+# Task G2-T001 — Offline Core Position Guard
 
-## Task Name
+## Goal
 
-真实 MiniQMT Gate 1 只读验收：测试版哈希账号绑定
+实现一个纯离线、不可变、fail-closed 的 Core Position 快照与卖出保护能力，精确表达设计中的持仓分解、
+Core Floor、可用数量和卖出预留不变量；本任务只引入这一项主要能力。
 
-## Authorization
+## Iteration 2 Review Findings
 
-用户已于 2026-08-14 明确授权：`授权 G1-T006 真实 MiniQMT 只读验收；禁止任何下单和撤单。`
+Iteration 1 未通过。只修 `REV-G2T001-001..004`：
 
-本轮只授权 **simulation MiniQMT**。`live_trading_allowed=false` 始终不变；实盘账号、下单、撤单、
-改单、行情下载和 quote callback 订阅均不在范围内。
+- T 模块当前会把 `StrategicExtraPosition` 当成可卖空间；必须把 Core 与 Strategic 都作为 T 模块不可退出
+  的 protected position，并把卖出容量限制为 Open T-Lot 持仓。
+- 报告声称复用 `SymbolConfig`，但生产实现没有导入或使用它；必须提供一个实际由
+  `SymbolConfig.core_qty` 构造/绑定快照的最小受测路径，禁止调用者在该路径另传一份可能漂移的 core。
+- `open_t_lots` 实际存的是股数而非 lot 数量；改成与设计 `OpenTLotPosition` 一致、无歧义的 quantity 名称。
+- `src/tgrid/risk/__init__.py` 不在 Allowed Files；撤销该文件改动，不得扩大范围。
 
-## Iteration 6 State
+Iteration 2 仍为纯离线最小修复；禁止增加 Ledger、Reconciliation、OrderIntent、数据库或 QMT 能力。
 
-`CHANGES_REQUIRED / owner=claude / iteration=6`。本轮仅做一个最小离线修复，**禁止再次连接或
-查询任何 MiniQMT**。真实环境第二次运行必须等待架构师完成离线 Review 后另行显式授权。
+## In Scope
 
-Iteration 5 已关闭配置 snapshot 与 summary 迭代问题，但 runner 复制的 cleanup helper 会吞掉 stop 异常并
-错误返回成功。Iteration 6 只修复 REV-G1T006-019：删除任意 probe 注入和重复 cleanup，完全复用已验收
-的固定 Probe 生命周期；不得把历史真实结果改写为 PASS。
+- 在设计推荐的 `tgrid.position` 包中实现不可变 `PositionSnapshot`（或同等唯一公开模型）。
+- 快照必须显式保存：`symbol`、Broker 总持仓、Core 持仓、StrategicExtra 持仓、Open T-Lot 持仓、
+  QMT 可用数量 `can_use_qty`、已预留卖出数量 `reserved_sell_qty`。
+- 精确验证 `BrokerPosition = CorePosition + StrategicExtraPosition + OpenTLotPosition`。
+- 计算 `AvailableTQty = min(CanUseVolume, BrokerPosition - CoreQty) - ReservedSellQty`。
+- 提供显式的 T 模块卖出校验，独立执行并区分：Core Floor、QMT 可用数量、卖出预留冲突。
+- 最大化复用现有 `SymbolConfig` 和 `CoreFloorViolation`、`InsufficientAvailableVolume`、
+  `SellReservationConflict`；仅在持仓分解/字段本身损坏没有合适现有异常时，新增一个最小明确的
+  `RiskError` 子类。
+- 用纯合成数据编写单元测试与 Failure Injection。
 
-用户最新架构指令：**尽量复用 `D:/gitee/miniQMT/reverse_repo` 及 TGrid 已有实现**。本轮不得新增平行的
-QMT 配置、账号绑定、生命周期或 probe 抽象；优先复用已有 Adapter/Probe 的 cleanup 和异常优先级语义。
-复用交易相关代码不等于授权执行交易；当前仍禁止任何下单、撤单和 live 操作。
+## Out of Scope
 
-QMT 接口、哈希绑定和生命周期模式优先从 `D:/gitee/miniQMT/reverse_repo` 学习，特别是
-`scripts/repo_execution_core.py::select_bound_account` 及其测试；不得导入父目录
-`miniqmt_reverse_repo` 交易模块，不得访问或回退到未在本地配置中声明的 allowlist。
+- T-Lot SQLite 表、Ledger 状态变化、Audit Log、Reconciliation、Crash Recovery、SAFE_MODE 状态机。
+- OrderIntent、`client_order_key`、真实 Reservation 的创建/释放、ReservedCash。
+- Target Ceiling 买入检查、策略信号、Adaptive Grid、LIFO 平仓选择。
+- 任何 QMT/XtQuant 导入、连接、账号、行情、资产、持仓查询、下单、撤单、订阅或下载。
+- 修改 reverse_repo；不得复制其 live 执行脚本或建立跨仓运行时依赖。
+- CLI、配置 schema、数据库 migration、日志与 Event Queue 改动。
 
-## Objective
+## Reuse Direction
 
-使用 `D:/gitee/miniQMT/reverse_repo` 已有的本地 runtime 配置和 SHA-256 账号绑定，在不保存、打印或
-传递明文账号 ID 的前提下：
-
-1. 新增一个最小、显式、无动态转发的 XtQuant runtime bridge；
-2. 在内存中把唯一正常证券账户与既有 fingerprint 匹配；
-3. 将 bridge 注入已通过的 `ReadOnlyTraderAdapter` / `ReadOnlyMarketDataAdapter`；
-4. 只通过 `run_gate1_readonly_probe` 执行固定只读验收；
-5. 保存完全脱敏的 PASS/FAIL 与测试证据，不保存任何账号、资产、持仓、委托、成交或行情原值。
-
-## Local Inputs
-
-本地忽略文件：`config/gate1_qmt.local.json`。该文件只包含 simulation 环境、reverse_repo 本地配置
-路径、哈希绑定路径、公开标的与交易所，不含账号 ID。已通过架构师 preflight：
-
-- runtime 与 binding 文件存在且均被 reverse_repo Git 忽略；
-- simulation `userdata_mini` 路径存在；
-- 路径 SHA-256 与绑定一致；
-- 绑定恰好包含一个 `SECURITY_ACCOUNT`，且不保存明文账号；
-- `XtMiniQmt` 正在运行；TGrid HEAD 为 `237d312...`；Lease 空闲。
-
-## Required Implementation
-
-新增 `tgrid.integrations.qmt_gate1_runtime`，要求：
-
-- 仅在该 integration 模块中延迟导入 XtQuant；不得改变核心模块的离线导入性质。
-- 严格解析本地 JSON、reverse_repo runtime JSON 与 version-2 hashed binding；拒绝未知/缺失字段、
-  非 simulation 环境、非 `SECURITY_ACCOUNT`、明文 `account_id`、路径不存在、路径 fingerprint 不符、
-  绑定数量不是 1。
-- Trader bridge 的公开 surface 只能包含已批准 Adapter 所需的八个 callable：`start`、`connect`、
-  `subscribe`、四个 `query_stock_*`、`stop`。禁止通用代理和底层 client 暴露。
-- `subscribe` 阶段可在已连接后精确调用一次 `query_account_infos` 与一次 `query_account_status`，只在
-  内存中选择 fingerprint 匹配且状态正常的唯一证券账户；0 个或多个匹配均 fail closed。
-- 传给 Probe 的 account 必须是不含账号数据的 opaque token；bridge 内部将 token 映射为内存中的
-  `StockAccount`，不得记录、返回或持久化账号 ID。
-- MarketData 仅暴露 Adapter 规定的八个查询 callable；禁止 subscribe/download。
-- 真实执行必须调用现有 `run_gate1_readonly_probe`，首次运行仅一次且不自动重试。
-- stdout、stderr、报告与 evidence 只能出现固定 operation name、PASS/FAIL、异常类型和结构性布尔值；
-  禁止对象 repr、返回数量、业务值、本地 QMT 路径和账号 fingerprint。
-- 无论成功失败都必须至多一次 `stop()`；任何异常立即停止，不切换 live、不尝试第二个账号/终端。
+- TGrid 内部：复用现有 `SymbolConfig` 和 risk exception 层；禁止创建第二套配置或异常根类型。
+- reverse_repo：只读学习其 fail-closed、显式状态与“不以执行结果猜测意图”的模式。当前检索未发现可直接
+  复用的 Core Position / T-Lot 领域模型，因此不得为了“复用”而依赖其 GC001 live 脚本。
+- 本任务不新增 QMT Adapter；Gate 1 的只读 Adapter/Probe 保持不变。
 
 ## Allowed Files
 
-- `.gitignore`（架构师已增加 `config/*.local.json`；Claude 不再修改）
-- `src/tgrid/integrations/__init__.py`
-- `src/tgrid/integrations/qmt_gate1_runtime.py`
-- `tests/unit/test_gate1_qmt_runtime.py`
-- `scripts/gate1_simulation_readonly_probe.py`（仅允许删除，不得继续作为实现）
-- `README.md`
-- `docs/GATE_1_REPORT.md`
-- `work/reports/tests/G1-T006-test-output.txt`
-- `work/reports/tests/G1-T006-offline-regression.txt`（仅允许替换为统一证据或删除）
-- `work/reports/tests/G1-T006-simulation-probe.txt`（仅允许脱敏改写，不得重新运行 QMT）
-- `work/gates/GATE_1/G1-T006_RESULT.md`
-- `work/gates/GATE_1/CLAUDE_REPORT.md`
+- `src/tgrid/position/__init__.py`（新增）
+- `src/tgrid/position/manager.py`（新增）
+- `src/tgrid/risk/exceptions.py`（仅允许新增最小 Position invariant 异常）
+- `src/tgrid/risk/__init__.py`（Iteration 2 仅允许撤销本任务超范围导出改动）
+- `src/tgrid/__init__.py`（仅公开本任务批准的模型/异常）
+- `tests/unit/test_position_manager.py`（新增）
+- `work/reports/tests/G2-T001-test-output.txt`（新增完整测试证据）
+- `work/gates/GATE_2/G2-T001_RESULT.md`（新增）
+- `work/gates/GATE_2/CLAUDE_REPORT.md`（新增或更新）
 - `work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md`
 - `work/handoff/claude_to_architect/TEST_REPORT.md`
-- `work/handoff/claude_to_architect/QUESTIONS.md`
+- `work/handoff/claude_to_architect/QUESTIONS.md`（仅确有问题时）
 - `work/control/WORKFLOW_STATE.yaml`
 - `work/control/CLAUDE_HEARTBEAT.md`
 - `work/locks/WORKTREE_LEASE.yaml`（仅持有期间）
 
-不得修改既有 Adapter/Probe、设计文档、协议、其他仓库或 reverse_repo 文件。
+## Forbidden Files
 
-## Verification
+- `TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md`
+- `TGrid_双Agent协作与Gate验收协议_V1.0.md`
+- `src/tgrid/integrations/**`、`src/tgrid/adapters/**`、`src/tgrid/probes/**`
+- `src/tgrid/persistence/**`、既有 migration 与数据库文件
+- `config/**`、`scripts/**`、`docs/**`、`README.md`
+- `D:/gitee/miniQMT/reverse_repo/**` 与父仓库其他项目
+- 任何真实/local 配置、日志、账号、业务数据或 QMT 路径
 
-1. 默认 Python：完整 `unittest discover`、`compileall`、AST 禁止交易 API/生产 assert 扫描。
-2. 离线 Failure Injection：未知字段、明文账号、路径 hash 不符、0/2 个账号匹配、异常净化、opaque
-   token 误用、connect/subscribe/query/stop 失败、cleanup 至多一次、输出零敏感数据。
-3. Iteration 6 不得运行任何真实 QMT 命令；只允许 fake-client / fake-XtQuant 离线测试。
-4. 证据保存完整离线测试输出和已发生真实结果的脱敏摘要，不保存 raw payload、vendor banner、路径、
-   端口、账号 ID 或 fingerprint。
+## Design References
 
-## Completion
+- §4 第一原则：Core Position，尤其 `PositionAfterSell >= CoreQty` 与双重数量保护。
+- §5 Position Manager：Broker = Core + StrategicExtra + OpenTLot。
+- §21–22.1：Broker Authority、禁止静默对账、人工变化不得自动猜测。
+- §34：INV-001、INV-005、INV-006、INV-008、INV-011、INV-012、INV-016。
+- §37 Gate 2；本任务仅覆盖其中 Core Position Manager 的最小第一片。
+- §50：`CorePositionGuard` 为最高优先级。
 
-完成后不提交 commit；释放 Lease，设置 `REVIEW_READY / owner=architect / iteration=6`，使用真实本机时间，
-然后停止并等待独立 Review。
+## Invariants
+
+1. 所有数量必须是 `type(value) is int` 的 plain integer；拒绝 bool、float、string、int 子类和负数。
+2. `symbol` 必须是非空 plain string；不得隐式 trim/normalize 后接受非法输入。
+3. 快照创建时持仓分解必须精确相等；不一致立即显式失败，不修改、不猜测为 Strategic/T-Lot。
+4. 快照必须 frozen；构造完成后任何字段均不可修改。
+5. Broker 持仓低于 Core 时立即 `CoreFloorViolation`；可用数量结果不得为负。
+6. T 卖出量必须是正的 plain int，并依次通过独立 Core Floor、`can_use_qty` 与 reservation 检查。
+7. Core/Strategic 数量不得被 T 模块卖出校验重新分类或修改。
+8. 不使用 Python `assert` 承担生产安全；未知输入 fail closed。
+9. `live_trading_allowed=false`；生产代码不得导入 XtQuant 或调用 order/cancel/download/subscribe。
+
+## Acceptance Criteria
+
+- 唯一公开 Position 模型为 immutable snapshot，不暴露可变内部集合或 mutation API。
+- 合法样例 `broker=700/core=600/strategic=0/open_t=100` 精确通过。
+- `broker != core + strategic + open_t` 的任意方向偏差显式失败且无自动修复。
+- `available_t_qty` 对 Core headroom、QMT can-use 与已有 reservation 取正确最小边界。
+- `validate_t_sell`（或同等显式 API）分别抛出三种已有异常，测试能证明错误优先级和互不替代。
+- API 不返回/创建 OrderIntent，不执行 Reservation mutation，不访问数据库/QMT。
+- 包级导出最小、明确；不得把内部 helper 或 raw state 暴露为公共运行入口。
+- 既有 475 项测试全部保持通过。
+
+## Required Tests
+
+- 合法分解、零 Core/零 T-Lot、StrategicExtra 非零。
+- frozen/不可变验证。
+- 每个数量字段：负数、bool、float、string、int subclass。
+- 空 symbol、仅空白 symbol、string subclass。
+- Broker 比分解多/少；Broker 低于 Core；reservation 大于未预留可卖数量。
+- 公式边界：can-use 更小、core headroom 更小、恰好全部预留、恰好可卖、超出 1 股。
+- 卖出参数：0、负数、bool、float、string、int subclass。
+- Core Floor、InsufficientAvailableVolume、SellReservationConflict 各自独立触发。
+- AST 扫描：本任务生产文件无 `ast.Assert`、XtQuant import、order/cancel/download/subscribe 调用。
+- 完整执行：`python -m unittest discover -s tests -p "test_*.py" -v` 与
+  `python -m compileall -q src tests`。
+
+## Failure Injection
+
+- 构造一个看似为 int 的恶意 int subclass，确认不执行其自定义转换/字符串方法且被拒绝。
+- 传入异常 `__str__` 的非法 symbol/int-like 对象，确认错误路径不调用 `str/repr` 泄漏或执行副作用。
+- 依次构造可同时违反多个卖出边界的快照/数量，确认 Core Floor 最高优先级，其次 QMT 可用量，再次
+  reservation conflict；任何失败均不改变快照。
+- 尝试使用正常公开方式修改字段，确认被冻结且失败后值不变。
+
+## Deliverables
+
+- 上述生产代码与单元测试。
+- 完整 `G2-T001-test-output.txt`。
+- 更新 Implementation Report、Test Report、Claude Report 和 G2-T001 Result，逐条映射设计/不变量。
+- 报告单列 `Reuse Evidence`：实际复用了哪些 TGrid 类型/异常；为何 reverse_repo 无等价领域模型而未复制
+  live 代码。
+- 不提交 commit；由 Desktop ChatGPT 独立复核后决定验收提交。
+
+## Stop Condition
+
+完成后删除 Lease，设置：
+
+```text
+state = REVIEW_READY
+owner = architect
+task_id = G2-T001
+iteration = 1
+```
+
+然后停止写入并等待。若任何范围或设计冲突无法在允许文件内解决，设置 `BLOCKED`，不要扩大范围。

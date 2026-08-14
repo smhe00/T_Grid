@@ -115,3 +115,43 @@ session: codex-desktop
 - Prohibited: order/cancel/live execution; `live_trading_allowed=false`
 
 ---
+
+# Architect Authorization — G2-T001
+
+- State: `CLAUDE_READY`
+- Owner: `claude`
+- Iteration: `1`
+- Updated: `2026-08-14T22:39:00+08:00`
+- Baseline: `20e00c14b9a71b1800ce54fe2a69ee6903b39fa4`
+- Authorization: offline immutable Position Snapshot + Core Floor sell guard only
+- Reuse: existing SymbolConfig and risk exceptions; no duplicate config/error root
+- Prohibited: Ledger/DB/Reconciliation/OrderIntent/QMT/strategy/order/cancel/live; no reverse_repo writes
+
+---
+
+# Architect Review — G2-T001 / Iteration 1
+
+- State: `CHANGES_REQUIRED`
+- Owner: `claude`
+- Iteration: `2`
+- Updated: `2026-08-14T22:50:47+08:00`
+- P0: Strategic-only and mixed positions are wrongly sellable by the T guard
+- P1: SymbolConfig not actually used; Open T field unit/name ambiguous; risk initializer out of scope
+- Independent tests: 514 OK; independent Strategic isolation Failure Injection FAIL
+- Authorization: offline minimal fixes REV-G2T001-001..004 only
+- Prohibited: Ledger/DB/Reconciliation/OrderIntent/QMT/strategy/order/cancel/live
+
+---
+
+# Architect Review — G2-T001 / Iteration 2
+
+- State: `ARCHITECT_PLANNING`
+- Owner: `architect`
+- Iteration: `2`
+- Updated: `2026-08-14T22:57:03+08:00`
+- Ruling: `G2-T001 PASS`
+- Evidence: 523 tests; Strategic isolation/config binding/field/range FI all PASS
+- Scope: offline Position Snapshot + Core Position Guard only
+- Prohibited: Ledger/DB/Reconciliation/OrderIntent/QMT/strategy/order/cancel/live
+
+---

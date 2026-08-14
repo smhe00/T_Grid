@@ -1,3 +1,48 @@
+# Architecture Review — G2-T001 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T22:57:03+08:00`
+
+独立 523 项 unittest、compileall、diff-check 与 AST 检查通过。重放 strategic-only、mixed、reserved
+mixed：T=0 的正卖出全部拒绝，混合仓最多卖 Open T-Lot 数量，reservation 边界正确；Strategic/Core
+保持不变。`snapshot_from_symbol_config` 的 core 只来自 frozen `SymbolConfig.core_qty`，签名无第二 core；
+旧字段无 alias，`risk/__init__.py` 无差异。
+
+REV-G2T001-001..004 全部关闭。G2-T001 PASS；未授权 Ledger/DB/Reconciliation/OrderIntent/QMT/交易。
+
+---
+
+# Architecture Review — G2-T001 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T22:50:47+08:00`
+
+独立运行 514 项 unittest 与 compileall 通过，但现有测试遗漏 Strategic/T 隔离。故障注入构造
+`broker=700/core=600/strategic=100/open_t=0`，结果 `available_t_qty=100` 且 `validate_t_sell(100)` 成功；
+混合 `strategic=100/open_t=100` 也允许卖 200。T 模块因此可自动卖出战略仓，违反设计 §17、INV-008
+和任务不变量 7，属于 P0。
+
+另有三项范围/契约问题：生产代码并未实际使用 `SymbolConfig`；`open_t_lots` 名称把持仓股数混同为 lot
+计数；`src/tgrid/risk/__init__.py` 超出 Allowed Files。G2-T001 不通过，Iteration 2 仅修上述问题；详见
+`FIX_REQUEST.md`。禁止 Ledger/DB/Reconciliation/OrderIntent/QMT/交易扩展。
+
+---
+
+# Architect Authorization — G2-T001 / Iteration 1
+
+Status: `CLAUDE_READY`
+
+Authorized at: `2026-08-14T22:39:00+08:00`
+
+Gate 1 已以 commit `20e00c1` 正式 PASS。按 `work/control/CURRENT_TASK.md` 只实现纯离线、不可变的 Core
+Position 快照、持仓分解与卖出保护，复用既有 `SymbolConfig` 和 risk exceptions。不得实现 Ledger、DB、
+Reconciliation、OrderIntent、QMT Adapter 或交易执行；不得修改 reverse_repo。完成后不提交 commit，
+释放 Lease并切换 `REVIEW_READY / owner=architect`。
+
+---
+
 # Architecture Review — G1-T006 / Iteration 6
 
 Status: `PASS`

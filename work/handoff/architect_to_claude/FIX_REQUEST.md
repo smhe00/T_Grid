@@ -1,3 +1,89 @@
+# No Active Fix Request — G2-T001 / PASS
+
+Status: `CLOSED`
+
+Closed at: `2026-08-14T22:57:03+08:00`
+
+REV-G2T001-001..004 已由 Iteration 2 修复并通过独立复核。以下内容仅保留历史审计，不再授权修改。
+
+---
+
+# Closed Fix Request — G2-T001 / Iteration 2
+
+Status: `CLOSED — PASS`
+
+Issued at: `2026-08-14T22:50:47+08:00`
+
+本轮只修四项纯离线问题；不实现 Ledger、DB、Reconciliation、OrderIntent、QMT 或交易。
+
+## P0 — REV-G2T001-001：T 卖出保护允许自动卖出 Strategic Position
+
+独立 Failure Injection：
+
+```text
+broker=700 core=600 strategic=100 open_t=0
+available_t_qty=100
+validate_t_sell(100)=WRONGLY_ACCEPTED
+
+broker=800 core=600 strategic=100 open_t=100
+available_t_qty=200
+validate_t_sell(200)=WRONGLY_ACCEPTED
+```
+
+当前实现只保护 `core_position`，把 `strategic_extra` 也算入 `broker-core` 可卖空间。设计 §17 明确
+Strategic Lot 不能进入 T-Lot Ledger、T 模块不能自动卖；INV-008 同时保护 Strategic/Core。
+
+Required:
+
+- 对 T 模块，protected position 至少为 `core_position + strategic_extra_position`。
+- `available_t_qty` 与 `validate_t_sell` 均不得超过实际 `open_t_lot_position`，且仍受 `can_use_qty` 与
+  `reserved_sell_qty` 限制；reservation 只扣减一次。
+- 保持既有独立错误优先级：protected floor 优先，其次 QMT available，再次 reservation。
+- 新增 strategic-only、mixed strategic+T、reserved mixed 三组测试；验证 T=0 时任何正卖出均拒绝，
+  mixed 时最多只允许卖 Open T-Lot quantity，失败后快照不变。
+- 不得把 Strategic 自动重分类为 T，不新增人工确认或转换流程。
+
+## P1 — REV-G2T001-002：报告声称复用 SymbolConfig，实际生产代码未使用
+
+`manager.py` 不导入 `SymbolConfig`，公开构造器另收 `core_position`。这会形成第二份可漂移的 core 输入，
+与任务的“最大化复用现有 SymbolConfig”不符。
+
+Required:
+
+- 提供最小、公开、受测的 `SymbolConfig` 构造/绑定路径；该路径的 core 必须只来自
+  `SymbolConfig.core_qty`，调用者不能同时传另一份 core。
+- 严格检查传入对象类型，不复制配置校验、不修改 `SymbolConfig`，不增加第二套配置类。
+- 新增测试证明配置 core 被精确采用、调用者无法在该路径制造 core 漂移，且原配置保持 frozen。
+- 报告只陈述真实代码复用，不得把“语义相同”写成“实际复用”。
+
+## P1 — REV-G2T001-003：`open_t_lots` 名称把股数混同为 lot 数
+
+当前字段用于分解和卖出数量，单位是股；名称却像 `max_t_lots` 那样表示批次数，后续 Gate 2 容易发生
+单位错误。
+
+Required:
+
+- 重命名为与设计 `OpenTLotPosition` 一致的无歧义 quantity 名称，例如 `open_t_lot_position`。
+- 同步测试、文档字符串和报告；不得为旧名称保留第二套 alias/API。
+
+## P1 — REV-G2T001-004：修改了 Allowed Files 之外的 risk package initializer
+
+`src/tgrid/risk/__init__.py` 不在 G2-T001 Allowed Files。
+
+Required:
+
+- 撤销该文件的 G2-T001 改动；顶层 `tgrid.__init__` 已在允许范围内，可继续作为批准的公共导出。
+- 复核最终 Git 范围只包含 Allowed Files 和协议控制/报告文件。
+
+## Completion
+
+1. 仅修 REV-G2T001-001..004；不增加状态机、持久化或外部依赖。
+2. 运行专属 Strategic 隔离 Failure Injection、完整 unittest、compileall、AST 与 diff-check。
+3. 更新完整测试证据和报告，逐项标记 `FIXED` / `NOT_FIXED` / `DISAGREE`。
+4. 设置 `REVIEW_READY / owner=architect / iteration=2`，释放 Lease并停止；不要 commit。
+
+---
+
 # No Active Fix Request — G1-T006 / PASS
 
 Status: `CLOSED`

@@ -23,6 +23,11 @@ from tgrid.persistence import (
     initialize as initialize_database,
     open_database,
 )
+from tgrid.position import (
+    CorePositionGuard,
+    PositionSnapshot,
+    snapshot_from_symbol_config,
+)
 from tgrid.reporting import (
     SCHEMA_VERSION,
     configure_jsonl_logger,
@@ -48,6 +53,7 @@ from tgrid.risk.exceptions import (
     LoggingEmitError,
     LoggingError,
     MarketDataAdapterConfigError,
+    PositionInvariantError,
     MarketDataQueryError,
     MarketDataReadOnlyError,
     MarketDataValidationError,
@@ -87,6 +93,10 @@ __all__ = [
     "connect_database",
     "initialize_database",
     "open_database",
+    "PositionSnapshot",
+    "CorePositionGuard",
+    "snapshot_from_symbol_config",
+    "PositionInvariantError",
     "SCHEMA_VERSION",
     "configure_jsonl_logger",
     "emit",

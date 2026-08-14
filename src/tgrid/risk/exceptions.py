@@ -45,6 +45,17 @@ class CashReservationConflict(RiskError):
     """A buy intent conflicts with cash already reserved for another order."""
 
 
+class PositionInvariantError(RiskError):
+    """A position snapshot is internally inconsistent or a sell argument is invalid.
+
+    Raised when the Broker decomposition does not equal Core + StrategicExtra +
+    OpenTLot, when a quantity field or sell quantity is not a plain non-negative
+    integer, or when the reserved sell quantity exceeds the available capacity.
+    This is a snapshot/field-corruption failure, distinct from the three sell
+    boundary violations.
+    """
+
+
 class PersistenceError(TGridError):
     """Base class for database lifecycle failures.
 
