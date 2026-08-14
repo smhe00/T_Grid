@@ -1318,3 +1318,24 @@ Gate验收
 > **Claude负责把设计变成代码；Desktop ChatGPT负责保证代码仍然是正确的设计。**
 
 > **只要没有改变用户的投资意图或真实资金风险，两名Agent应优先自行解决问题并持续推进。**
+
+---
+
+# 34. GitHub 半自动通信模式
+
+当 `work/control/WORKFLOW_STATE.yaml` 包含：
+
+```yaml
+collaboration_transport: "github"
+```
+
+跨 Agent 传输必须执行：
+
+```text
+TGrid_GitHub双Agent通信协议_V1.0.md
+```
+
+该传输协议覆盖本文件中“两个 Agent 直接共享同一 worktree”的操作假设；本文件中的角色、Gate、
+验收、安全、用户升级和实盘权限规则继续有效。GitHub `main` 成为唯一跨机器权威状态，Claude 使用
+180 秒静默 fetch 检测新 handoff，Web ChatGPT 由用户输入 `fetch/f` 后读取并 Review。任何冲突、
+非 fast-forward 或远端快照变化均必须 `STOP WRITE`，禁止 force push 或自动冲突解决。

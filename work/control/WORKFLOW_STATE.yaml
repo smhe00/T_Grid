@@ -1,4 +1,12 @@
 project: TGrid
+collaboration_transport: "github"
+transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
+remote_repository: "https://github.com/smhe00/T_Grid.git"
+remote_branch: "main"
+poll_interval_seconds: 180
+handoff_seq: 1
+handoff_id: "G2-T004-PASS-20260815-001"
+authorized_next: []
 design_version: "1.1"
 gate: 2
 task_id: "G2-T004"
@@ -6,13 +14,13 @@ state: "ARCHITECT_PLANNING"
 owner: "architect"
 iteration: 2
 last_actor: "architect"
-last_update: "2026-08-15T00:23:10+08:00"
+last_update: "2026-08-15T00:30:45+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "3fd560c7dd65b10c3f8a99cbaf87be1678cdaca2"
-git_head_commit: "3fd560c7dd65b10c3f8a99cbaf87be1678cdaca2"
+git_base_commit: "682b28e60ad9cfebaed78bcefc343f2ac92dd054"
+git_head_commit: "682b28e60ad9cfebaed78bcefc343f2ac92dd054"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G2-T004 iteration 2 PASS. Independent architect review: 597 unittest pass; compileall and diff-check clean; AST forbidden-capability scan passes (24 source files, zero hits); deterministic two-connection BEGIN IMMEDIATE contention replay passes with exactly one committed status/audit and no active losing transaction; BaseException rollback and malicious-status isolation evidence accepted. REV-G2T004-001..003 closed. No schema/state-policy/CRUD/QMT/order/cancel expansion. Next task intentionally not created before GitHub/web-ChatGPT handoff. live_trading_allowed=false."
+notes: "G2-T004 iteration 2 PASS. GitHub semi-automatic transport enabled: GitHub main is authoritative; Claude polls every 180 seconds, remains silent when unchanged, and may act only on a new authorized handoff. Current authorized_next is empty, so no implementation is authorized until Web ChatGPT publishes the next task. Web ChatGPT review remains manually triggered by user fetch/f. Non-fast-forward, remote change, dirty worktree, ownership mismatch, or scope drift requires STOP WRITE; no force/rebase/merge/retry. live_trading_allowed=false."
