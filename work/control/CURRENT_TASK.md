@@ -1,118 +1,153 @@
-# Current Task — G1-T001
+# Current Task — G1-T002
 
 ## Task Name
 
-Gate 1 QMT 只读环境与 API 边界调查
+离线依赖注入的 QMT Trader 只读 Adapter 边界
 
 ## Objective
 
-在不连接 QMT、不读取账号/行情、不修改生产代码的前提下，确定本机可用于 TGrid 的 Python/XtQuant
-运行环境、Gate 1 所需显式输入及只读 API allowlist，生成可审计的环境报告，为后续真实只读接入任务
-消除环境和权限歧义。
+实现一个不直接导入 XtQuant、只接受依赖注入 client 的严格只读 Trader Adapter。它只暴露连接生命周期、
+账号订阅和资产/持仓/委托/成交查询，显式状态机与安全异常；不暴露任何报单、撤单、通用动态转发或原始
+client 访问。本任务只使用 fake client 离线测试，不连接 QMT、不读取真实账号。
 
 ## Scope
 
-1. 记录当前 Python 可执行文件、版本和 `sys.path` 来源摘要；用 `importlib.util.find_spec` 检查
-   `xtquant`、`xtquant.xtdata`、`xtquant.xttrader`、`xtquant.xttype` 是否可用。
-2. 只检查 PATH/Python launcher 和仓库内已有文档或脚本引用的解释器/API；不得递归扫描整盘。
-3. 若模块可导入，只做 `inspect`/属性存在性/签名等离线反射，不创建 trader、不调用 connect/start、
-   不订阅、不查询任何数据。
-4. 建立 Gate 1 只读 capability matrix：连接、行情、资产、持仓、委托、成交、断线识别、企业行动/
-   复权、交易日历/交易时段、行情新鲜度；每项标记 `AVAILABLE_UNVERIFIED`、`MISSING` 或
-   `NEEDS_EXPLICIT_INPUT`，不得把静态存在误报为真实可用。
-5. 明确后续真实只读验证所需的用户/环境输入，但不得在报告中复制完整账号 ID、凭据或敏感配置。
-6. 定义下一任务可使用的最小只读 allowlist 和明确 forbidden list，提交调查报告等待架构师 Review。
+新增 `tgrid.adapters.qmt_readonly`，公共 API：
 
-## Out of Scope
+```python
+class ReadOnlyTraderState(Enum):
+    NEW = "NEW"
+    STARTED = "STARTED"
+    CONNECTED = "CONNECTED"
+    STOPPED = "STOPPED"
+    FAILED = "FAILED"
 
-- 修改或新增 `src/**`、`tests/**`、`config/**`、`pyproject.toml`、README。
-- 安装/升级/下载 XtQuant、Python 或任何依赖；不得调用 pip/conda。
-- 启动、停止、重启或操作 MiniQMT/QMT 客户端或任何后台进程。
-- 创建 `XtQuantTrader`、调用 `connect/start/subscribe`，读取行情、账户、持仓、委托或成交。
-- 读取、猜测或复用父项目中的真实账号 ID、QMT userdata 路径、令牌、密码或本地私密配置。
-- `order_stock`、`cancel_order` 及任何下单/撤单/改单/策略执行。
-- live trading；`live_trading_allowed` 必须保持 `false`。
-
-## Design References
-
-- 设计 §36：Gate 1 只允许 QMT 连接和只读查询；禁止 `order_stock`、`cancel_order`。
-- 设计 §19：所有 QMT 调用必须封装在 Adapter 层，业务代码不得直接调用 trader。
-- 设计 §3.1：未来 callback 只能 enqueue，不能直接修改业务状态。
-- 协作协议 §18、§22、§29–§32：证据、fail-closed、Git/Lease/状态机要求。
-- Gate 0 最终裁决：`work/gates/GATE_0/RESULT.md`。
-
-## Read-only API Boundary to Assess
-
-候选 allowlist（只做静态调查，本任务不得调用）：
-
-```text
-XtQuantTrader.start
-XtQuantTrader.connect
-XtQuantTrader.subscribe
-XtQuantTrader.query_stock_asset
-XtQuantTrader.query_stock_positions
-XtQuantTrader.query_stock_orders
-XtQuantTrader.query_stock_trades
-XtQuantTrader.stop
-xtdata.connect
-xtdata.get_full_tick
-xtdata.get_market_data / get_market_data_ex
-xtdata.subscribe_quote / unsubscribe_quote
+class ReadOnlyTraderAdapter:
+    def __init__(self, client: object) -> None: ...
+    @property
+    def state(self) -> ReadOnlyTraderState: ...
+    @property
+    def failure_type(self) -> Optional[str]: ...
+    def start(self) -> None: ...
+    def connect(self) -> None: ...
+    def subscribe(self, account: object) -> None: ...
+    def query_asset(self, account: object) -> object: ...
+    def query_positions(self, account: object) -> object: ...
+    def query_orders(self, account: object, *, cancelable_only: bool = False) -> object: ...
+    def query_trades(self, account: object) -> object: ...
+    def stop(self) -> None: ...
+    def raise_if_failed(self) -> None: ...
 ```
 
-无条件 forbidden：
+显式异常：
 
 ```text
-order_stock
-order_stock_async
-cancel_order_stock
-cancel_order_stock_async
-cancel_order
-任何名称或语义等价的报单、撤单、改单方法
+QmtReadOnlyError(TGridError)
+QmtAdapterConfigError(QmtReadOnlyError)
+QmtAdapterLifecycleError(QmtReadOnlyError)
+QmtConnectionError(QmtReadOnlyError)
+QmtQueryError(QmtReadOnlyError)
 ```
 
-`query_stock_orders` 是只读查询，不得因名称包含 order 而误分类为报单。
+允许增加私有 helper/flag/lock，但不得增加 QMT 实例构造、行情能力或业务语义。
+
+## Underlying Method Mapping
+
+Adapter 只能调用注入对象的以下固定方法：
+
+```text
+start                  -> client.start()
+connect                -> client.connect()
+subscribe              -> client.subscribe(account)
+query_asset            -> client.query_stock_asset(account)
+query_positions        -> client.query_stock_positions(account)
+query_orders           -> client.query_stock_orders(account, cancelable_only)
+query_trades           -> client.query_stock_trades(account)
+stop                   -> client.stop()
+```
+
+不得提供 `__getattr__`、`call(name, ...)`、`raw_client`、`client` property 或任何通用转发入口。
+
+## Lifecycle Contract
+
+1. constructor 检查注入 client 非 None，且上述 8 个方法全部 callable；失败抛
+   `QmtAdapterConfigError`，错误只含缺失方法名/类型名，不含 client repr。
+2. `start()`：NEW 时调用底层一次并进入 STARTED；STARTED/CONNECTED 时幂等且不重复调用；
+   STOPPED/FAILED 后禁止 restart。
+3. `connect()`：只允许 STARTED；底层返回必须是非 bool 的整数。仅 `0` 表示成功并进入 CONNECTED；
+   非零、错误类型或异常均进入 FAILED 并抛安全 `QmtConnectionError`。
+4. `subscribe()`：只允许 CONNECTED；底层返回必须是非 bool 整数且仅 `0` 成功；失败进入 FAILED，
+   抛 `QmtConnectionError`。
+5. 四个 query 只允许 CONNECTED；`cancelable_only` 必须是 bool。底层返回 `None` 视为失败；其他对象
+   原样返回。异常/None 进入 FAILED 并抛 `QmtQueryError`。
+6. `stop()`：NEW 直接 STOPPED 且不调用底层；STARTED/CONNECTED 调底层恰好一次并进入 STOPPED；
+   FAILED 若底层 start 已成功，也必须尝试 stop 恰好一次做清理，但状态保持 FAILED；重复 stop 幂等。
+7. 所有外部调用抛 `Exception` 时，公共异常只含操作名与原异常类型，不含原 message/repr/traceback，
+   并使用 `from None`；`failure_type` 只存类型名。
+8. 外部调用抛 KeyboardInterrupt/SystemExit/GeneratorExit 时，先原子标记 FAILED/failure_type，再原样
+   传播；之后 `stop()` 仍可执行清理。不得吞掉这些 BaseException。
+9. `raise_if_failed()` 在 FAILED 时抛 `QmtReadOnlyError`（或更具体安全子类），文本只含 failure_type；
+   其他状态 no-op。
+10. public state/flags 必须线程安全；不得使用生产 `assert`。不要求并发调用 query，但生命周期竞争
+    必须 fail closed，不得产生第二次 start/stop。
+
+## Security Boundary
+
+- Adapter 类本身不得出现 `order_stock`、`cancel_order_stock`、改单或等价交易方法。
+- fake client 可以实现危险方法用于证明 Adapter 不可达；测试不得调用危险方法本身。
+- `getattr(adapter, "order_stock")` / `cancel_order_stock` 必须失败且 fake 的危险调用计数保持 0。
+- 生产模块不得 `import xtquant`，不得读取环境变量、文件、账号或行情。
+- 不得将注入 client 暴露为公共属性/返回值；错误不得泄漏 account/client repr 或 secret。
 
 ## Invariants
 
-1. Gate 1 仍是严格 read-only；调查本身不建立 QMT 连接。
-2. 不访问真实账号、真实行情或私密配置，不记录敏感值。
-3. 静态模块/API 存在只表示“候选可用”，不表示连接或数据验收通过。
-4. 缺失 XtQuant 环境时 fail closed：记录事实与所需输入，不安装、不猜测路径。
-5. 不修改 Gate 0 已验收代码和测试。
-6. `live_trading_allowed=false`，禁止 API 清单不可弱化。
+1. Gate 1 仍严格只读；无报单/撤单路径。
+2. 所有 QMT 调用未来只能经过 Adapter 的固定方法，不提供动态逃逸口。
+3. `live_trading_allowed=false`；本任务无配置开关可改变它。
+4. 外部失败 fail closed，状态和异常类型可审计，敏感 message 不泄漏。
+5. start/stop 幂等，失败后可清理，不依赖 `assert`。
+6. 无实际 XtQuant import/实例化/连接/账号/行情访问。
 
 ## Acceptance Criteria
 
-1. `docs/GATE_1_ENVIRONMENT_REPORT.md` 记录实际解释器、Python 版本、模块发现结果和调查方法。
-2. 报告包含 capability matrix，并区分静态存在、环境缺失、需要显式输入和尚未真实验证。
-3. 报告列出后续只读连接所需最小输入：兼容 XtQuant 的 Python/启动方式、QMT userdata 路径、
-   账号类型和经脱敏的账号选择、只读验证标的，以及客户端运行前提；不得填写或猜测真实值。
-4. 报告给出精确 allowlist/forbidden list，`order_stock`/撤单系列明确禁止。
-5. 若当前解释器无 `xtquant`，结论必须明确为环境未就绪，不得声称 Gate 1 接入成功。
-6. 完整命令与输出保存到 `work/reports/tests/G1-T001-environment-probe.txt`，敏感路径可保留到解释器/
-   包位置，但账号、凭据和真实私密配置必须脱敏或不读取。
-7. 不连接 QMT、不启动进程、不安装依赖、不修改生产代码/测试；Git diff 只含 Allowed Files。
-8. 完整 Gate 0 回归无需重跑；必须执行 `git diff --check -- T_Grid` 和生产 AST 禁止交易 API 扫描，
-   确认本任务没有弱化安全边界。
-9. 不提交 commit；完成后释放 Lease，进入 `REVIEW_READY`。环境缺失可以作为调查结论，不构成本任务
-   BLOCKED；只有无法可靠完成调查或发现范围/安全冲突时才使用 `BLOCKED`。
+1. 公共 API、method mapping、状态机与异常层级符合本任务。
+2. fake client 证明每个 public 方法只调用对应底层方法，参数/返回值不变，且 query 顺序无隐藏副作用。
+3. connect/subscribe 的 bool、None、float/string、非零返回均 fail closed；只有 int 0 成功。
+4. query 返回 None、缺失/非 callable method、非法 lifecycle、非法 cancelable_only 均抛显式项目异常。
+5. RuntimeError unique secret 不出现在公共异常、cause/context、stdout/stderr；failure_type 正确。
+6. KeyboardInterrupt/SystemExit/GeneratorExit 覆盖 start/connect/subscribe/query/stop 的代表路径：状态先 FAILED，
+   原样传播，已启动 client 可由后续 stop 清理且只清理一次。
+7. fake client 即使带有完整 order/cancel 方法，Adapter 实例也没有这些 API、没有通用转发、危险计数为 0。
+8. 多线程重复 start/stop 最多各调用底层一次；无死锁、无残留线程。
+9. 完整 Gate 0 + Gate 1 回归不少于 223 项，compileall、AST 安全扫描通过。
+10. 无 `xtquant` import、无新增第三方依赖、无 QMT/账号/行情真实访问；`live_trading_allowed=false`。
 
-## Required Checks / Failure Injection
+## Required Tests / Failure Injection
 
-- 当前解释器 `find_spec('xtquant')` 缺失路径。
-- 可用解释器候选中的 import failure 必须只报告异常类型/安全摘要，不打印 traceback 或环境变量。
-- 静态 API 检查不得实例化 trader；在报告中证明未发生 connect/query/subscribe。
-- AST 扫描 `src/tgrid/**/*.py`：继续无 `xtquant` import、无 `order_stock`/撤单调用、无 `assert`。
-- Git HEAD/范围/Lease 检查。
+- constructor 8 个 required method 的逐项缺失与 non-callable。
+- 全 lifecycle transition、重复 start/connect/stop、restart rejection、query-before-connect。
+- 正常 method mapping：asset/positions/orders/trades，含 `cancelable_only` True/False。
+- connect/subscribe 所有非法返回类型和非零码。
+- query None 与底层 RuntimeError；unique secret 不泄漏，cause/context 均安全。
+- start/connect/query/stop 的普通异常及代表性 KeyboardInterrupt/SystemExit/GeneratorExit 清理路径。
+- fake dangerous client 的 order/cancel API 不可达、无调用。
+- 并发重复 start/stop，底层调用计数恰为 1。
+- AST：生产无 assert、无 xtquant import、无 order/cancel call；不得通过字符串动态 getattr/call 绕过。
+- 完整 unittest、compileall；完整输出保存。
 
 ## Allowed Files
 
 Claude 只能新增或修改：
 
 ```text
-docs/GATE_1_ENVIRONMENT_REPORT.md
-work/reports/tests/G1-T001-environment-probe.txt
+src/tgrid/adapters/__init__.py
+src/tgrid/adapters/qmt_readonly.py
+src/tgrid/risk/exceptions.py
+src/tgrid/risk/__init__.py
+src/tgrid/__init__.py
+tests/unit/test_qmt_readonly.py
+README.md
+work/reports/tests/G1-T002-test-output.txt
 work/gates/GATE_1/CLAUDE_REPORT.md
 work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md
 work/handoff/claude_to_architect/TEST_REPORT.md
@@ -124,43 +159,48 @@ work/control/WORKFLOW_STATE.yaml
 `WORKFLOW_STATE.yaml` 只允许更新 worker state/owner/iteration/last_actor/last_update/git_head_commit/notes
 和必要 escalation 字段；不得修改 Gate、基线、设计路径或 `live_trading_allowed`。
 
-## Forbidden Files
+## Forbidden Files / Changes
 
-除 Allowed Files 外的全部文件，尤其：
+除 Allowed Files 外全部禁止，尤其：
 
 ```text
-src/**
-tests/**
-config/**
-README.md
 pyproject.toml
+config/**
+src/tgrid/main.py
+src/tgrid/events.py
+src/tgrid/persistence/**
+src/tgrid/reporting/**
+其他 tests/**
+docs/**
 work/control/CURRENT_TASK.md
 work/control/ARCHITECT_HEARTBEAT.md
-work/gates/GATE_0/**
 work/gates/GATE_1/TASK.md
 work/gates/GATE_1/ARCHITECT_REVIEW.md
 work/gates/GATE_1/RESULT.md
-父目录 D:/gitee/miniQMT 中 T_Grid 之外的全部文件
+父目录 D:/gitee/miniQMT 中 T_Grid 之外全部文件
 ```
+
+不得安装依赖、启动/停止 QMT、连接/查询真实数据、添加行情 Adapter、账号发现、日志/DB/CLI 集成，
+也不得增加任何下单、撤单、改单或动态 method forwarding。
 
 ## Deliverables
 
-1. `docs/GATE_1_ENVIRONMENT_REPORT.md`。
-2. `work/reports/tests/G1-T001-environment-probe.txt` 完整安全输出。
-3. Gate 1 Claude Report、Implementation/Test/Questions 报告。
-4. 后续只读接入的输入清单与安全边界建议；不创建连接代码。
+1. 只读 Trader Adapter、异常、导出与 README 边界说明。
+2. 完整单元测试和 `work/reports/tests/G1-T002-test-output.txt`。
+3. 更新 Claude Gate、Implementation/Test/Questions 报告。
+4. 不提交 commit；等待架构师独立 Review。
 
 ## Stop Condition
 
-完成调查、验证范围且释放 Lease 后，原子设置：
+完成范围检查、测试并释放 Lease 后，原子设置：
 
 ```text
 state: REVIEW_READY
 owner: architect
 iteration: 1
 last_actor: claude
-git_head_commit: 34169aa9873af9ae7f94994ed7301956d491585d
+git_head_commit: 73cbe3be6abf3744fd16b322c45fb4a17ee6bb40
 live_trading_allowed: false
 ```
 
-然后停止修改。若出现范围污染、安全边界冲突或无法形成可信报告，设置 `BLOCKED` 并停止。
+然后停止修改。出现设计冲突、范围污染或无法保证只读边界时设置 `BLOCKED` 并停止。

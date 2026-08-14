@@ -1,5 +1,24 @@
 # Gate 1 Architect Review
 
+## G1-T002 / Iteration 2
+
+Result: `G1-T002 PASS`
+
+独立 287 项回归、compileall、AST、异常图与 descriptor/frozen-callable Failure Injection 全部通过。
+REV-G1T002-001/-002 已关闭；八个固定只读方法无动态逃逸，未导入或连接 XtQuant，未访问真实账号/行情，
+危险 order/cancel 路径不可达，`live_trading_allowed=false`。
+
+本裁决仅通过离线 Trader 只读 Adapter；Gate 1 尚未通过，下一任务仍限离线 MarketData 只读边界。
+
+## G1-T002 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+280 项回归和只读 API 主路径通过，但 `from None` 后 `__context__` 仍持有带 secret 的原始异常；
+constructor descriptor 也可泄漏裸异常，且 bound methods 未冻结。进入聚焦 Iteration 2。
+
+不得连接 QMT、读取真实账号/行情或增加交易面；Gate 1 未通过。
+
 ## G1-T001 / Iteration 1
 
 Result: `G1-T001 PASS`

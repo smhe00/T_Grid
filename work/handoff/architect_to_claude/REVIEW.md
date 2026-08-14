@@ -1,3 +1,31 @@
+# Architecture Review — G1-T002 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T19:40:15+08:00`
+
+独立运行 287 项 unittest、compileall、AST 与范围检查全部通过。额外注入 unique secret 验证
+start/connect/subscribe/query/stop 的项目异常 `__cause__`/`__context__` 均为 `None`；constructor
+descriptor 失败同样净化，构造后属性替换也不能绕过冻结的八个 callable。REV-G1T002-001/-002 已关闭。
+
+G1-T002 PASS，但不授权真实连接、账号访问、行情访问、下单或撤单。Gate 1 尚未通过。
+
+---
+
+# Architecture Review — G1-T002 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T19:33:34+08:00`
+
+独立 280 项回归、compileall、范围和固定只读面基础检查通过。但五个普通异常路径的安全项目异常仍通过
+`__context__` 暴露原始 RuntimeError secret；constructor 的 method descriptor 异常还会直接泄漏裸
+RuntimeError，且验证后的 bound methods 未冻结。详见 REV-G1T002-001/-002。
+
+只修异常图净化与固定 callable 捕获；不得扩大 API、连接 QMT 或修改其他模块。Gate 1 未通过。
+
+---
+
 # Architecture Review — G1-T001 / Iteration 1
 
 Status: `PASS`

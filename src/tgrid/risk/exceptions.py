@@ -103,3 +103,23 @@ class EventQueueFull(EventQueueError):
 
 class EventQueueWorkerError(EventQueueError):
     """The worker thread failed while processing an event."""
+
+
+class QmtReadOnlyError(TGridError):
+    """Base class for read-only QMT adapter failures."""
+
+
+class QmtAdapterConfigError(QmtReadOnlyError):
+    """The injected client is missing a required read-only method."""
+
+
+class QmtAdapterLifecycleError(QmtReadOnlyError):
+    """An illegal adapter lifecycle transition was attempted."""
+
+
+class QmtConnectionError(QmtReadOnlyError):
+    """Connect/subscribe failed or returned an invalid result."""
+
+
+class QmtQueryError(QmtReadOnlyError):
+    """A read-only query failed or returned None."""

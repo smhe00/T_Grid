@@ -1,11 +1,13 @@
 """TGrid — QMT low-frequency T-trading engine.
 
-Gate 0 skeleton only: this package provides configuration loading, explicit
-risk exception types, and a fail-closed SQLite foundation.  It has no
-QMT/XtQuant dependency and no trading, market-data, or account-access
-capability.
+Gate 0/1 skeleton: configuration loading, explicit risk exception types, a
+fail-closed SQLite foundation, and a strictly read-only QMT adapter boundary.
+The package has no direct XtQuant dependency and no trading, market-data, or
+account-access capability; the read-only adapter only talks to an injected
+client object.
 """
 
+from tgrid.adapters import ReadOnlyTraderAdapter, ReadOnlyTraderState
 from tgrid.config import load_config, parse_config
 from tgrid.events import EventQueue, EventQueueState
 from tgrid.models import ACCUMULATE_MODE, GlobalConfig, RootConfig, SymbolConfig
@@ -37,6 +39,11 @@ from tgrid.risk.exceptions import (
     LoggingError,
     MigrationError,
     PersistenceError,
+    QmtAdapterConfigError,
+    QmtAdapterLifecycleError,
+    QmtConnectionError,
+    QmtQueryError,
+    QmtReadOnlyError,
     RiskError,
     SchemaVersionError,
     SellReservationConflict,
@@ -47,6 +54,8 @@ __version__ = "0.1.0"
 
 __all__ = [
     "__version__",
+    "ReadOnlyTraderAdapter",
+    "ReadOnlyTraderState",
     "load_config",
     "parse_config",
     "EventQueue",
@@ -82,4 +91,9 @@ __all__ = [
     "EventQueueLifecycleError",
     "EventQueueFull",
     "EventQueueWorkerError",
+    "QmtReadOnlyError",
+    "QmtAdapterConfigError",
+    "QmtAdapterLifecycleError",
+    "QmtConnectionError",
+    "QmtQueryError",
 ]

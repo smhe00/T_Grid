@@ -1,68 +1,76 @@
-# Implementation Report — G1-T001
+# Implementation Report — G1-T002 / Iteration 2
 
 ## Task
-G1-T001 — Gate 1 QMT 只读环境与 API 边界调查（离线）
+G1-T002 — 离线依赖注入的 QMT Trader 只读 Adapter 边界（Iteration 2 修复 REV-G1T002-001 / -002）
 
 ## Summary
-在只读前提下确定本机可用于 TGrid 的 Python/XtQuant 运行环境、Gate 1 所需显式输入及只读 API
-allowlist/forbidden list，生成可审计环境报告。未连接 QMT、未读取账号/行情、未安装依赖、
-未修改任何生产代码或测试，未进入下一 Gate。
+只修复架构师指出的两个问题：异常链 `__context__` 仍携带原异常（P0），constructor descriptor 泄漏
+裸异常且 bound methods 未冻结（P1）。保持固定只读 API、状态机和既有行为不变，不新增 QMT/行情/账号
+能力。
 
-## Files Changed
-- `docs/GATE_1_ENVIRONMENT_REPORT.md` — 新增：解释器环境、find_spec 结果、Capability Matrix、
-  显式输入清单、allowlist/forbidden list、安全验证。
-- `work/reports/tests/G1-T001-environment-probe.txt` — 新增：112 行完整命令输出（interpreter、
-  find_spec、AST 离线反射、git/AST 检查）。
-- `work/gates/GATE_1/CLAUDE_REPORT.md` — 新增：Gate 1 Claude 报告。
-- `work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md` — 本文件。
-- `work/handoff/claude_to_architect/TEST_REPORT.md` — 测试/检查报告。
-- `work/handoff/claude_to_architect/QUESTIONS.md` — 置 NONE。
-- `work/control/CLAUDE_HEARTBEAT.md` — 更新 heartbeat。
-- `work/control/WORKFLOW_STATE.yaml` — 更新 worker 状态字段（REVIEW_READY）。
-
-## Design Mapping
-- 设计 §36（Gate 1 只允许 QMT 连接和只读查询，禁止 order_stock/cancel_order）：本报告据此定义
-  allowlist/forbidden list，所有条目仅静态调查、未调用。
-- 设计 §19（QMT 调用封装在 Adapter 层）：本任务不产生任何 QMT 调用，为后续 Adapter 提供边界清单。
-- 设计 §3.1（callback 只能 enqueue）：断线识别记录 `on_disconnected` 回调静态存在，供后续串行化。
+## Files Changed（Iteration 2 增量）
+- `src/tgrid/adapters/qmt_readonly.py`：
+  - 新增 `_run_client_op(method, *args)`：调用冻结 callable 并返回 `(result, None)` 或
+    `(None, 类型名)`（BaseException 先标记 FAILED 再原样传播）；所有项目异常的 `raise ... from None`
+    都发生在 except 块之外，保证 `__cause__`/`__context__` 为 None。
+  - constructor 改为 `_resolve_client_methods`：8 个固定字面量属性读取（无 getattr），每个读取独立
+    守卫；抛异常 descriptor / 缺失属性 → `QmtAdapterConfigError`（异常图干净）；校验后冻结 8 个
+    bound callable 到 `self._methods`。
+  - 移除 `self._client`；connect/subscribe/stop/query/start 全部改用 `self._methods[...]` 冻结 callable。
+- `tests/unit/test_qmt_readonly.py`：新增 7 项（64 项总计）——
+  1. `_assert_safe_exception_graph`：递归断言 `__cause__ is None`、`__context__ is None`、全图无 secret。
+  2. subscribe / stop 的 unique secret 不泄漏（此前只覆盖 start/connect/query）。
+  3. constructor descriptor secret：`_SecretDescriptor` 抛 `RuntimeError(secret)` → `QmtAdapterConfigError`
+     异常图干净、含类型名与方法名。
+  4. constructor 缺失属性名称被报告且 cause/context 干净。
+  5. 构造后替换 client 目标属性为危险 callable → 仍用冻结原方法（`test_frozen_methods_after_construction`）。
+  6. 替换为指向 `order_stock` 的转发 → 危险计数 0。
+  7. 替换 `stop` 后仍用冻结原方法。
 
 ## Deviations
 NONE
 
 ## Tests Added
-本任务为纯调查，不新增单元测试。执行了任务要求的检查项（见 TEST_REPORT）。
+见 Files Changed；原有 57 项保持通过，新增 7 项 → 全量 287 项通过。
 
 ## Test Commands / Results
-见 TEST_REPORT.md 与 `work/reports/tests/G1-T001-environment-probe.txt`。
+```text
+python -m unittest discover -s tests -p "test_*.py" -v   -> Ran 287 tests ... OK
+python -m compileall -q src tests                         -> exit 0
+AST scan src/tgrid（15 文件）                             -> PASS（无 assert/xtquant/order-cancel/动态 getattr）
+Exception graph probe                                     -> 全部 cause=None context=None
+git diff --check -- :/T_Grid                              -> exit 0
+```
+完整输出：`work/reports/tests/G1-T002-test-output.txt`（322 行）。
 
-## Failure Injection
-- `find_spec('xtquant')` 在 TGrid 默认解释器缺失 → 如实记录为环境未就绪，不安装、不猜测路径。
-- 候选解释器 import 失败按任务要求只报告异常类型/安全摘要，未打印 traceback 或环境变量。
-- 静态 API 检查未实例化 trader：probe 用 AST 解析源文件（未 `import xtquant`），报告明确声明
-  未发生 connect/query/subscribe。
+## Failure Injection（Iteration 2）
+- start/connect/subscribe/query/stop 注入 `RuntimeError(UNIQUE_SECRET)`：断言项目异常
+  `__cause__ is None`、`__context__ is None`、文本/输出无 secret、failure_type 正确。
+- constructor 注入抛 `RuntimeError(CONSTRUCTOR_DESCRIPTOR_SECRET_XYZ)` 的 descriptor：断言
+  `QmtAdapterConfigError` 异常图干净。
+- 构造后替换 client 属性为危险 descriptor / order 转发：断言冻结方法不被绕过、危险计数 0。
 
 ## Invariant Check
-1. Gate 1 严格 read-only：通过（无任何 XtQuant 代码执行）。
-2. 不访问真实账号/行情/私密配置，不记录敏感值：通过。
-3. 静态存在 ≠ 连接/数据验收：全部能力标注 AVAILABLE_UNVERIFIED。
-4. 环境缺失 fail closed：TGrid 默认解释器无 xtquant → 结论为环境未就绪。
-5. 未修改 Gate 0 已验收代码/测试：通过。
-6. `live_trading_allowed=false`，禁止清单未弱化：通过。
+1. Gate 1 严格只读，无报单/撤单路径：通过。
+2. QMT 调用只经过固定方法，无动态逃逸口：通过（字面量属性读取 + 冻结 callable）。
+3. `live_trading_allowed=false`：通过。
+4. 外部失败 fail closed，状态/异常类型可审计，敏感 message/对象不泄漏：通过（cause/context 递归断言）。
+5. start/stop 幂等，失败后可清理，不依赖 assert：通过。
+6. 无 XtQuant import/实例化/连接/账号/行情访问：通过。
 
 ## Static / Type / Lint Check
-- `git diff --check -- T_Grid`：exit 0。
-- AST 扫描 `src/tgrid/**/*.py`（13 文件）：无 `ast.Assert`、无 `xtquant` import、
-  无 `order_stock`/撤单调用，exit 0。
+- AST 扫描 15 文件：无 `ast.Assert`、无 `xtquant` import、无 order/cancel call、无动态 getattr/call 绕过。
+- `git diff --check -- :/T_Grid`：exit 0。
 
 ## Git Diff Summary
-- HEAD == 基线 `34169aa9873af9ae7f94994ed7301956d491585d`。
-- 变更范围仅限本任务 Allowed Files（T_Grid 内）；父目录文件未改动。
+- HEAD == 基线 `73cbe3be6abf3744fd16b322c45fb4a17ee6bb40`。
+- 变更仅限本任务 Allowed Files；父目录文件未改动；未 commit/push。
 
 ## Known Issues
 NONE
 
 ## Questions
-NONE（见 QUESTIONS.md）
+NONE
 
 ## Recommendation
-REVIEW_READY
+REVIEW_READY（iteration=2）

@@ -1,33 +1,36 @@
-# Gate 1 / Claude Report — G1-T001
+# Gate 1 / Claude Report — G1-T002
 
 ## Status
-G1-T001 **离线环境与 API 边界调查完成**，交付 `REVIEW_READY`，等待架构师 Review。
+G1-T002 **Iteration 2 修复完成**（REV-G1T002-001 / -002 均 FIXED），交付 `REVIEW_READY / iteration=2`，等待架构师 Review。
 
-## 调查结论（摘要）
+## Iteration 2 修复内容
 
-1. **解释器**：TGrid 默认 `python` = Python 3.12.10（pythoncore-3.12-64）；launcher 另有 3.11.9。
-2. **XtQuant 可用性**（`find_spec`，未导入）：
-   - TGrid 默认 3.12.10：**MISSING** → 该解释器环境未就绪。
-   - 父仓库 `.venv`（3.12.10）：**FOUND**（含 xtdata/xttrader/xttype）→ 唯一兼容解释器。
-   - `.venv-bigquant`（3.11.9）与 launcher 3.11.9：**MISSING**。
-3. **静态 API 面**（对 `.venv` 安装的 XtQuant 包做 AST 离线反射，**未 import xtquant、未实例化 trader、
-   未 connect/subscribe/query**）：候选只读 allowlist 全部静态存在（AVAILABLE_UNVERIFIED），
-   包括连接、行情、资产、持仓、委托、成交、断线识别（`on_disconnected`）、复权（`get_divid_factors`）、
-   交易日历/交易时段、行情新鲜度候选字段。
-4. **Forbidden 面**：`order_stock` / `order_stock_async` / `cancel_order_stock(_async)` /
-   `cancel_order_stock_sysid(_async)` 确认静态存在，本任务仅记录并列入 forbidden，绝不允许调用。
-5. **显式输入清单**：兼容解释器、QMT userdata 路径、账号类型与经脱敏账号选择（SHA-256 指纹白名单）、
-   只读验证标的、本地 QMT 客户端运行前提——均为待填项，报告未填写/猜测任何真实值。
+### REV-G1T002-001（P0）— `from None` 未清除 `__context__`
+- 重构所有外部调用为 `_run_client_op(method, *args)`：普通 `Exception` 只返回 `(None, 类型名)` 并标记
+  FAILED，**离开 active exception context 之后**才由调用方抛项目异常（`from None`）。
+- 因此项目异常在创建时 `sys.exc_info()` 为空，`__cause__ is None` 且 `__context__ is None`，
+  原异常 object / message / repr / traceback 从公共异常图中彻底消失。
+- `KeyboardInterrupt`/`SystemExit`/`GeneratorExit` 仍先 FAILED 后原样传播，不转成项目异常。
+- 覆盖 start/connect/subscribe/query/stop 五条路径，注入唯一 secret 全部断言 cause/context 递归安全。
+
+### REV-G1T002-002（P1）— constructor descriptor 泄漏 + bound methods 未冻结
+- constructor 对 8 个固定只读方法改用**字面量属性读取**（无 `getattr`、无运行时派生方法名），每个属性
+  读取独立 try/except：普通 `Exception`（含抛异常 descriptor）转安全 `QmtAdapterConfigError`（异常图
+  干净），BaseException 不吞。
+- 校验通过后把 8 个 bound callable **冻结**进私有 `self._methods`，后续 connect/subscribe/query/stop
+  只调用这些固定 callable，**不再重新解析 client 属性**；同时移除 `self._client`，注入 client 彻底
+  不出现在实例状态中。
+- 新增测试证明：构造后替换 client 目标属性为危险 callable / 指向 order 的转发，Adapter 仍用冻结的
+  原方法，危险计数为 0。
 
 ## 证据
-- `docs/GATE_1_ENVIRONMENT_REPORT.md`（完整报告）。
-- `work/reports/tests/G1-T001-environment-probe.txt`（105 行完整命令输出）。
-- 安全扫描：`git diff --check -- T_Grid` exit 0；AST 扫描 `src/tgrid`（13 文件）无
-  `ast.Assert`/`xtquant` import/order-cancel 调用，exit 0；HEAD==基线 `34169aa`。
+- 完整输出：`work/reports/tests/G1-T002-test-output.txt`（**287 项全部通过** + compileall exit 0 +
+  AST 扫描 PASS + 异常图 probe 全 `cause=None context=None`）。
+- `git diff --check -- :/T_Grid` exit 0；HEAD == 基线 `73cbe3b`。
 
 ## 范围遵守
-未连接 QMT、未启动进程、未安装依赖、未修改生产代码/测试、未触碰父目录文件、未 commit/push、
-`live_trading_allowed` 保持 `false`。Git diff 仅含本任务 Allowed Files。
+未 import xtquant、未连接 QMT、未读行情/账号、未安装依赖、未修改 Gate 0 已验收代码、
+未触碰父目录文件、未 commit/push、`live_trading_allowed` 保持 `false`。
 
 ## Recommendation
-REVIEW_READY（等待 Desktop ChatGPT 独立裁决；不声称 Gate 1 接入成功）。
+REVIEW_READY（等待 Desktop ChatGPT 独立 Review）。

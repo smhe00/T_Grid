@@ -1,57 +1,53 @@
-# Test Report — G1-T001
+# Test Report — G1-T002 / Iteration 2
 
 ## Task
-G1-T001 — Gate 1 QMT 只读环境与 API 边界调查（离线，纯调查，无生产代码变更）
+G1-T002 — 离线依赖注入的 QMT Trader 只读 Adapter 边界（Iteration 2 修复 REV-G1T002-001 / -002）
 
-## 说明
-本任务为环境/API 调查，不新增或修改单元测试；执行任务规定的检查项并以完整输出存档。
+## Environment
+- Python 3.12.10
+- 基线：`73cbe3be6abf3744fd16b322c45fb4a17ee6bb40`
+- 全部测试使用 fake client，无 XtQuant import、无 QMT 连接、无真实账号/行情访问。
 
-## 执行的检查
+## Commands Run（完整输出见 `work/reports/tests/G1-T002-test-output.txt`，322 行）
 
-### 1. 解释器与 find_spec（未导入）
-```text
-python --version               -> Python 3.12.10
-py --list                      -> 3.12.10（默认）、3.11.9
-find_spec('xtquant')           -> 默认解释器 MISSING；.venv(3.12.10) FOUND；.venv-bigquant/3.11.9 MISSING
-```
+| 检查 | 结果 |
+|---|---|
+| `python -m unittest discover -s tests -p "test_*.py" -v` | **287 项全部 OK**（223 Gate 0 + 64 本模块） |
+| `python -m compileall -q src tests` | 退出 0 |
+| AST 扫描 `src/tgrid/**/*.py`（15 文件） | PASS：无 assert、无 xtquant import、无 order/cancel 调用、无动态 getattr/call 绕过 |
+| 异常图 probe（start/connect/subscribe/query/stop + ctor-descriptor） | 全部 `cause=None context=None`，无 secret |
+| `git diff --check -- :/T_Grid` | exit 0 |
+| HEAD 与基线 | `73cbe3b...` == base，一致 |
 
-### 2. 静态 API 面（AST 离线反射，未 import xtquant、未实例化 trader）
-```text
-XtQuantTrader.connect/start/stop/run_forever           FOUND
-XtQuantTrader.query_stock_asset/positions/orders/trades FOUND
-XtQuantTraderCallback.on_connected/on_disconnected/on_account_status ... FOUND
-xtdata.connect/get_full_tick/get_market_data(_ex)/subscribe_quote/unsubscribe_quote ... FOUND
-xtdata.get_divid_factors/get_instrument_detail/get_trading_calendar/get_trading_dates/get_trading_period ... FOUND
-FORBIDDEN: order_stock(_async)/cancel_order_stock(_async)/cancel_order_stock_sysid(_async) 静态存在，禁止调用
-```
+## Iteration 2 新增/强化测试
 
-### 3. 安全范围检查
-```text
-git diff --check -- T_Grid     -> exit 0
-AST scan src/tgrid (13 files)  -> PASS：无 ast.Assert、无 xtquant import、无 order/cancel 调用，exit 0
-git HEAD                       -> 34169aa9873af9ae7f94994ed7301956d491585d == 基线
-```
+### REV-G1T002-001 — 异常图安全（`__context__` 也为 None）
+- `_assert_safe_exception_graph`：递归遍历 `__cause__`/`__context__`，断言二者为 None 且全图无 secret。
+- 覆盖路径：start / connect / subscribe / query / stop 各注入 `RuntimeError(UNIQUE_SECRET)`；
+  公共异常文本为 `"<op> failed: RuntimeError"`，`__cause__`/`__context__` 均为 None，stdout/stderr 无 token。
 
-### 4. 补充：Gate 0 回归（AC8 声明无需重跑，本轮为完整性补跑）
-```text
-python -m unittest discover -s tests -p "test_*.py" -> Ran 223 tests ... OK，exit 0
-python -m compileall -q src tests                    -> exit 0
-```
+### REV-G1T002-002 — constructor 安全 + 方法冻结
+- `_SecretDescriptor`（`__get__` 抛 `RuntimeError(CONSTRUCTOR_DESCRIPTOR_SECRET_XYZ)`）注入 `connect`：
+  constructor 抛 `QmtAdapterConfigError`，异常图干净（cause/context None），消息含类型名 `_DescriptorSecretClient` 与方法名 `connect`，无 secret。
+- constructor 缺失属性（`_MissingAttr`）：`QmtAdapterConfigError` 含方法名，cause/context None。
+- 构造后替换 client 属性：
+  - 替换 `query_stock_asset` 为危险 callable → 返回冻结原结果，危险计数 0。
+  - 替换 `query_stock_positions` 为指向 `order_stock` 的转发 → 返回冻结原结果，危险计数 0。
+  - 替换 `stop` 为危险 callable → 冻结原 stop 被调用一次，危险计数 0。
 
-## 完整输出
-`work/reports/tests/G1-T001-environment-probe.txt`（112 行，含上述全部命令与结果）。
+## Failure Injection 汇总（Iteration 2）
+见上文；唯一 secret token 在 exception/cause/context/stdout/stderr 全路径断言不出现。
 
 ## 结果汇总
 | 检查项 | 结果 |
 |---|---|
-| TGrid 默认解释器 XtQuant 可用性 | MISSING → 环境未就绪（按 AC5 如实声明） |
-| `.venv`(3.12.10) XtQuant 可用性 | FOUND（静态） |
-| 候选只读 API 静态存在 | 全部 FOUND（AVAILABLE_UNVERIFIED） |
-| 禁止交易 API 未调用 | 通过 |
-| 未连接/未导入/未实例化/未查询 | 通过 |
-| git diff --check / AST 扫描 | 通过（exit 0） |
-| 无敏感值入报告 | 通过 |
+| 287 项 unittest | OK |
+| compileall | exit 0 |
+| AST 安全扫描 | PASS（15 文件，无 assert/xtquant/order-cancel/动态转发） |
+| 异常图安全 | PASS（全部 `__cause__ is None`、`__context__ is None`） |
+| constructor descriptor 安全 | PASS（`QmtAdapterConfigError`，异常图干净） |
+| 方法冻结（构造后替换不可绕过） | PASS（危险计数 0） |
+| 无真实 QMT/账号/行情访问 | 通过（仅 fake client） |
 
 ## 结论
-全部检查通过，无 traceback、无敏感输出；环境缺失作为调查结论如实记录，不构成本任务 BLOCKED。
-REVIEW_READY。
+REV-G1T002-001 / -002 均已修复并有回归证据。REVIEW_READY（iteration=2）。

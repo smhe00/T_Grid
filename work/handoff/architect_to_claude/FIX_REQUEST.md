@@ -1,3 +1,68 @@
+# Closed Fix Request — G1-T002 / Iteration 2
+
+> REV-G1T002-001/-002 已关闭；G1-T002 裁决为 PASS。
+
+只修复异常链 secret 泄漏与注入 client 方法捕获边界；保持现有固定只读 API、状态机和测试。
+
+## P0 — REV-G1T002-001：`from None` 未清除 `__context__`，原始 secret 仍可读取
+
+### Evidence
+
+独立在 start/connect/subscribe/query/stop 注入 `RuntimeError(UNIQUE_SECRET)`。公共文本和 traceback
+展示虽已净化，但 Python exception object 仍保留原异常：
+
+```text
+start:     cause=None, context=RuntimeError(secret), suppress_context=True
+connect:   cause=None, context=RuntimeError(secret), suppress_context=True
+subscribe: cause=None, context=RuntimeError(secret), suppress_context=True
+query:     cause=None, context=RuntimeError(secret), suppress_context=True
+stop:      cause=None, context=RuntimeError(secret), suppress_context=True
+```
+
+`raise ... from None` 只抑制 traceback 展示，不会把 `__context__` 置空。调用方仍可通过
+`exc.__context__` 读到原 message，违反 Acceptance Criteria 5 和 Required Tests 的 cause/context 安全要求。
+
+### Required Fix / Tests
+
+- 普通 `Exception` 路径在 `except` 中只捕获安全的类型名/状态，离开 active exception context 后再抛
+  项目异常；不得保留原 exception object、traceback、repr 或 message。
+- start/connect/subscribe/query/stop 各至少覆盖一个 unique secret 注入，断言公共异常图递归安全：
+  `__cause__ is None`、`__context__ is None`，文本/输出无 secret。
+- KeyboardInterrupt/SystemExit/GeneratorExit 仍须先 FAILED 后原样传播，不得转成项目异常。
+
+## P1 — REV-G1T002-002：constructor descriptor 可泄漏裸异常，验证后的 bound methods 未被冻结
+
+### Evidence
+
+注入 client 的 `connect` 使用会抛 `RuntimeError(UNIQUE_SECRET)` 的 property。constructor 的
+`getattr(client, "connect")` 直接执行 descriptor，结果：
+
+```text
+type=RuntimeError
+secret_in_text=True
+```
+
+此外 constructor 已取得并验证 8 个 bound method，却丢弃结果；query 每次重新做属性解析，固定 mapping
+仍可被动态 descriptor/后续 mutation 改写，并且 query 的属性解析发生在现有 try/except 之外。
+
+### Required Fix / Tests
+
+- constructor 对 8 个固定字面量属性的读取若抛普通 Exception，转换为安全
+  `QmtAdapterConfigError`，exception context/cause 均不携带原异常；BaseException 不得吞掉。
+- 成功验证后冻结/保存 8 个 private bound callable，后续只调用这些固定 callable；不得保留或公开通用
+  client 转发入口，不得在 query 时重新解析属性。
+- 增加 descriptor secret failure 与“构造后目标属性被替换/变成危险 descriptor”测试，证明只使用构造时
+  固定映射、无裸异常/secret、无动态逃逸。
+- 保持 Adapter 不含交易方法、无 `__getattr__`/generic call/raw client property，危险方法调用计数为 0。
+
+## Iteration 2 Completion
+
+1. 只修 REV-G1T002-001/-002；不新增 QMT/行情/账号真实能力。
+2. 完整回归、compileall、AST、异常图和并发清理测试通过，更新完整证据。
+3. 不提交 commit；释放 Lease，设置 `REVIEW_READY / owner=architect / iteration=2` 并停止。
+
+---
+
 # Closed Fix Request — G0-T006 / Iteration 2
 
 > REV-G0T006-001 已关闭；G0-T006 与 Gate 0 最终裁决为 PASS。
