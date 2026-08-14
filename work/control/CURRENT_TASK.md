@@ -1,136 +1,157 @@
-# Task G2-T004 — Atomic T-Lot Status Transition Writer
-
-## Completion
-
-`PASS` — Architect independent review completed at `2026-08-15T00:23:10+08:00` (iteration 2).
-The next task is intentionally left for the GitHub/web-ChatGPT handoff.
+# Task G2-T005 — T-Lot Business Transition Policy Guard
 
 ## Goal
 
-在已验收的 `t_lots` 与 `t_lot_audit_log` schema 上实现一个纯离线、fail-closed 的持久化原语：使用
-SQLite 单事务 compare-and-set 更新一个 T-Lot 的 status/updated_at，并追加一条不可变 Audit Log。任何
-一步失败都必须完整回滚。本任务不决定业务状态转换矩阵，也不连接 QMT。
+在 G2-T004 已验收的原子 `transition_t_lot_status` 之上增加一个**纯离线、fail-closed、闭集的业务状态转换策略层**。
+该层负责把受支持的业务 action 映射为唯一的 T-Lot `from_status -> to_status`，拒绝所有未授权边，并在允许时
+仅通过 G2-T004 原语完成持久化。任务不连接 QMT，不生成 OrderIntent，不实现真实人工交易授权。
 
-## Iteration 2 Review Findings
+## Architectural Intent
 
-Iteration 1 未通过。只修 `REV-G2T004-001..003`：
+G2-T004 故意只保证“两个合法 schema status 之间的原子 CAS + Audit”，不决定业务上哪些边合法。
+G2-T005 关闭这一安全缺口：高层调用者不再通过本任务 API 任意指定 `new_status`，而只能提交闭集 action；
+策略层解析出唯一目标状态并调用既有 writer。
 
-- CAS 后的 `KeyboardInterrupt/SystemExit/GeneratorExit` 未进入 rollback，留下 active 半完成事务。
-- status 在 exact-str 校验前做 tuple membership，执行恶意 `__eq__` 并泄露 secret。
-- 两连接测试是完全串行执行，没有形成确定性交错/竞争。
-
-Iteration 2 禁止扩大 writer API、字段、状态策略或数据库层。
+本任务只建立 V1 当前可机械验证的最小生命周期边，不提前猜测订单拒绝、部分成交、人工卖出或异常恢复语义。
 
 ## In Scope
 
-- 新增唯一的 T-Lot status transition writer；输入为已初始化的 `sqlite3.Connection` 与显式字段。
-- writer 必须显式接收：`t_lot_id`、`expected_status`、`new_status`、`audit_id`、`event_type`、
-  `details_json`、`actor`、`occurred_at`。
-- 事务开始前验证全部输入为 exact `str`、必填非空；status 必须属于既有七状态且 old != new。
-- writer 只接受当前没有活动 transaction 的连接；若调用者已有事务，显式拒绝且不得 commit/rollback
-  调用者状态。
-- 使用 `BEGIN IMMEDIATE` + 单次 compare-and-set：`UPDATE ... WHERE id=? AND status=?`；rowcount 必须为 1。
-- 同一事务追加 audit，`from_status=expected_status`、`to_status=new_status`，并更新 `updated_at=occurred_at`。
-- audit insert、约束、CAS、COMMIT 任一步失败时 rollback；不得留下只更新未审计或只审计未更新状态。
-- 提供最小明确的 persistence 异常：输入无效、T-Lot 不存在、expected-status 冲突、原子写入失败。
-- 返回 data-only/frozen 结果，仅包含 lot id、from/to status、audit id、occurred_at；不返回连接/游标。
+新增一个 T-Lot business transition policy/guard，至少提供：
+
+1. 一个纯函数 resolver：输入 `expected_status + action`，返回 frozen/data-only transition plan；
+2. 一个 guarded apply API：输入连接、lot id、expected status、action、audit id/details/actor/time，先解析策略，
+   再**恰好一次**调用 G2-T004 `transition_t_lot_status`；
+3. action 必须为 exact `str` 且来自以下闭集，action 到状态边必须固定：
+
+```text
+BUY_FILL_CONFIRMED   : PENDING_BUY  -> OPEN
+PREPARE_SELL         : OPEN         -> PENDING_SELL
+SELL_FILL_CONFIRMED  : PENDING_SELL -> CLOSED
+SUSPEND_T            : OPEN         -> SUSPENDED
+RESUME_T             : SUSPENDED    -> OPEN
+```
+
+4. `event_type` 由 action 固定映射生成，调用者不得覆盖或传入任意 event type；
+5. resolver/apply 对未知 action、错误 expected status、非法组合、self-transition、终态出边全部 fail closed；
+6. `CLOSED`、`CONVERTED_TO_STRATEGIC`、`ERROR` 在本任务视为无自动出边；
+7. 以下设计动作**不得伪装成普通状态转换**：
+   - `KEEP_SUSPENDED`：是 no-op review decision，不得通过 `SUSPENDED -> SUSPENDED` 绕过 writer；
+   - `CONVERT_TO_STRATEGIC`：需要后续真正的显式人工授权机制，本任务必须拒绝执行；
+   - `MANUAL_EXIT`：需要实际人工成交/对账证据，本任务不得直接映射为 `CLOSED`；
+8. 复用 G2-T004 writer 的 CAS/rollback/异常净化，不复制 SQL、不自建第二套 transaction manager。
 
 ## Deliberate Boundary
 
-- 本原语只保证“调用者请求的两个合法状态之间”原子 CAS + Audit，不定义哪些边合法。
-- 业务状态转换矩阵、人工授权（CONVERT/MANUAL_EXIT）、OrderIntent/成交驱动规则由后续状态机任务实现。
-- 不提供 delete、通用 UPDATE、任意 SQL、重试或 bypass-audit API。
+本任务的 transition matrix 是**最小闭集**，不是对未来全部合法状态边的猜测。
+
+特别地：
+
+- 不为 routine order reject/cancel/partial fill 自创状态边；
+- 不新增 `ERROR` 恢复边；
+- 不实现 audit-only `KEEP_SUSPENDED` 事件；
+- 不把聊天文本、配置布尔值或普通函数参数当成真实人工交易授权；
+- 后续如需扩展边，必须由新的 Architect task/ADR 明确授权。
 
 ## Out of Scope
 
-- T-Lot create/full CRUD/list/query repository、数量/价格修改、LIFO、目标价计算。
-- 业务 transition matrix、SUSPENDED review action、Corporate Action payload 解释。
-- Reconciliation、Crash Recovery、SAFE_MODE、OrderIntent、Reservation、订单/成交/callback。
-- QMT/XtQuant、账号、行情、下单、撤单、订阅、下载以及任何 live/dry-run 执行。
-- schema migration 4、真实数据库、配置、日志、reverse_repo 修改或跨仓依赖。
+- T-Lot create/full CRUD/list/query、数量/价格/订单字段更新、LIFO 查询。
+- `KEEP_SUSPENDED` audit-only writer、真实人工审批 token/identity/UI。
+- `CONVERT_TO_STRATEGIC` 执行、`MANUAL_EXIT` 执行、人工成交写回。
+- Reconciliation、Crash Recovery、SAFE_MODE、Corporate Action 调整。
+- OrderIntent、Reservation、订单状态机、部分成交、撤单/拒单处理。
+- QMT/XtQuant、账号、行情、下单、撤单、订阅、下载、真实或 dry-run 交易执行。
+- schema/migration/version 变化、真实数据库、配置、日志、reverse_repo 修改或跨仓依赖。
 
 ## Reuse Direction
 
-- 必须直接使用 G2-T002/G2-T003 已验收的 `t_lots` 与 `t_lot_audit_log`；禁止新表、新 migration、新审计文件。
-- 状态集合必须从一个现有 persistence 定义复用或最小提取为共享常量；不得复制第三份漂移列表。
-- 复用现有 `PersistenceError` 层；新增异常必须继承该层，禁止第二个异常根类型。
-- 不复制 reverse_repo journal/交易执行代码；其执行日志不能替代本项目数据库 Audit Log。
+- 必须直接复用 `src/tgrid/persistence/t_lot_writer.py` 的 `transition_t_lot_status`；禁止复制其 SQL/CAS/rollback。
+- 必须复用现有七状态定义；不得新建第三份 status 列表。
+- 新异常必须进入现有 `PersistenceError` / T-Lot persistence 异常层，不建立新的无关异常根。
+- 新模块不得 import `xtquant`，不得出现 broker/order/cancel/download/subscribe 能力。
 
 ## Allowed Files
 
-- `src/tgrid/persistence/migrations.py`（仅允许最小公开/复用既有状态 tuple；不得改 SQL/schema/version）
-- `src/tgrid/persistence/database.py`（仅必要的共享状态引用调整；不得改 schema/version/verifier 语义）
-- `src/tgrid/persistence/t_lot_writer.py`（新增）
-- `src/tgrid/persistence/__init__.py`（仅导出本任务批准的 writer/result/exceptions）
-- `tests/unit/test_t_lot_writer.py`（新增）
-- `work/reports/tests/G2-T004-test-output.txt`（新增）
-- `work/gates/GATE_2/G2-T004_RESULT.md`（新增）
+- `src/tgrid/persistence/t_lot_transition_policy.py`（新增）
+- `src/tgrid/persistence/__init__.py`（仅导出本任务批准的 resolver/apply/plan/exceptions）
+- `tests/unit/test_t_lot_transition_policy.py`（新增）
+- `work/reports/tests/G2-T005-test-output.txt`（新增）
 - `work/gates/GATE_2/CLAUDE_REPORT.md`
 - `work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md`
 - `work/handoff/claude_to_architect/TEST_REPORT.md`
 - `work/handoff/claude_to_architect/QUESTIONS.md`（仅确有问题时）
 - `work/control/WORKFLOW_STATE.yaml`
-- `work/control/CLAUDE_HEARTBEAT.md`
-- `work/locks/WORKTREE_LEASE.yaml`（仅持有期间）
+
+本地 `work/locks/WORKTREE_LEASE.yaml` 可按协议持有，但**不得 stage/commit**。
 
 ## Forbidden Files
 
-- 设计/协议原文、`CURRENT_TASK.md` 与架构师控制文件。
-- 现有 persistence/CLI/T-Lot schema 测试；本任务不改变 schema version/history 预期。
-- `src/tgrid/position/**`、`src/tgrid/integrations/**`、`src/tgrid/adapters/**`、`src/tgrid/probes/**`。
-- `src/tgrid/models.py`、`src/tgrid/risk/**`、`config/**`、`scripts/**`、`docs/**`、`README.md`。
+- `src/tgrid/persistence/t_lot_writer.py`、`migrations.py`、`database.py`：G2-T004/G2-T003 已验收，本任务禁止修改。
+- 设计/协议原文、`CURRENT_TASK.md`、Architect Review/Fix Request/Gate Result。
+- 现有 persistence/position/risk/integration/adapter/probe 实现与既有测试。
+- `src/tgrid/models.py`、`config/**`、`scripts/**`、`docs/**`、`README.md`。
 - `D:/gitee/miniQMT/reverse_repo/**` 与任何真实/local 数据库、配置、日志、账号或业务数据。
 
 ## Design References
 
-- §6：所有 T-Lot 状态变化必须保留 Audit Log；禁止删除历史批次。
-- §16–16.1：SUSPENDED/review 动作必须可审计，但业务授权后续实现。
-- §21–23：本地 SQLite 是恢复输入之一，禁止静默修复，callback 不是唯一事实来源。
-- §34：INV-002、INV-005、INV-008、INV-010、INV-011。
-- §37 Gate 2：T-Lot Ledger + Audit Log 的原子写入基础；不实现交易信号。
+- §3.1：所有策略状态变化在单一事件线程串行执行；callback 不直接改 T-Lot。
+- §6：七种 T-Lot 状态；所有状态变化必须保留 Audit Log，禁止删除历史批次。
+- §16–16.1：SUSPENDED review；`CONVERT_TO_STRATEGIC` / `MANUAL_EXIT` 需要显式人工确认，禁止自动处置。
+- §31：状态机采用显式、可审计状态转换。
+- §34：Fail Closed、安全不变量与 `live_trading=false`。
+- §37 Gate 2：Position + Ledger + Reconciliation；当前任务仅补 Ledger 的业务 transition guard。
 
 ## Invariants
 
-1. status update 与 audit insert 必须 all-or-nothing；不存在可观察的半完成状态。
-2. CAS rowcount != 1 时 fail closed；不得猜测、重试、upsert 或自动创建 T-Lot。
-3. expected status 不匹配时原 lot/audit 逐值不变。
-4. audit_id 重复、audit constraint/trigger/commit 失败时 lot status/updated_at 完整回滚。
-5. writer 不接受已有 transaction，不提交/回滚调用者 transaction。
-6. 不执行未知对象的 `str/repr/bool/iter`；输入类型错误返回固定、data-free project error。
-7. 普通 SQLite 异常转换为固定、data-free `PersistenceError` 子类；不得暴露 SQL/参数/底层异常图。
-8. 无 Python `assert` 承担生产安全；无自动 retry。
-9. `live_trading_allowed=false`；无 QMT/order/cancel/download/subscribe 调用。
+1. 高层 apply API 不接受任意 `new_status` 或任意 `event_type`；目标状态/事件类型只能由闭集 action 推导。
+2. 未列出的任意 status pair/action 组合必须在调用 writer 前拒绝，数据库逐值不变。
+3. 一个成功 apply 恰好调用一次 G2-T004 writer；不得自行 `BEGIN/UPDATE/INSERT/COMMIT/ROLLBACK`。
+4. stale expected status 由底层 CAS fail closed；policy 不预读后猜测或 retry。
+5. `KEEP_SUSPENDED` 不得用 self-transition 制造假审计。
+6. `CONVERT_TO_STRATEGIC`、`MANUAL_EXIT` 本任务绝不执行；不得通过 `manual=True`、配置或 actor 字符串绕过。
+7. `CLOSED` / `CONVERTED_TO_STRATEGIC` / `ERROR` 无自动出边。
+8. 输入拒绝不得调用未知对象的 `str/repr/bool/iter/__eq__`；项目异常固定、data-free、无 secret exception graph。
+9. 不删除/弱化 G2-T004 writer 测试或 schema/verifier 测试。
+10. `live_trading_allowed=false`；无 QMT/order/cancel/download/subscribe 调用。
 
 ## Acceptance Criteria
 
-- 合法 CAS 精确更新 status/updated_at 一次并追加精确一条 audit，返回 frozen data-only result。
-- 不存在 lot 与 expected-status 冲突可区分，均不写 audit、不改 lot。
-- duplicate audit_id、非法 audit payload、数据库约束失败、commit failure 均完整 rollback。
-- 已有 transaction 输入立即拒绝，调用者原 transaction/数据保持可继续控制。
-- 两连接竞争同一 expected status 时最多一个成功；另一个显式 conflict，不新增第二条 audit。
-- writer 没有 delete、通用 update、create、retry、QMT 或交易入口。
-- 既有 579 项测试保持通过。
+- 五条批准边逐条成功，返回 frozen/data-only plan/result，实际 DB status/audit 与 action 映射完全一致。
+- 对 7x7 status pair 做矩阵测试：除五条批准边外全部拒绝；self-transition 全拒绝。
+- action 与 expected status 不匹配时在 DB write 前拒绝。
+- unknown action、空值、非 exact-str、str subclass、bool/bytes/container/恶意对象全部 fail closed 且无 dunder secret 泄漏。
+- `KEEP_SUSPENDED`、`CONVERT_TO_STRATEGIC`、`MANUAL_EXIT` 显式测试为不可执行且 DB 不变。
+- stale expected status 真实走到底层 CAS conflict；无自动 retry、upsert、状态猜测。
+- spy/patch 证明 rejected request 调用 writer 0 次，accepted request 调用 writer恰 1 次。
+- 新模块 AST 中无 raw SQL transaction/UPDATE/INSERT/DELETE、无 `assert` 安全保护、无 QMT/交易能力。
+- 当前完整回归（基线 597 项）全部保持通过，加上本任务新测试。
 
 ## Required Tests / Failure Injection
 
-- happy path：OPEN→SUSPENDED、字段映射、exact one audit、frozen result。
-- missing lot；stale expected status；old==new；七状态外值；空/NULL/非 exact-str 输入。
-- duplicate audit_id 与审计表约束故障：验证 lot/audit/history/user_version 前后逐值不变。
-- 在 audit insert 后注入 commit failure，验证 rollback；若 sqlite 原生难以可靠注入，使用最小受控
-  connection seam，不得建立第二个数据库 wrapper。
-- caller active transaction：writer 拒绝且不 commit/rollback，调用者可自行 rollback。
-- 两个 SQLite connection 的确定性交错/CAS 竞争；不得靠 sleep。
-- 异常 secret 注入：项目异常 message、`__cause__`、`__context__` 不可达 secret。
-- 完整 unittest、compileall、AST assert/forbidden API scan、diff-check。
+- 五条 approved edge happy path + 固定 event_type 映射。
+- 全 7x7 transition matrix negative coverage。
+- terminal-state outbound、self-transition、action/source mismatch。
+- manual/no-op 三动作 fail-closed：KEEP/CONVERT/MANUAL_EXIT。
+- malicious action/status object 的 dunder/secret 注入；异常 message、`__cause__`、`__context__` 不可达 secret。
+- writer spy：拒绝前 0 call，成功恰 1 call；writer 抛 conflict/write-failed/BaseException 时不吞、不 retry、不二次调用。
+- SQLite integration：seed 临时 T-Lot，执行 approved edge 后精确一条 audit；stale source 前后逐值不变。
+- 完整 unittest、compileall、AST forbidden/raw-SQL scan、`git diff --check`、Allowed Files diff-check。
 
 ## Deliverables
 
-- 原子 writer、frozen result、最小 persistence exceptions 与单元/FI 测试。
-- 完整测试输出、Implementation/Test/Claude/G2-T004 Result 报告。
-- 报告单列 Reuse Evidence、事务边界、Failure Injection 及明确未实现的状态矩阵/CRUD/QMT。
-- 不提交 commit；由 Desktop ChatGPT 独立复核后决定验收提交。
+- business transition resolver + guarded apply + frozen plan/result/最小异常。
+- 完整单元/FI/SQLite integration 测试与原始测试输出。
+- Implementation/Test/Claude 报告必须单列：
+  - exact transition matrix；
+  - Reuse Evidence（实际调用 G2-T004 writer）；
+  - rejected manual/no-op actions；
+  - Failure Injection；
+  - 明确未实现的 QMT/OrderIntent/Reconciliation/manual authorization。
 
 ## Stop Condition
 
-完成后删除 Lease，设置 `REVIEW_READY / owner=architect / task_id=G2-T004 / iteration=2` 并停止写入。
-若无法在 Allowed Files 内保持真正原子性，设置 BLOCKED，不得扩大为新数据库框架。
+完成后再次 fetch `origin/main` 并确认实现基线未变化；若变化立即 STOP WRITE。
+若未变化，按 GitHub 双 Agent 协议设置新的唯一 `handoff_id`、`handoff_seq + 1`、
+`state=REVIEW_READY / owner=architect / task_id=G2-T005 / iteration=1 / authorized_next=[]`，
+只提交 Allowed Files 与 Claude 所有报告，普通非强制 push 到 `main`，然后停止写入等待 Review。
+
+若无法在不修改 G2-T004 writer/schema 的前提下实现，设置 `BLOCKED`，不得扩大范围。

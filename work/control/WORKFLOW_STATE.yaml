@@ -4,23 +4,24 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 1
-handoff_id: "G2-T004-PASS-20260815-001"
-authorized_next: []
+handoff_seq: 2
+handoff_id: "G2-T005-AUTH-20260815-002"
+authorized_next:
+  - "G2-T005"
 design_version: "1.1"
 gate: 2
-task_id: "G2-T004"
-state: "ARCHITECT_PLANNING"
-owner: "architect"
-iteration: 2
+task_id: "G2-T005"
+state: "CLAUDE_READY"
+owner: "claude"
+iteration: 1
 last_actor: "architect"
-last_update: "2026-08-15T00:30:45+08:00"
+last_update: "2026-08-15T00:51:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "682b28e60ad9cfebaed78bcefc343f2ac92dd054"
-git_head_commit: "682b28e60ad9cfebaed78bcefc343f2ac92dd054"
+git_base_commit: "439bbd96bece598f1aed7471db72c6267ee257a7"
+git_head_commit: "439bbd96bece598f1aed7471db72c6267ee257a7"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G2-T004 iteration 2 PASS. GitHub semi-automatic transport enabled: GitHub main is authoritative; Claude polls every 180 seconds, remains silent when unchanged, and may act only on a new authorized handoff. Current authorized_next is empty, so no implementation is authorized until Web ChatGPT publishes the next task. Web ChatGPT review remains manually triggered by user fetch/f. Non-fast-forward, remote change, dirty worktree, ownership mismatch, or scope drift requires STOP WRITE; no force/rebase/merge/retry. live_trading_allowed=false."
+notes: "G2-T005 authorized by Architect after user confirmation. Scope is the offline fail-closed T-Lot business transition policy/guard over the already-PASS G2-T004 atomic writer. Only five explicitly listed lifecycle edges are authorized; KEEP_SUSPENDED is not a status transition, and CONVERT_TO_STRATEGIC/MANUAL_EXIT remain non-executable until a later explicit manual-authorization design. No schema change, Reconciliation, OrderIntent, QMT/order/cancel/download/subscribe, or live trading. Claude may act only on this new handoff and must STOP WRITE on remote change, dirty worktree, ownership mismatch, or scope drift."

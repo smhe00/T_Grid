@@ -1,6 +1,6 @@
 # Gate 2 / Current Task
 
-最近完成：`G2-T004 — Atomic T-Lot Status Transition Writer（PASS / Iteration 2）`
+当前任务：`G2-T005 — T-Lot Business Transition Policy Guard（CLAUDE_READY / Iteration 1）`
 
 唯一规范正文：
 
@@ -8,7 +8,10 @@
 work/control/CURRENT_TASK.md
 ```
 
-G2-T001/T002/T003/G2-T004 已 PASS。本任务只验收离线 SQLite 单事务 CAS status update + append-only
-Audit Log writer；未实现也未授权业务 transition matrix、CRUD、Reconciliation、OrderIntent、QMT 或交易。
+已完成并 PASS：G2-T001 Core Position、G2-T002 T-Lot schema、G2-T003 append-only Audit Log、
+G2-T004 atomic status CAS + audit writer。
 
-G2-T004 独立复核证据见 `work/gates/GATE_2/G2-T004_RESULT.md`。GitHub/web-ChatGPT 交接前不创建下一任务。
+G2-T005 只在 G2-T004 之上增加闭集 business transition policy/guard：五条批准 lifecycle edge，
+其余 fail closed。不得实现 QMT、OrderIntent、Reconciliation、真实人工交易授权或 live trading。
+
+本轮授权基线：`439bbd96bece598f1aed7471db72c6267ee257a7`。
