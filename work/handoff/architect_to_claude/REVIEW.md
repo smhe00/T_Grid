@@ -1,3 +1,43 @@
+# Architecture Review — G1-T005 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T20:22:16+08:00`
+
+独立运行 402 项 unittest、compileall、AST 与范围检查通过。重放普通主失败 × 四类 cleanup 异常，
+均得到固定、安全的主 operation 错误；主 GeneratorExit × cleanup KeyboardInterrupt/RuntimeError 均保留
+主 BaseException，stop 恰好一次。REV-G1T005-001 已关闭。
+
+G1-T005 PASS，但不授权真实 QMT/账号/行情访问。Gate 1 尚未通过。
+
+---
+
+# Architecture Review — G1-T005 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T20:17:30+08:00`
+
+独立 396 项回归、compileall、15 步常规失败和数据零观察检查通过。但普通主操作失败后 cleanup 若抛
+KeyboardInterrupt/SystemExit/GeneratorExit，cleanup BaseException 会覆盖主 operation；KeyboardInterrupt
+message 还直接泄漏。详见 `REV-G1T005-001`。
+
+仅修复异常优先级与净化矩阵；不得扩大只读面或接触真实 QMT。Gate 1 未通过。
+
+---
+
+# Architect Authorization — G1-T005 / Iteration 1
+
+Status: `CLAUDE_READY`
+
+Authorized at: `2026-08-14T20:07:16+08:00`
+
+按 `work/control/CURRENT_TASK.md` 仅组合已批准的 Trader/MarketData Adapter，以 fake client 验证固定
+只读探针顺序、安全摘要和失败 cleanup。不得接触真实 QMT/账号/行情、订阅/下载/CLI/DB/log/交易；
+完成后不提交 commit，释放 Lease 并切换 `REVIEW_READY / owner=architect`。
+
+---
+
 # Architecture Review — G1-T004 / Iteration 2
 
 Status: `PASS`

@@ -1,28 +1,29 @@
-# Gate 1 / Claude Report — G1-T004
+# Gate 1 / Claude Report — G1-T005
 
 ## Status
-G1-T004 **Iteration 2 修复完成**（REV-G1T004-001 FIXED），交付 `REVIEW_READY / iteration=2`，等待架构师 Review。
+G1-T005 **Iteration 2 修复完成**（REV-G1T005-001 FIXED），交付 `REVIEW_READY / iteration=2`，等待架构师 Review。
 
 ## Iteration 2 修复内容
 
-### REV-G1T004-001（P0）— FAILED 不等于已获得 sequence，stop 会用 None 调 unsubscribe
-- `stop()` 的 cleanup 资格改为由**已验证并保存的有效 sequence id** 决定，不再仅由 FAILED 状态推断：
-  在状态检查后、调用 `unsubscribe_quote` 前，若 `self._sequence_id is None` 则直接 return（不标记
-  `_stop_attempted`），并只在持有有效 id 时用该 id 调用。
-- 因此 subscribe 返回负数/错误类型、普通异常、BaseException 之后（sequence_id 均为 None），`stop()`
-  不再调用 `unsubscribe_quote(None)`；重复 stop 仍不调用，状态保持 FAILED。
-- 有效 sequence id（含 0 与正整数）的 ACTIVE stop 仍把精确 id 传入恰好一次；unsubscribe 失败或
-  BaseException 后仍不重试。
+### REV-G1T005-001（P0）— cleanup BaseException 覆盖普通主失败并泄漏 cleanup secret
+- `_cleanup()` 改为**永不传播**：`trader.stop()` 无论抛普通 Exception 还是
+  KeyboardInterrupt/SystemExit/GeneratorExit，都作为返回值返回（成功返回 None），由调用方决定优先级。
+- 普通主 operation 失败分支：cleanup 任意失败（普通或 BaseException）统一折叠为安全
+  `Gate1ProbeExecutionError("<operation> failed; cleanup failed")`（except 块外抛出，
+  `__cause__`/`__context__` 均为 None，主/cleanup secret 均不泄漏）。
+- 主 BaseException 分支：先 `_cleanup()` 一次（吞掉任何 cleanup 异常），再原样传播主 BaseException。
+- 全部主 operation 成功 + 仅 cleanup 普通异常 → `"cleanup failed"`；全部主成功 + 仅 cleanup BaseException
+  （无主失败）→ 原样传播该 cleanup BaseException。
 
 ## 证据
-- 完整输出：`work/reports/tests/G1-T004-test-output.txt`（**371 项全部通过** + compileall exit 0 +
-  AST 扫描 PASS + cleanup-eligibility probe：negative_return/subscribe_exception/keyboard_interrupt 均
-  0 次 unsubscribe；valid_seq_0/7 各精确一次）。
-- `git diff --check -- :/T_Grid` exit 0；HEAD == 基线 `6d6d30a`。
+- 完整输出：`work/reports/tests/G1-T005-test-output.txt`（**402 项全部通过** + compileall exit 0 +
+  AST 扫描 PASS + cleanup-priority probe：ordinary+cleanup-KI/SystemExit/GeneratorExit/ordinary 全部
+  `"<op> failed; cleanup failed"` cause/context None stop 一次；all-success+cleanup-KI 原样传播）。
+- `git diff --check -- :/T_Grid` exit 0；HEAD == 基线 `81e1abc`。
 
 ## 范围遵守
-未 import xtquant、未连接 QMT、未真实订阅/接收行情、未读账号、未安装依赖、未修改 Gate 0/1 已验收代码、
-未触碰父目录文件、未 commit/push、`live_trading_allowed` 保持 `false`。
+未 import xtquant、未连接 QMT、未读真实账号/行情、未安装依赖、未修改 adapters/**、未触碰父目录文件、
+未 commit/push、`live_trading_allowed` 保持 `false`。
 
 ## Recommendation
 REVIEW_READY（等待 Desktop ChatGPT 独立 Review）。

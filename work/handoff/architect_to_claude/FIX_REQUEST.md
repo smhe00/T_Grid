@@ -1,3 +1,49 @@
+# Closed Fix Request — G1-T005 / Iteration 2
+
+> REV-G1T005-001 已关闭；G1-T005 裁决为 PASS。
+
+只修复普通主操作失败叠加 cleanup BaseException 时主错误被覆盖与 secret 泄漏；保持固定 15 步和 API。
+
+## P0 — REV-G1T005-001：cleanup BaseException 覆盖普通主失败并泄漏 cleanup secret
+
+### Evidence
+
+当前普通主失败分支直接调用 `_cleanup()`；当 `trader.stop()` 抛 BaseException，`_cleanup()` 原样传播，
+runner 来不及构造固定的主失败错误。独立注入 `trader.query_asset -> RuntimeError(PRIMARY_SECRET)` 后：
+
+```text
+stop -> KeyboardInterrupt("CLEANUP_KI_SECRET")  => 裸 KeyboardInterrupt: CLEANUP_KI_SECRET
+stop -> SystemExit(9)                            => 裸 SystemExit: 9
+stop -> GeneratorExit                            => 裸 GeneratorExit
+```
+
+三者均遮蔽 `trader.query_asset` 主失败，KeyboardInterrupt 还公开 cleanup message，违反 Failure Contract 3/5
+和 Acceptance Criteria 4。合同只允许“无主失败时”原样传播 cleanup BaseException。
+
+### Required Fix / Tests
+
+1. 普通主 operation 已失败时，cleanup 的任意普通 Exception 或 KeyboardInterrupt/SystemExit/GeneratorExit
+   都不得覆盖主 operation；统一抛安全
+   `Gate1ProbeExecutionError("<operation> failed; cleanup failed")`，cause/context 为 None，无双方 secret。
+2. 主 BaseException + cleanup 任意异常时，仍尝试 cleanup 一次并原样传播主 BaseException；cleanup 不覆盖。
+3. 全部主 operation 成功、仅 cleanup 抛普通 Exception 时仍为安全 `"cleanup failed"`；仅 cleanup 抛
+   KeyboardInterrupt/SystemExit/GeneratorExit 且无主失败时仍原样传播。
+4. 增加上述笛卡尔代表测试，断言 stop 至多一次、异常优先级、文本与异常图；完整更新证据和报告。
+5. 保持结果对象零观察、固定顺序、exact adapter type、无 XtQuant/QMT/订阅/下载/交易范围扩大。
+
+## Iteration 2 Completion
+
+只修 REV-G1T005-001；不得接触真实 QMT/账号/行情或增加订阅、CLI、DB、log、交易能力。
+完成后释放 Lease，设置 `REVIEW_READY / owner=architect / iteration=2`，不提交 commit。
+
+---
+
+# No Active Fix Request — G1-T005 / Iteration 1
+
+按 `work/control/CURRENT_TASK.md` 首次实现；当前无 fix request。
+
+---
+
 # Closed Fix Request — G1-T004 / Iteration 2
 
 > REV-G1T004-001 已关闭；G1-T004 裁决为 PASS。

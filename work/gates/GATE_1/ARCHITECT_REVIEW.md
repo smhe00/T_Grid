@@ -1,5 +1,23 @@
 # Gate 1 Architect Review
 
+## G1-T005 / Iteration 2
+
+Result: `G1-T005 PASS`
+
+独立 402 项回归、compileall、AST 与主失败/cleanup 异常优先级矩阵通过。REV-G1T005-001 已关闭：
+普通主失败不会被 cleanup 普通或 BaseException 覆盖，异常图无双方 secret；主 BaseException 始终优先。
+固定 15 步、数据零观察和至多一次 cleanup 均成立，无真实 QMT/账号/行情访问。
+
+本裁决仅通过离线集成探针；Gate 1 的真实 MiniQMT 验收仍需用户明确提供环境与只读授权。
+
+## G1-T005 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+396 项回归和基础安全检查通过；额外组合 Failure Injection 证明普通主失败 + cleanup BaseException 时，
+cleanup 会遮蔽固定主 operation，且 KeyboardInterrupt message 可泄漏。进入聚焦 Iteration 2，只修异常
+优先级/净化矩阵。不得真实访问 QMT/账号/行情或增加交易能力。
+
 ## G1-T004 / Iteration 2
 
 Result: `G1-T004 PASS`

@@ -11,6 +11,9 @@ from tgrid.risk.exceptions import (
     EventQueueFull,
     EventQueueLifecycleError,
     EventQueueWorkerError,
+    Gate1ProbeConfigError,
+    Gate1ProbeError,
+    Gate1ProbeExecutionError,
     InsufficientAvailableVolume,
     LoggingConfigError,
     LoggingEmitError,
@@ -74,4 +77,7 @@ __all__ = [
     "QuoteSubscriptionLifecycleError",
     "QuoteSubscriptionStartError",
     "QuoteSubscriptionStopError",
+    "Gate1ProbeError",
+    "Gate1ProbeConfigError",
+    "Gate1ProbeExecutionError",
 ]

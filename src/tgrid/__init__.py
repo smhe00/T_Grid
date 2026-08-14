@@ -16,6 +16,7 @@ from tgrid.adapters import (
 )
 from tgrid.config import load_config, parse_config
 from tgrid.events import EventQueue, EventQueueState
+from tgrid.probes import Gate1ReadOnlyProbeSummary, run_gate1_readonly_probe
 from tgrid.models import ACCUMULATE_MODE, GlobalConfig, RootConfig, SymbolConfig
 from tgrid.persistence import (
     connect as connect_database,
@@ -39,6 +40,9 @@ from tgrid.risk.exceptions import (
     EventQueueFull,
     EventQueueLifecycleError,
     EventQueueWorkerError,
+    Gate1ProbeConfigError,
+    Gate1ProbeError,
+    Gate1ProbeExecutionError,
     InsufficientAvailableVolume,
     LoggingConfigError,
     LoggingEmitError,
@@ -125,4 +129,9 @@ __all__ = [
     "QuoteSubscriptionStopError",
     "ReadOnlyQuoteSubscriptionAdapter",
     "QuoteSubscriptionState",
+    "Gate1ProbeError",
+    "Gate1ProbeConfigError",
+    "Gate1ProbeExecutionError",
+    "Gate1ReadOnlyProbeSummary",
+    "run_gate1_readonly_probe",
 ]

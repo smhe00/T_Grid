@@ -163,3 +163,15 @@ class QuoteSubscriptionStartError(QuoteSubscriptionError):
 
 class QuoteSubscriptionStopError(QuoteSubscriptionError):
     """unsubscribe_quote failed during cleanup."""
+
+
+class Gate1ProbeError(TGridError):
+    """Base class for Gate 1 read-only probe orchestration failures."""
+
+
+class Gate1ProbeConfigError(Gate1ProbeError):
+    """A probe argument or adapter type is invalid."""
+
+
+class Gate1ProbeExecutionError(Gate1ProbeError):
+    """A read-only probe operation or its cleanup failed."""

@@ -1,6 +1,6 @@
 # Gate 1 / Current Task
 
-当前任务：`G1-T004 — 离线依赖注入的单路 Quote Subscription 只读生命周期边界`
+当前任务：`G1-T005 — 离线 Gate 1 只读集成探针编排器`
 
 唯一规范正文：
 
@@ -8,5 +8,5 @@
 work/control/CURRENT_TASK.md
 ```
 
-G1-T003 已 PASS（commit `6d6d30a`）。本任务只用 fake client 实现单路 quote subscribe/unsubscribe
-生命周期；不得 import XtQuant、真实订阅/查询、增加下载/账号/连接/交易或动态转发入口。
+G1-T004 已 PASS（commit `81e1abc`）。本任务仅组合已批准的 Trader/MarketData Adapter，用 fake client
+验证固定只读探针顺序与失败 cleanup；不得 import XtQuant、真实连接/查询/订阅或增加交易能力。

@@ -4,7 +4,7 @@ QMT 低频做 T 交易引擎（开发中）。
 
 > **当前状态：Gate 0 / Gate 1 只读边界。** 本仓库目前有配置读取、配置数据模型、显式风险异常类型、SQLite 持久化基础，以及一个**严格只读的 QMT Adapter 边界**（`tgrid.adapters.qmt_readonly`）。它**没有任何行情、账户、持仓、下单、撤单或真实交易能力**，也没有策略计算能力；Adapter 只通过依赖注入的 client 调用固定只读方法，不 import XtQuant、不连接真实 QMT。
 
-## 已实现（G0-T001 / G0-T002 / G1-T002 / G1-T003 / G1-T004）
+## 已实现（G0-T001 / G0-T002 / G1-T002 / G1-T003 / G1-T004 / G1-T005）
 
 - `tgrid.config.load_config(path)`：从调用方显式传入的 YAML 路径读取并校验配置，返回有类型的 `RootConfig`。
 - 配置数据模型（`GlobalConfig` / `SymbolConfig` / `RootConfig`），全部为不可变 dataclass。
@@ -17,6 +17,7 @@ QMT 低频做 T 交易引擎（开发中）。
 - `tgrid.adapters.qmt_readonly`（只读 Trader Adapter 边界，G1-T002）：`ReadOnlyTraderAdapter` + `ReadOnlyTraderState`，只接受依赖注入 client、只调用固定只读方法，显式状态机与安全异常；无通用转发、无 order/cancel 面、不 import XtQuant。异常：`QmtReadOnlyError` / `QmtAdapterConfigError` / `QmtAdapterLifecycleError` / `QmtConnectionError` / `QmtQueryError`。
 - `tgrid.adapters.marketdata_readonly`（只读 MarketData 查询 Adapter 边界，G1-T003）：`ReadOnlyMarketDataAdapter`，构造时冻结 8 个固定只读查询 callable，参数先校验（失败抛 `MarketDataValidationError` 且不调用底层）、序列参数单次快照、外部异常安全转 `MarketDataQueryError`（cause/context 干净）；无订阅/下载/连接/账号/交易面、不 import XtQuant。异常：`MarketDataReadOnlyError` / `MarketDataAdapterConfigError` / `MarketDataValidationError` / `MarketDataQueryError`。
 - `tgrid.adapters.quote_subscription_readonly`（单路 Quote Subscription 只读生命周期 Adapter，G1-T004）：`ReadOnlyQuoteSubscriptionAdapter` + `QuoteSubscriptionState`，每实例最多一个 `subscribe_quote` 订阅、`unsubscribe_quote` 至多一次清理，显式状态/sequence id/failure_type；参数验证（`QuoteSubscriptionValidationError`）、外部异常安全转 `QuoteSubscriptionError` 层级（cause/context 干净）；无 download/query/account/connect/order/cancel、不执行 callback、不 import XtQuant。异常：`QuoteSubscriptionError` / `QuoteSubscriptionConfigError` / `QuoteSubscriptionValidationError` / `QuoteSubscriptionLifecycleError` / `QuoteSubscriptionStartError` / `QuoteSubscriptionStopError`。
+- `tgrid.probes.gate1_readonly`（Gate 1 只读集成探针编排器，G1-T005）：`run_gate1_readonly_probe` 按固定顺序组合 `ReadOnlyTraderAdapter` + `ReadOnlyMarketDataAdapter` 的 15 个只读操作并 `trader.stop()` 至多一次，返回 `Gate1ReadOnlyProbeSummary`（固定 operation name tuple + cleanup 布尔，无业务数据）；精确类型校验、失败/清理安全异常（cause/context 干净）、BaseException 先清理后传播。异常：`Gate1ProbeError` / `Gate1ProbeConfigError` / `Gate1ProbeExecutionError`。
 
 ## 只读 QMT Adapter 边界（G1-T002）
 
@@ -100,6 +101,33 @@ adapter.stop()   # 用保存的 sequence id 调 unsubscribe_quote 恰好一次
 - **安全边界**：无 download/query/account/connect/order/cancel、无动态转发、无 `client` 公共属性；
   构造后替换 client 属性不可绕过冻结 callable。不 import XtQuant、不连接 QMT、不接收真实行情，
   全部测试只用 fake client 离线完成。
+
+## Gate 1 只读集成探针（G1-T005）
+
+```python
+from tgrid import run_gate1_readonly_probe
+
+summary = run_gate1_readonly_probe(
+    trader,          # 必须恰好是 ReadOnlyTraderAdapter
+    market_data,     # 必须恰好是 ReadOnlyMarketDataAdapter
+    account,         # 任意非 None 对象，原样传给 Trader
+    stock_code="600000.SH",
+    exchange="SH",
+)
+# summary.completed_operations 是固定 operation name tuple，不含任何业务数据
+# summary.cleanup_completed == True
+```
+
+- 依次执行 15 个固定只读操作（Trader 生命周期 + 7 查询、MarketData 8 查询），最后 `trader.stop()`
+  至多一次；成功 summary 只含固定名称 tuple 与 cleanup 布尔，不保存/repr/打印/返回任何查询结果。
+- 精确类型校验拒绝 subclass/duck-typed raw client 绕过；account=None、stock_code/exchange 非法值在
+  零调用前抛 `Gate1ProbeConfigError`。
+- 任一主操作失败：先 `trader.stop()` 至多一次，再抛安全 `Gate1ProbeExecutionError`
+  （`<operation> failed` / `...; cleanup failed`，`__cause__`/`__context__` 均为 None）。
+- BaseException 先清理后原样传播，cleanup 普通异常不覆盖主异常；恶意 account/返回对象的
+  repr/str/len/iter 均不被调用。
+- 异常：`Gate1ProbeError` / `Gate1ProbeConfigError` / `Gate1ProbeExecutionError`。
+- 不 import XtQuant、不连接 QMT、不读真实账号/行情；全部测试使用 fake client 构造真实 Adapter。
 
 ## 运行前提
 
@@ -188,6 +216,8 @@ print(cfg.symbols["0700.HK"].core_qty)  # 600
   `tgrid.adapters.quote_subscription_readonly` 无 order/cancel/改单方法、无 download/query/account/
   connect 面、无动态转发、无 `client` 公共属性；只读 Adapter 边界之外不存在任何 QMT 访问入口。
   quote subscription 只订阅/撤销单路行情，不执行 callback、不进入业务逻辑。
+- `tgrid.probes.gate1_readonly` 只调用两个批准 Adapter 的固定公共只读方法，不读账号/行情、不保存/
+  打印业务数据、不加入订阅/CLI/DB/日志/交易逻辑。
 - 生产风控不得依赖 Python `assert`；风险/配置异常均为显式类型。
 
 ## 测试

@@ -21,3 +21,12 @@ session: codex-desktop
 - Prohibited: XtQuant import/connection/real subscription/query, downloads, accounts, order/cancel, live trading
 
 ---
+# Architect Heartbeat — G1-T005
+
+- State: `CLAUDE_READY`
+- Owner: `claude`
+- Baseline: `81e1abcc6e50bae7629335a2e40633ba3a870bff`
+- Authorization: offline composition of approved read-only adapters with fake clients only
+- Prohibited: XtQuant/QMT import or access, subscriptions, downloads, CLI/DB/log, order/cancel, live trading
+
+---
