@@ -1,29 +1,28 @@
-# Gate 1 / Claude Report — G1-T003
+# Gate 1 / Claude Report — G1-T004
 
 ## Status
-G1-T003 **Iteration 2 修复完成**（REV-G1T003-001 FIXED），交付 `REVIEW_READY / iteration=2`，等待架构师 Review。
+G1-T004 **Iteration 2 修复完成**（REV-G1T004-001 FIXED），交付 `REVIEW_READY / iteration=2`，等待架构师 Review。
 
 ## Iteration 2 修复内容
 
-### REV-G1T003-001（P0）— Sequence 被多次观察，可泄漏裸异常并绕过成员验证
-- 将 `_require_symbol_sequence`（先 `len` 后迭代）替换为 `_snapshot_symbol_sequence`：每个 sequence
-  参数只通过**一次物化**（`[item for item in value]`，列表推导不走 C 级 length hint，`__len__` bomb
-  天然免疫）得到私有 list snapshot；成员验证与底层调用使用**同一个 snapshot**，不再读取原对象、
-  不再重复迭代、不再二次 `list()`。
-- snapshot/iteration 期间的普通 `Exception` 转安全 `MarketDataValidationError`（只含参数名+固定约束）；
-  项目异常在 except 块外抛出，`__cause__`/`__context__` 均为 None，不保留原异常对象/message。
-- `KeyboardInterrupt`/`SystemExit`/`GeneratorExit` 在 snapshot/iteration 中原样传播，不转换不吞掉。
-- 有状态/可变 Sequence 无法在验证与调用之间更换内容：底层只收到已验证的首次 snapshot。
+### REV-G1T004-001（P0）— FAILED 不等于已获得 sequence，stop 会用 None 调 unsubscribe
+- `stop()` 的 cleanup 资格改为由**已验证并保存的有效 sequence id** 决定，不再仅由 FAILED 状态推断：
+  在状态检查后、调用 `unsubscribe_quote` 前，若 `self._sequence_id is None` 则直接 return（不标记
+  `_stop_attempted`），并只在持有有效 id 时用该 id 调用。
+- 因此 subscribe 返回负数/错误类型、普通异常、BaseException 之后（sequence_id 均为 None），`stop()`
+  不再调用 `unsubscribe_quote(None)`；重复 stop 仍不调用，状态保持 FAILED。
+- 有效 sequence id（含 0 与正整数）的 ACTIVE stop 仍把精确 id 传入恰好一次；unsubscribe 失败或
+  BaseException 后仍不重试。
 
 ## 证据
-- 完整输出：`work/reports/tests/G1-T003-test-output.txt`（**325 项全部通过** + compileall exit 0 +
-  AST 扫描 PASS + 单次快照 probe：len_bomb 不受影响、first-pass bomb → 干净 validation error 且底层
-  调用 0、changing sequence 仅一次 pass、secret iterator 无泄漏）。
-- `git diff --check -- :/T_Grid` exit 0；HEAD == 基线 `a2f5fa3`。
+- 完整输出：`work/reports/tests/G1-T004-test-output.txt`（**371 项全部通过** + compileall exit 0 +
+  AST 扫描 PASS + cleanup-eligibility probe：negative_return/subscribe_exception/keyboard_interrupt 均
+  0 次 unsubscribe；valid_seq_0/7 各精确一次）。
+- `git diff --check -- :/T_Grid` exit 0；HEAD == 基线 `6d6d30a`。
 
 ## 范围遵守
-未 import xtquant、未连接 QMT、未订阅/下载行情、未读账号/真实数据、未安装依赖、未修改 Gate 0/1
-已验收代码、未触碰父目录文件、未 commit/push、`live_trading_allowed` 保持 `false`。
+未 import xtquant、未连接 QMT、未真实订阅/接收行情、未读账号、未安装依赖、未修改 Gate 0/1 已验收代码、
+未触碰父目录文件、未 commit/push、`live_trading_allowed` 保持 `false`。
 
 ## Recommendation
 REVIEW_READY（等待 Desktop ChatGPT 独立 Review）。

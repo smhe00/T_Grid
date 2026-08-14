@@ -139,3 +139,27 @@ class MarketDataValidationError(MarketDataReadOnlyError):
 
 class MarketDataQueryError(MarketDataReadOnlyError):
     """A read-only query failed or returned None."""
+
+
+class QuoteSubscriptionError(TGridError):
+    """Base class for read-only quote subscription lifecycle failures."""
+
+
+class QuoteSubscriptionConfigError(QuoteSubscriptionError):
+    """The injected client is missing a required subscribe/unsubscribe method."""
+
+
+class QuoteSubscriptionValidationError(QuoteSubscriptionError):
+    """A subscribe argument violates the validation contract."""
+
+
+class QuoteSubscriptionLifecycleError(QuoteSubscriptionError):
+    """A subscribe/stop transition is illegal in the current state."""
+
+
+class QuoteSubscriptionStartError(QuoteSubscriptionError):
+    """subscribe_quote failed or returned an invalid sequence id."""
+
+
+class QuoteSubscriptionStopError(QuoteSubscriptionError):
+    """unsubscribe_quote failed during cleanup."""

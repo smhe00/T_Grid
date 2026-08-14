@@ -1,5 +1,23 @@
 # Gate 1 Architect Review
 
+## G1-T004 / Iteration 2
+
+Result: `G1-T004 PASS`
+
+独立 371 项回归、compileall、AST 与 lifecycle Failure Injection 通过。REV-G1T004-001 已关闭：
+subscribe 未获得有效 sequence 的三类 FAILED 不再调用 unsubscribe；有效 id 0/正整数精确清理一次。
+未导入/连接 XtQuant，未真实订阅或接收行情，未增加下载、查询、账号或交易能力。
+
+本裁决仅通过离线单路订阅生命周期；Gate 1 尚未通过，`live_trading_allowed=false`。
+
+## G1-T004 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+366 项回归和基础安全检查通过，但额外 lifecycle Failure Injection 证明 subscribe 未成功、sequence 为
+None 时，FAILED 后 stop 仍调用 `unsubscribe_quote(None)`；测试因只匹配 id 42 而漏检。进入聚焦
+Iteration 2，只修 cleanup 资格和对应测试。不得真实订阅/连接 QMT 或增加交易能力。
+
 ## G1-T003 / Iteration 2
 
 Result: `G1-T003 PASS`

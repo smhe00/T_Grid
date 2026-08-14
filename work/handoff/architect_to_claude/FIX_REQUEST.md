@@ -1,3 +1,49 @@
+# Closed Fix Request — G1-T004 / Iteration 2
+
+> REV-G1T004-001 已关闭；G1-T004 裁决为 PASS。
+
+只修复 subscribe 未成功时错误调用 `unsubscribe_quote(None)` 的清理资格边界；保持现有 API 和单路状态机。
+
+## P0 — REV-G1T004-001：FAILED 不等于已获得 sequence，stop 会用 None 调 unsubscribe
+
+### Evidence
+
+`stop()` 当前只区分 NEW/STOPPED/`_stop_attempted`，对所有 FAILED 都进入 cleanup，未检查是否已保存有效
+sequence id。独立注入三种 subscribe 失败后调用 stop：
+
+```text
+subscribe 返回 -1       -> calls: subscribe_quote(...), unsubscribe_quote(None)
+subscribe 抛 RuntimeError -> calls: subscribe_quote(...), unsubscribe_quote(None)
+subscribe 抛 KeyboardInterrupt -> calls: subscribe_quote(...), unsubscribe_quote(None)
+```
+
+这违反 Lifecycle Contract 5（subscribe 从未成功则不调用 unsubscribe）和 BaseException cleanup 合同。
+现有 KeyboardInterrupt 测试仅统计 `("unsubscribe_quote", 42)`，因而漏过了实际发生的
+`("unsubscribe_quote", None)`。
+
+### Required Fix / Tests
+
+1. cleanup 资格必须由“已验证并保存有效 sequence id”这一事实决定，不能仅由 FAILED 状态推断。
+2. subscribe 普通异常、BaseException、负数/错误类型返回之后，`stop()` 必须不调用
+   `unsubscribe_quote`；重复 stop 仍不调用，状态保持 FAILED。
+3. 修正测试，统计所有 unsubscribe 调用（按方法名或总调用记录），不得只匹配预期 id 42。
+4. 对有效 sequence id 0 和正整数分别证明 ACTIVE stop 会把精确 id 传入一次；unsubscribe 失败或
+   BaseException 后仍不得重试。
+5. 保持异常图安全、冻结 callable、参数验证、危险 API 不可达；完整回归、compileall、AST、证据和报告更新。
+
+## Iteration 2 Completion
+
+只修 REV-G1T004-001；不得扩大 API、导入/连接 XtQuant、真实订阅/查询或增加下载/账号/交易能力。
+完成后释放 Lease，设置 `REVIEW_READY / owner=architect / iteration=2`，不提交 commit。
+
+---
+
+# No Active Fix Request — G1-T004 / Iteration 1
+
+按 `work/control/CURRENT_TASK.md` 首次实现；当前无 fix request。
+
+---
+
 # Closed Fix Request — G1-T003 / Iteration 2
 
 > REV-G1T003-001 已关闭；G1-T003 裁决为 PASS。

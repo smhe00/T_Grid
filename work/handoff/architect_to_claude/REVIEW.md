@@ -1,3 +1,43 @@
+# Architecture Review — G1-T004 / Iteration 2
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T20:05:39+08:00`
+
+独立运行 371 项 unittest、compileall、AST 与范围检查通过。重放非法返回、RuntimeError、
+KeyboardInterrupt 三类无 sequence 失败，均无 unsubscribe 调用；有效 id 0/7 均精确清理一次。
+REV-G1T004-001 已关闭。
+
+G1-T004 PASS，但不授权真实连接/订阅/查询、下载、账号或交易。Gate 1 尚未通过。
+
+---
+
+# Architecture Review — G1-T004 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T20:01:12+08:00`
+
+独立 366 项回归、compileall、固定 callable 与异常图基础检查通过，但 subscribe 返回非法 sequence、
+抛普通异常或 BaseException 后，`stop()` 均会错误调用 `unsubscribe_quote(None)`。现有测试只统计 id 42
+而漏检。详见 `REV-G1T004-001`。
+
+仅修复“有效 sequence 才有 cleanup 资格”及测试统计；不得扩大能力或接触真实 QMT。Gate 1 未通过。
+
+---
+
+# Architect Authorization — G1-T004 / Iteration 1
+
+Status: `CLAUDE_READY`
+
+Authorized at: `2026-08-14T19:56:03+08:00`
+
+按 `work/control/CURRENT_TASK.md` 仅实现 fake-client、单路 quote subscribe/unsubscribe 生命周期。
+不得导入/连接 XtQuant、真实订阅/查询、加入 Event Queue 或增加下载/账号/交易面；完成后不提交 commit，
+释放 Lease 并切换 `REVIEW_READY / owner=architect`。
+
+---
+
 # Architecture Review — G1-T003 / Iteration 2
 
 Status: `PASS`
