@@ -7,6 +7,9 @@ from tgrid.risk.exceptions import (
     DatabaseIntegrityError,
     DatabaseOpenError,
     InsufficientAvailableVolume,
+    LoggingConfigError,
+    LoggingEmitError,
+    LoggingError,
     MigrationError,
     PersistenceError,
     RiskError,
@@ -28,4 +31,7 @@ __all__ = [
     "DatabaseIntegrityError",
     "SchemaVersionError",
     "MigrationError",
+    "LoggingError",
+    "LoggingConfigError",
+    "LoggingEmitError",
 ]

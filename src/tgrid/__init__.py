@@ -13,6 +13,12 @@ from tgrid.persistence import (
     initialize as initialize_database,
     open_database,
 )
+from tgrid.reporting import (
+    SCHEMA_VERSION,
+    configure_jsonl_logger,
+    emit,
+    shutdown_logger,
+)
 from tgrid.risk.exceptions import (
     CashReservationConflict,
     ConfigError,
@@ -20,6 +26,9 @@ from tgrid.risk.exceptions import (
     DatabaseIntegrityError,
     DatabaseOpenError,
     InsufficientAvailableVolume,
+    LoggingConfigError,
+    LoggingEmitError,
+    LoggingError,
     MigrationError,
     PersistenceError,
     RiskError,
@@ -41,6 +50,10 @@ __all__ = [
     "connect_database",
     "initialize_database",
     "open_database",
+    "SCHEMA_VERSION",
+    "configure_jsonl_logger",
+    "emit",
+    "shutdown_logger",
     "TGridError",
     "ConfigError",
     "RiskError",
@@ -53,4 +66,7 @@ __all__ = [
     "DatabaseIntegrityError",
     "SchemaVersionError",
     "MigrationError",
+    "LoggingError",
+    "LoggingConfigError",
+    "LoggingEmitError",
 ]

@@ -71,3 +71,15 @@ class SchemaVersionError(PersistenceError):
 
 class MigrationError(PersistenceError):
     """A schema migration failed and was rolled back."""
+
+
+class LoggingError(TGridError):
+    """Base class for structured logging failures."""
+
+
+class LoggingConfigError(LoggingError):
+    """Logger configuration or file path is invalid."""
+
+
+class LoggingEmitError(LoggingError):
+    """A log event could not be serialized or written."""

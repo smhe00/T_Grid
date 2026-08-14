@@ -38,6 +38,36 @@ UNIQUE、永真 CHECK、合法 schema 幂等性与 AST 禁止 API/assert 扫描�
 
 G0-T002 的 SQLite 初始化与迁移安全基础已验收；Gate 0 整体仍未完成，下一子任务由架构师发布。
 
+## G0-T003 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+126 项独立回归、compileall、基础 JSONL/并发/write/flush 测试通过；但独立 Failure Injection
+证明未配置或 shutdown 后的 `emit()` 会静默丢日志，`root` 名称会修改 root logger，
+FileHandler 打开失败泄漏裸 `OSError`，旧 handler flush 失败会跳过 close，且非标准整数 level
+被接受。进入聚焦 Iteration 2。
+
+Gate 0 未通过，不得进入 CLI、Event Queue 或后续 Gate。
+
+## G0-T003 / Iteration 3
+
+Result: `G0-T003 PASS`
+
+142 项独立回归、compileall、JSONL/错误边界、emit-shutdown 确定性交错、20 线程同名配置、
+文件句柄释放与 AST 禁止 API/assert 扫描全部通过。REV-G0T003-006/-007 已关闭。
+
+G0-T003 logging 基础已验收；Gate 0 整体仍未完成，下一子任务由架构师发布。
+
+## G0-T003 / Iteration 2
+
+Result: `CHANGES_REQUIRED`
+
+上一轮五项 finding 已关闭，139 项回归通过；但 emit/shutdown 竞态可在 shutdown 返回后重开
+日志文件并泄漏 handler，同名并发 configure 可产生两个 attached handler 而 registry 只记录一个。
+进入只处理生命周期原子性的 Iteration 3。
+
+Gate 0 未通过，不得进入 CLI、Event Queue 或后续 Gate。
+
 ## G0-T002 / Iteration 3
 
 Result: `CHANGES_REQUIRED`

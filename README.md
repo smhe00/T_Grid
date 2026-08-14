@@ -12,6 +12,7 @@ QMT 低频做 T 交易引擎（开发中）。
 - 严格 fail-closed 校验：未知字段、缺失必填字段、错误根结构、非法类型/范围、bool 冒充整数、NaN/Infinity 都会被拒绝。
 - 示例配置 `config/config.example.yaml`（仅含 `0700.HK` 与 `000333.SZ` 示例数量，代码不写死任何证券或数量）。
 - `tgrid.persistence`（SQLite 基础，仅标准库 `sqlite3`）：显式路径打开、`PRAGMA foreign_keys=ON`、`busy_timeout`、完整性检查、有序事务化幂等 migration、schema 版本一致性校验，以及 `PersistenceError` / `DatabaseOpenError` / `DatabaseIntegrityError` / `SchemaVersionError` / `MigrationError` 异常。当前只有 `schema_migrations` 与 `application_metadata` 两张基础表，不含任何交易领域表。
+- `tgrid.reporting`（结构化 JSONL 日志，仅标准库）：`configure_jsonl_logger(name, path)` 显式路径配置、`emit(logger, event, message, level, context)` 写入单行可解析 JSON、`shutdown_logger(name)` 幂等关闭。输出 UTF-8 JSONL（`schema_version`/`timestamp`/`level`/`logger`/`event`/`message`/`context`），中文/换行/引号无损 round-trip；配置/序列化/写入失败抛 `LoggingError` / `LoggingConfigError` / `LoggingEmitError`，不静默吞错、不留半行。
 
 ## 运行前提
 
@@ -36,6 +37,20 @@ with open_database("data/tgrid.db") as conn:
 - 损坏、未来版本、版本不一致、migration 断档都会抛出显式 `PersistenceError` 子类并 fail closed，绝不删除/覆盖/自动修复数据库文件。
 - journal 模式使用 SQLite 默认的 `delete`，在 Windows 文件数据库上安全。
 - 调用方负责关闭连接，或使用 `open_database` 上下文管理器自动关闭。
+
+## 结构化日志
+
+```python
+from tgrid import configure_jsonl_logger, emit, shutdown_logger
+
+logger = configure_jsonl_logger("tgrid.app", "logs/app.jsonl")
+emit(logger, "start", "引擎启动", context={"symbol": "0700.HK"})
+shutdown_logger("tgrid.app")
+```
+
+- 日志路径由调用方显式传入，绝不隐式发现默认路径。
+- 每行一个 JSON object；`context` key 为非空字符串且不得覆盖保留字段。
+- 非法 level、保留字段冲突、非字符串 key、不可序列化值、打开/写入/flush 失败均抛显式 `LoggingError` 子类并 fail closed。
 
 ## 读取配置
 
@@ -65,7 +80,7 @@ python -m compileall -q src tests
 ## 目录
 
 ```text
-src/tgrid/        # 包源码（config / models / risk / persistence）
+src/tgrid/        # 包源码（config / models / risk / persistence / reporting）
 tests/unit/       # 单元测试
 config/           # 示例配置（真实配置不入库）
 work/             # 双 Agent 协作控制面（任务/状态/交接）

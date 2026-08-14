@@ -1,18 +1,18 @@
 project: TGrid
 design_version: "1.1"
 gate: 0
-task_id: "G0-T002"
+task_id: "G0-T003"
 state: "ARCHITECT_PLANNING"
 owner: "architect"
-iteration: 4
+iteration: 3
 last_actor: "architect"
-last_update: "2026-08-14T17:19:59+08:00"
+last_update: "2026-08-14T17:50:57+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "80c498c6070cd385081f16f20ed8167eb1bfa764"
-git_head_commit: "80c498c6070cd385081f16f20ed8167eb1bfa764"
+git_base_commit: "e91b32789982048e3133a7c43c54618c011895bf"
+git_head_commit: "e91b32789982048e3133a7c43c54618c011895bf"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G0-T002 PASS after iteration 4: independent 101 tests, compileall, AST scan and semantic schema failure injections passed; preparing accepted commit."
+notes: "G0-T003 PASS after iteration 3: independent 142 tests, compileall, lifecycle concurrency injections and AST scan passed; preparing accepted commit."

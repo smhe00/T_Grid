@@ -1,3 +1,61 @@
+# Architecture Review — G0-T003 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T17:37:17+08:00`
+
+独立 126 项回归与 compileall 通过，JSONL 字段、UTF-8、并发与基本 write/flush 注入有效，
+Lease 已释放，代码范围符合任务。但补充 Failure Injection 发现未配置/shutdown 后静默丢日志、
+root logger 可被修改、打开异常边界缺失、flush 失败跳过 close、level 校验过宽。
+
+详细证据与修复要求见 `FIX_REQUEST.md` 顶部。Gate 0 未通过。
+
+## Architecture Review — G0-T003 / Iteration 3
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T17:50:57+08:00`
+
+REV-G0T003-006 与 -007 已关闭。独立证据：
+
+```text
+python -m unittest discover -s tests -p "test_*.py" -v
+Ran 142 tests — OK
+
+python -m compileall -q src tests
+PASS
+
+emit/shutdown deterministic interleaving:
+  shutdown blocked until emit complete; one JSON line; handler closed;
+  registry empty; old path not recreated
+
+20-thread same-name configure:
+  one managed handler; registry identity exact; all files movable after shutdown;
+  one emit produced exactly one line
+
+emit after shutdown -> LoggingEmitError
+AST assert / xtquant / order_stock / cancel_order scan -> PASS
+Lease released -> PASS
+```
+
+G0-T003 的结构化 JSONL logging 契约、Failure Injection 与生命周期不变量全部满足。
+该 PASS 不代表 Gate 0 整体完成。
+
+## Architecture Review — G0-T003 / Iteration 2
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T17:45:11+08:00`
+
+REV-G0T003-001 至 -005 已关闭：139 项独立回归、compileall 与五项原始 Failure Injection
+全部通过。但确定性并发交错证明 emit/shutdown 不是原子生命周期边界，会在 shutdown 返回后重开
+文件；同名并发 configure 也会留下两个 handler、registry 仅记录一个。详见 Iteration 3 Active
+Fix Request。Gate 0 仍未通过。
+
+以下内容均为已关闭的 G0-T001/G0-T002 历史记录。
+
+---
+
 # Architecture Review — G0-T001 / Iteration 1
 
 > Current task is now G0-T002. No review has been issued for G0-T002; the remaining content is accepted G0-T001 history.

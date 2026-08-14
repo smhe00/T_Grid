@@ -1,30 +1,29 @@
-# Task G0-T002 — SQLite 初始化与迁移安全基础
+# Task G0-T003 — 结构化 JSONL Logging 基础
 
 ## Goal
 
-建立 Gate 0 的 SQLite 持久化基础：显式路径打开、完整性检查、事务化初始化、可审计 schema migration、幂等重启和 fail-closed 异常处理。
-
-本任务只引入一个主要能力：**可靠且不可静默修复的数据库生命周期基础**。
+建立 Gate 0 的可靠日志基础：调用方显式指定文件路径，输出可机器解析、可审计的 UTF-8 JSONL，
+并对配置、序列化和写入失败执行 fail closed。当前任务只实现 logging，不实现 CLI、Event Queue、
+QMT、策略或交易功能。
 
 ## In Scope
 
-1. 新增 `tgrid.persistence` 包。
-2. 使用 Python 标准库 `sqlite3`，不增加第三方运行时依赖。
-3. 从调用方显式传入的数据库文件路径打开/初始化数据库；禁止隐式读取配置或账号信息。
-4. 建立最小 bootstrap schema：迁移记录与项目元数据；不建立交易领域表。
-5. 实现有序、事务化、幂等的 schema migration runner。
-6. 实现数据库完整性、未来版本、版本记录不一致和损坏文件的 fail-closed 处理。
-7. 配置基础 SQLite PRAGMA，并确保每个新连接都启用外键约束。
-8. 新增显式 persistence 异常类型与全面 `unittest`/Failure Injection。
+1. 新增 `tgrid.reporting` 包及结构化 logging 模块。
+2. 仅使用 Python 标准库 `logging`、`json` 等，不增加第三方运行时依赖。
+3. 提供显式日志文件路径的配置 API、结构化事件写入 API 和显式 shutdown/close API。
+4. 输出一行一个 JSON object 的 UTF-8 JSONL，适合后续 Gate 审计与故障定位。
+5. 重复初始化、handler 生命周期、并发写入和错误边界可预测且有测试。
+6. 新增明确的 logging 异常层级与 Failure Injection。
 
 ## Out of Scope
 
-- `t_lots`、OrderIntent、Reservation、positions、orders、trades、reconciliation、Audit Log 领域表；它们属于 Gate 2。
-- logging 系统、CLI 和 Event Queue；它们属于后续 Gate 0 子任务。
-- QMT/XtQuant、行情、账户、持仓、委托、成交、下单或撤单。
+- CLI、进程主入口、startup/shutdown 编排；后续 Gate 0 子任务实现。
+- Event Queue、状态机、调度器或后台线程。
+- SQLite audit/domain 表或把日志写入数据库。
+- QMT/XtQuant、行情、账号、持仓、委托、成交、下单或撤单。
 - 策略计算、SimBroker、dry-run、shadow/live execution。
-- 自动备份、自动恢复、自动删除或重建损坏数据库。
-- 配置热更新或数据库路径自动发现。
+- 上传、远程传输、告警、邮件、云日志或日志查看 UI。
+- 自动读取配置文件、环境变量、账号信息或默认真实路径。
 - Git push；Claude 不得 commit。
 
 ## Allowed Files
@@ -36,10 +35,9 @@ README.md
 src/tgrid/__init__.py
 src/tgrid/risk/__init__.py
 src/tgrid/risk/exceptions.py
-src/tgrid/persistence/__init__.py
-src/tgrid/persistence/database.py
-src/tgrid/persistence/migrations.py
-tests/unit/test_persistence.py
+src/tgrid/reporting/__init__.py
+src/tgrid/reporting/logging.py
+tests/unit/test_logging.py
 work/control/WORKFLOW_STATE.yaml
 work/control/CLAUDE_HEARTBEAT.md
 work/locks/WORKTREE_LEASE.yaml
@@ -47,7 +45,7 @@ work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md
 work/handoff/claude_to_architect/TEST_REPORT.md
 work/handoff/claude_to_architect/QUESTIONS.md
 work/gates/GATE_0/CLAUDE_REPORT.md
-work/reports/tests/G0-T002-test-output.txt
+work/reports/tests/G0-T003-test-output.txt
 ```
 
 `WORKTREE_LEASE.yaml` 只在工作期间存在，交接前必须释放删除。
@@ -62,13 +60,17 @@ pyproject.toml
 config/**
 src/tgrid/config.py
 src/tgrid/models.py
+src/tgrid/persistence/**
 tests/unit/test_config.py
 tests/unit/test_models.py
+tests/unit/test_persistence.py
 work/control/CURRENT_TASK.md
 work/control/ARCHITECT_HEARTBEAT.md
 work/gates/GATE_0/TASK.md
 work/gates/GATE_0/G0-T001_RESULT.md
+work/gates/GATE_0/G0-T002_RESULT.md
 work/gates/GATE_0/ARCHITECT_REVIEW.md
+work/handoff/architect_to_claude/**
 work/design/**
 父目录 D:/gitee/miniQMT 中 T_Grid 之外的全部文件
 ```
@@ -77,84 +79,87 @@ work/design/**
 
 ## Design References
 
-- 设计文档 §3：T-Lot Ledger 使用 SQLite（本任务只建基础层）
-- §6：历史不可直接删除原则（领域表留到 Gate 2）
-- §18.2–§18.3：未来订单事务/原子性需求（本任务不得实现订单）
-- §21–§23：启动对账与 crash recovery 对持久化可靠性的要求
-- §30：database error 必须触发 fail-closed
-- §33、§35：目录结构与 Gate 0 SQLite 初始化
-- §34：INV-009、INV-010、INV-011
-- 协作协议 §7–§12、§18、§22、§29–§32
+- 设计文档 §29：SAFE_HALT 后仍须保留日志。
+- §33：推荐目录结构与真实日志不得提交 Git。
+- §34：INV-009 fail closed、INV-011 禁止生产风控依赖 `assert`。
+- §35：Gate 0 必须实现并测试 logging，禁止 QMT 下单代码。
+- §52：当前阶段禁止 QMT、行情、策略和真实账号访问。
+- 协作协议 §7–§12、§18、§22、§29–§32。
 
-## Invariants
+## Event Contract
 
-1. 数据库路径必须由调用方显式传入；空路径、目录路径和不可用路径必须明确失败。
-2. 任何未知数据库异常必须阻止继续初始化，不得删除、覆盖或“修复”原文件。
-3. 损坏数据库必须抛出显式 persistence 异常，原文件内容保持不变。
-4. 高于当前代码支持的 schema version 必须拒绝，禁止自动降级。
-5. migration 记录与 SQLite `PRAGMA user_version` 不一致时必须拒绝，禁止猜测修复。
-6. 每个 migration 必须在明确事务内原子执行；失败不得留下半张表、版本号或成功记录。
-7. 重复初始化必须幂等，同一 migration 不得重复记录或重复应用。
-8. 每个正常连接必须 `PRAGMA foreign_keys=ON`；设置合理的 `busy_timeout`。
-9. 不得依赖 Python `assert` 承担数据库安全或版本校验。
-10. 不得包含 QMT、策略、订单或真实交易能力；`live_trading_allowed` 保持 `false`。
-
-## Bootstrap Schema Contract
-
-当前 schema version 为 `1`。至少建立：
+每条成功日志必须恰好写入一个 JSON object 和一个换行符，至少包含：
 
 ```text
-schema_migrations
-  version      INTEGER PRIMARY KEY, > 0
-  name         TEXT NOT NULL UNIQUE
-  applied_at   TEXT NOT NULL
-
-application_metadata
-  key          TEXT PRIMARY KEY
-  value        TEXT NOT NULL
-  updated_at   TEXT NOT NULL
+schema_version  整数，当前固定为 1
+timestamp       UTC ISO-8601，必须带时区
+level           标准大写级别名称
+logger          logger 名称
+event           调用方显式传入的非空事件名
+message         字符串消息
+context         JSON object；无扩展字段时为空 object
 ```
 
 要求：
 
-- 记录 migration 1 的名称和实际应用时间。
-- `application_metadata` 至少持久化 `project_name=TGrid`。
-- `PRAGMA user_version` 与最新 migration version 同为 `1`。
-- 不得在本任务创建 `t_lots`、orders、trades、positions 或 reservations 表。
+- 中文、换行、引号等内容必须通过 JSON 转义保持单行并可无损解析。
+- `context` key 必须是非空字符串；不得覆盖上述保留字段。
+- 不可 JSON 序列化的值必须同步抛出明确 logging 异常，不得静默丢日志或只写半行。
+- 本模块不得自动采集配置、环境变量、账号或任何真实交易信息。
+
+## Logging Lifecycle Contract
+
+1. 调用方必须显式传入日志文件路径；空路径、目录路径和不可用路径明确失败。
+2. 可以创建不存在的父目录，但不得自动选择 `data/`、用户目录或其他默认真实路径。
+3. 只配置 TGrid 自己的 named logger，不得清空、替换或改变 root logger 的既有 handlers/level。
+4. TGrid logger 必须 `propagate=False`，避免重复写入 root。
+5. 同一 logger 重复配置时不得产生重复 handler 或重复行；旧的 TGrid-owned handler 必须 flush/close。
+6. shutdown/close 必须幂等并释放文件句柄；Windows 上关闭后文件应可移动/删除。
+7. 标准库 logging 的内部错误不得被静默吞掉；配置、序列化和写入失败必须转换为明确异常并保留异常链。
+8. 不得依赖 `logging.raiseExceptions` 才能暴露生产错误。
+
+## Invariants
+
+1. 成功返回表示日志文件已可写且 logger 生命周期已正确建立。
+2. 任何失败不得留下半条 JSON、重复 handler 或仍占用的失败文件句柄。
+3. 每条成功事件都是独立、完整、可解析的一行 JSON。
+4. 重复配置与重复 shutdown 均确定且幂等。
+5. 并发调用不得产生交错、截断或不可解析 JSON。
+6. 生产安全与错误检查不得依赖 Python `assert`。
+7. 不得包含 QMT、策略、订单或真实交易能力；`live_trading_allowed` 保持 `false`。
 
 ## Acceptance Criteria
 
-1. `tgrid.persistence` 提供清晰的显式路径初始化/连接 API，并说明调用方负责关闭连接或使用 context manager。
-2. 首次初始化生成合法 SQLite 文件和 Bootstrap Schema Contract 中的内容。
-3. 再次初始化不重复 migration、不丢失 metadata，结果确定且幂等。
-4. 新连接验证 `foreign_keys=1`、`busy_timeout>0`；journal mode 可在 Windows 文件数据库安全使用并有测试/说明。
-5. `PRAGMA quick_check` 或等价检查不是 `ok` 时 fail closed。
-6. 空文件可视为全新 SQLite 数据库；非 SQLite/损坏文件必须拒绝且不得覆盖。
-7. 未来 `user_version`、未来 migration version、版本不一致、migration 记录断档均明确拒绝。
-8. migration 执行失败时完整回滚；再次打开仍能确定识别当前状态。
-9. persistence 异常至少包含统一基类、打开/完整性/版本/迁移失败的明确子类，并保留原异常链（安全边界显式转换除外）。
-10. 原有 61 项配置测试全部继续通过。
-11. 无新增运行时依赖、无 QMT import、无券商/策略/交易代码、无生产 `assert`。
-12. README 明确当前只增加数据库基础，仍没有 QMT 或交易能力。
+1. 公共 API 命名清晰并在 docstring/README 说明调用方负责显式路径和 shutdown 生命周期。
+2. 单条事件输出满足 Event Contract，UTF-8/中文/嵌入换行可无损 round-trip。
+3. level 至少支持标准 logging 整数级别；非法 level 明确拒绝。
+4. `context` 只接受字符串 key 与 JSON-compatible value；保留字段冲突、非字符串 key、不可序列化值均 fail closed。
+5. 重复配置同一 logger 不重复输出，旧 handler 被关闭；不同 logger 互不干扰。
+6. root logger 的 handlers、level 和 propagate 行为不被修改。
+7. shutdown 后不再持有文件句柄，重复 shutdown 不报错。
+8. 多线程并发至少写入 100 条事件，行数完整、每行可解析且 event/message 不丢失。
+9. 文件配置/打开失败抛显式 logging 异常；事件 emit/flush 失败抛显式 logging 异常，不得只写 stderr 后继续。
+10. 日志文件/临时产物不提交仓库；测试全部使用临时目录。
+11. 原有 101 项测试全部继续通过。
+12. 无新增运行时依赖、无 QMT import、无券商/策略/交易代码、无生产 `assert`。
+13. README 明确当前新增结构化日志基础，但仍没有 CLI、QMT 或交易能力。
 
 ## Required Tests
 
 至少覆盖：
 
-- 新数据库初始化与期望 schema/metadata/version。
-- 重复初始化幂等。
-- 连接关闭后可重新打开。
-- `foreign_keys`、`busy_timeout` 和 journal mode。
-- 空路径、目录路径、父目录创建或失败行为。
-- 未来 `user_version` 被拒绝。
-- migration 表未来版本被拒绝。
-- migration 表与 `user_version` 不一致被拒绝。
-- migration 版本断档/重复异常被拒绝。
-- 损坏字节文件失败且文件 hash/bytes 不变。
-- 注入 migration 中途异常后 DDL、版本和 migration 记录完整回滚。
-- 不创建任何 Gate 2 交易领域表。
-- persistence 异常层级和可捕获性。
-- 原 61 项测试回归。
+- 基本 JSONL 字段、UTC timestamp、级别和 UTF-8 round-trip。
+- message 含换行/引号时仍只产生一条可解析物理行。
+- 空 context 与多个合法 context 字段。
+- 空 event、非法 level、保留字段冲突、非字符串 context key、不可序列化值。
+- 空路径、目录路径、不存在父目录创建、文件打开失败。
+- 同一 logger 重复配置不重复写行且旧 handler 关闭。
+- 不同 logger 隔离；root logger 配置前后完全不变。
+- shutdown/重复 shutdown；关闭后文件可重命名或删除。
+- 注入 handler write/flush 失败并验证显式异常传播。
+- 100 条以上多线程并发写入，逐行 `json.loads` 并核对唯一事件集合。
+- AST 扫描生产源码无 `assert`、无 `xtquant`、无 `order_stock`/`cancel_order`。
+- 原 101 项测试回归。
 
 必须实际运行：
 
@@ -167,20 +172,20 @@ python -m compileall -q src tests
 
 至少注入并保存证据：
 
-1. 文件头为随机/非 SQLite 字节。
-2. `PRAGMA user_version=999`。
-3. migration 表记录版本高于支持版本。
-4. migration 表版本与 `user_version` 不一致。
-5. migration 执行一半后显式抛出异常。
-6. 目标路径是目录或不可创建父目录。
+1. 目标路径是目录。
+2. 父路径不可创建或 FileHandler 打开失败。
+3. context 含不可 JSON 序列化对象。
+4. handler stream 在 emit 或 flush 时抛 `OSError`。
+5. 重复配置同一 logger 后写一条事件。
+6. message 含换行与非 ASCII 字符。
 
-所有异常必须 fail closed；不得删除损坏文件或自动降级。
+所有异常必须 fail closed；不得产生伪成功报告、半行 JSON 或 handler 泄漏。
 
 ## Deliverables
 
 1. Allowed Files 内的实现与测试。
 2. 更新 `IMPLEMENTATION_REPORT.md`、`TEST_REPORT.md`、`QUESTIONS.md`。
-3. `work/reports/tests/G0-T002-test-output.txt` 保存完整输出。
+3. `work/reports/tests/G0-T003-test-output.txt` 保存完整输出与 Failure Injection 证据。
 4. 更新 `CLAUDE_REPORT.md`，明确 Gate 0 尚未完成。
 
 ## Stop Condition
@@ -191,7 +196,7 @@ python -m compileall -q src tests
 2. 原子更新 `WORKFLOW_STATE.yaml`：
    - `state: "REVIEW_READY"`
    - `owner: "architect"`
-   - 保持 `gate: 0`、`task_id: "G0-T002"`、`iteration: 1`
+   - 保持 `gate: 0`、`task_id: "G0-T003"`、`iteration: 1`
    - 更新真实本机 `last_update`；未 commit 时 `git_head_commit` 保持基线并在 notes 说明。
 3. 释放 Lease。
 4. 停止写入，保持只读等待架构师 Review。

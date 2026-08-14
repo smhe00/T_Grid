@@ -1,4 +1,173 @@
-# Active Fix Request — G0-T002 / Iteration 4
+# Closed Fix Request — G0-T003 / Iteration 3
+
+> REV-G0T003-006 与 -007 已由架构师独立验证并关闭；本节仅保留为验收历史。
+
+Iteration 2 已关闭 REV-G0T003-001 至 -005。当前只修下面两项并发生命周期问题。
+
+## P0 — REV-G0T003-006：emit 与 shutdown 竞态可在 shutdown 返回后重开文件并写入
+
+### Evidence
+
+独立探针让 `emit()` 通过 `_resolve_configured_handler()` 后暂停，主线程执行并返回
+`shutdown_logger()`、移动已关闭文件，再恢复 emit。结果：
+
+```text
+shutdown_race errors []
+original_recreated True
+handler_reopened True
+moved_lines 0
+```
+
+旧 `FileHandler` 以 append 模式在 close 后收到 `handle()` 会自动重开原路径；因此 shutdown
+返回不再构成可靠关闭边界，事件写到新创建的原路径，且 handler 已不在 registry 中，形成泄漏。
+
+### Required Behavior
+
+- 同一 logger 的“验证 live handler + 完整 emit”与 shutdown/reconfigure 必须有明确原子顺序。
+- 若 emit 已先开始，shutdown 必须等待该 emit 完整结束后再关闭并返回；若 shutdown 先完成，
+  后续 emit 必须 `LoggingEmitError`，绝不能重开文件。
+- shutdown 返回后 registry 不含该 logger、logger 不挂 handler、旧 handler 不持有 stream；文件可移动，
+  且等待中的线程不得在旧路径创建新文件。
+- 不得用 sleep 作为同步正确性；使用 lock/condition 或等价确定机制。
+
+### Required Test
+
+用 `threading.Event`/barrier 构造上述确定性交错，验证 shutdown 不会越过 in-flight emit；
+完成后只有预期的一条完整 JSON，文件句柄关闭且旧路径不被重建。
+
+## P1 — REV-G0T003-007：同名 logger 并发配置产生多个 handler
+
+### Evidence
+
+独立并发探针让两个线程在各自完成“drop none”后同时继续 add/register：
+
+```text
+concurrent_config errors []
+results 2
+handlers 2
+registered_is_attached True
+```
+
+`_registry_lock` 只保护单次 dict 操作，没有保护 open/drop/add/register 整个状态转换；最终 logger
+挂两个 handler，registry 只保存其中一个，另一个无法由 shutdown 管理。
+
+### Required Behavior
+
+- 同一 logger 名称的 configure/reconfigure 必须序列化完整状态转换。
+- 任意并发配置完成后，logger 恰好挂一个 TGrid-owned handler，registry 与之同一对象；被替换或失败
+  的 handler 全部关闭。
+- 不同 logger 可共享实现锁或使用每名锁；正确性优先，不要求本任务优化吞吐。
+
+### Required Test
+
+并发配置同一名称（不同临时路径），全部线程结束后断言：无异常、registry/attached handler 一致、
+只有一个 TGrid-owned handler；写一条事件只出现一次；shutdown 后所有候选文件均可移动/删除。
+
+## Iteration 3 Completion
+
+1. 只修 REV-G0T003-006 与 -007，不重复扩大已关闭问题。
+2. 保持上一轮五项探针、139 项回归、AST 与 compileall 全部通过。
+3. 保存两项确定性并发 Failure Injection 证据并更新报告。
+4. 设置 `REVIEW_READY / owner=architect / iteration=3`，使用真实本机时间，释放 Lease并停止。
+
+---
+
+# Historical Fix Request — G0-T003 / Iteration 2
+
+只修复以下 logging fail-closed 与生命周期问题，不扩大到 CLI、Event Queue、QMT 或交易功能。
+
+## P0 — REV-G0T003-001：未配置或已 shutdown 的 logger 会静默丢日志
+
+### Evidence
+
+```text
+emit_after_shutdown SILENT_SUCCESS lines 1
+emit_unconfigured SILENT_SUCCESS
+```
+
+`emit()` 只调用 `logger.handle(record)`，未确认 logger 当前仍绑定由本模块管理的 handler。
+调用方收到成功返回，但事件没有写入任何文件，违反成功事件可审计与禁止静默丢日志的契约。
+
+### Required Behavior / Tests
+
+- `emit()` 必须验证传入对象是当前已配置、仍注册、仍挂载对应 TGrid-owned handler 的 logger。
+- 从未配置、shutdown 后、传入错误类型或伪造 logger 对象时同步抛 `LoggingEmitError`。
+- 验证失败不得创建文件、写半行或发送到 root/其他 handler。
+- 正常 logger 与并发写入行为保持通过。
+
+## P0 — REV-G0T003-002：允许名称 `root`，会修改进程 root logger
+
+### Evidence
+
+```text
+logging.getLogger("root") is logging.getLogger() -> True
+```
+
+当前 `configure_jsonl_logger("root", ...)` 会调用 `setLevel()`、设置 `propagate=False` 并添加
+FileHandler，直接违反“不修改 root logger”的契约。任意第三方名称也会被修改。
+
+### Required Behavior / Tests
+
+- logger 名称只允许 `tgrid` 或 `tgrid.` 前缀下的非空名称。
+- `root`、空白、`other`/第三方名称必须 `LoggingConfigError`。
+- 对所有拒绝情况，root handlers、level、filters 与 propagate 状态完全不变。
+
+## P1 — REV-G0T003-003：FileHandler 打开失败泄漏原始 OSError
+
+### Evidence
+
+```text
+open_failure RAW OSError injected open failure
+```
+
+### Required Behavior / Tests
+
+- `_JsonlFileHandler(...)` 创建/打开失败必须转换为 `LoggingConfigError` 并保留异常链。
+- 用 mock 注入 `OSError`，验证不泄漏裸异常、未注册 handler、旧的已配置 handler（若存在）不受损。
+
+## P1 — REV-G0T003-004：重配置 flush 失败时旧 handler 未 close
+
+### Evidence
+
+```text
+reconfigure_flush_failure RAISED LoggingEmitError old_close_called False
+```
+
+`_drop_tgrid_handler()` 将 `flush()` 与 `close()` 放在同一顺序 try 内；flush 一旦失败就跳过 close，
+且 registry 已 pop，可能留下不可再管理的文件句柄。
+
+### Required Behavior / Tests
+
+- 即使 flush 失败也必须在 `finally`/等价清理路径尝试 close。
+- 若 flush/close 任一失败，仍抛明确 `LoggingEmitError`；新建 handler 必须关闭且不得注册。
+- 测试必须断言旧 handler 的 close 被调用，并验证 registry/logger 不残留失败 handler。
+
+## P1 — REV-G0T003-005：任意 int 与 bool 被当作合法 level
+
+### Evidence
+
+```text
+level True ACCEPTED
+level 12345 ACCEPTED
+level -7 ACCEPTED
+```
+
+### Required Behavior / Tests
+
+- 配置与 emit 只接受明确的标准 logging 整数级别；必须显式拒绝 bool、未知正整数和负数。
+- `logging.DEBUG/INFO/WARNING/ERROR/CRITICAL` 必须工作；是否接受 `NOTSET` 由实现选择，但需一致并测试。
+- 输出 `level` 必须是标准大写级别名，不能出现 `Level 12345` 等合成值。
+
+## Iteration 2 Completion
+
+1. 只处理 REV-G0T003-001 至 -005。
+2. 运行全量回归、compileall、AST 扫描与上述独立 Failure Injection。
+3. 更新完整测试输出和报告，逐 Issue 标记 `FIXED`/`NOT_FIXED`/`DISAGREE`。
+4. 设置 `REVIEW_READY / owner=architect / iteration=2`，使用真实本机时间，释放 Lease并停止。
+
+---
+
+# Historical Fix Request — G0-T002 / Iteration 4
 
 ## P1 — REV-G0T002-001（OPEN）：partial unique index 仍被误判为完整 name 唯一约束
 
