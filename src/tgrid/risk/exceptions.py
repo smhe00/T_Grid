@@ -83,3 +83,23 @@ class LoggingConfigError(LoggingError):
 
 class LoggingEmitError(LoggingError):
     """A log event could not be serialized or written."""
+
+
+class EventQueueError(TGridError):
+    """Base class for Event Queue lifecycle and usage failures."""
+
+
+class EventQueueConfigError(EventQueueError):
+    """Event Queue constructor arguments are invalid."""
+
+
+class EventQueueLifecycleError(EventQueueError):
+    """An illegal state transition or usage (e.g. restart, self-join) was attempted."""
+
+
+class EventQueueFull(EventQueueError):
+    """The bounded queue is full; enqueue fails immediately without blocking."""
+
+
+class EventQueueWorkerError(EventQueueError):
+    """The worker thread failed while processing an event."""

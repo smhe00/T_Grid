@@ -1,5 +1,43 @@
 # Gate 0 Architect Review
 
+## G0-T005 / Iteration 4
+
+Result: `G0-T005 PASS`
+
+223 项独立回归、compileall、AST、范围检查和暂停启动并发 Failure Injection 全部通过。
+start failure 后 join 安全返回 True，stop prompt，FAILED/failure_type 正确且无线程泄漏。
+REV-G0T005-005/-006 已关闭。
+
+G0-T005 Event Queue 骨架已验收；Gate 0 仍须完成集成复核与总报告。
+
+## G0-T005 / Iteration 3
+
+Result: `CHANGES_REQUIRED`
+
+221 项回归通过，两阶段 start 与 bounded join 主路径已修复；但 start failure 唤醒的并发 join 仍会
+join 未启动旧对象并泄漏 RuntimeError，且一个测试遗留 daemon controller。进入聚焦 Iteration 4。
+
+Gate 0 未通过，不得生成总报告或进入 Gate 1。
+
+## G0-T005 / Iteration 2
+
+Result: `CHANGES_REQUIRED`
+
+219 项独立回归通过，NaN/Infinity 与 queue.Full 边界已关闭；但持锁调用 Thread.start 使 stop 和
+bounded join 在慢启动期间失去时限。进入只修两阶段 start handshake 的 Iteration 3。
+
+Gate 0 未通过，不得生成总报告或进入 Gate 1。
+
+## G0-T005 / Iteration 1
+
+Result: `CHANGES_REQUIRED`
+
+213 项独立回归通过，但 worker start 与 RUNNING 发布不是原子操作，并发 join 可泄漏“thread not
+started”裸 RuntimeError；start failure 还会留下虚假 RUNNING。timeout 有限值与 queue.Full 异常
+边界也未满足。进入聚焦 Iteration 2。
+
+Gate 0 未通过，不得生成总报告或进入 Gate 1。
+
 ## G0-T004 / Iteration 4
 
 Result: `G0-T004 PASS`

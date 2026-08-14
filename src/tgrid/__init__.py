@@ -7,6 +7,7 @@ capability.
 """
 
 from tgrid.config import load_config, parse_config
+from tgrid.events import EventQueue, EventQueueState
 from tgrid.models import ACCUMULATE_MODE, GlobalConfig, RootConfig, SymbolConfig
 from tgrid.persistence import (
     connect as connect_database,
@@ -25,6 +26,11 @@ from tgrid.risk.exceptions import (
     CoreFloorViolation,
     DatabaseIntegrityError,
     DatabaseOpenError,
+    EventQueueConfigError,
+    EventQueueError,
+    EventQueueFull,
+    EventQueueLifecycleError,
+    EventQueueWorkerError,
     InsufficientAvailableVolume,
     LoggingConfigError,
     LoggingEmitError,
@@ -43,6 +49,8 @@ __all__ = [
     "__version__",
     "load_config",
     "parse_config",
+    "EventQueue",
+    "EventQueueState",
     "ACCUMULATE_MODE",
     "GlobalConfig",
     "SymbolConfig",
@@ -69,4 +77,9 @@ __all__ = [
     "LoggingError",
     "LoggingConfigError",
     "LoggingEmitError",
+    "EventQueueError",
+    "EventQueueConfigError",
+    "EventQueueLifecycleError",
+    "EventQueueFull",
+    "EventQueueWorkerError",
 ]

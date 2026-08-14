@@ -1,3 +1,183 @@
+# Closed Fix Request — G0-T005 / Iteration 4
+
+> REV-G0T005-005/-006 已由 Iteration 4 关闭；G0-T005 裁决为 PASS。
+
+只修复 start failure 与并发 join 的 handshake 竞态，并移除测试自身的 daemon 线程泄漏。
+
+## P0 — REV-G0T005-005：join 缓存未启动 worker，start failure 后仍调用 Thread.join
+
+### Evidence
+
+确定性交错：start phase 1 已发布 `_worker`/`_starting=True`，并发 join 捕获该对象后等待；随后
+`Thread.start()` 抛 RuntimeError，start failure 路径清空 `_worker` 并通知。join 醒来后仍使用等待前
+缓存的旧对象：
+
+```text
+start_fail_join_race.results={
+  start_exc: (EventQueueLifecycleError, failed to start event queue worker: RuntimeError),
+  join_exc: (RuntimeError, cannot join thread before it is started)
+}
+start_fail_join_race.state=FAILED failure_type=RuntimeError
+```
+
+start 调用方的安全边界正确，但并发 join 仍泄漏裸 threading exception。
+
+### Required Behavior / Tests
+
+- join 等待 `_starting` 结束后必须在同一 lock 内重新读取 `_worker`/start outcome；若 start 失败且 worker
+  已清空，应安全返回 True（无实际线程可等待），FAILED 状态由 `state`/`raise_if_failed` 表达。
+- 不得对未 OS-started 的 Thread 调用 `join()`；不得通过捕获其 RuntimeError 来掩盖状态机错误。
+- 增加 Event 驱动的 start-pause-then-fail + concurrent join 测试：start 返回安全项目异常，join 无异常并
+  返回 True，最终 FAILED/failure_type 正确，唯一 secret 不出现在 exception/stdout/stderr。
+- 同时交错 stop + start failure + join，确保无死锁、无虚假 RUNNING、无活线程。
+
+## P1 — REV-G0T005-006：测试故意遗留永不结束的 daemon 控制线程
+
+当前 `test_bounded_join_returns_false_when_start_never_completes` 在 daemon controller 中执行无限循环，
+测试断言结束后该线程仍活着：
+
+```text
+never_start.join_result=False
+never_start.controller_alive_after_test_logic=True
+never_start.worker_started=False
+```
+
+删除这种不可清理的测试形态。使用可释放 Event 暂停 start，先验证 bounded join 返回 False，再 stop、
+release 并 join 所有控制/worker 线程；每个测试结束必须断言其 controller 与目标 thread_name 均无存活线程。
+
+## Iteration 4 Completion
+
+1. 只修 REV-G0T005-005/-006，保持前述修复。
+2. 完整运行回归、compileall、AST；测试不得留下 daemon/non-daemon 线程。
+3. 设置 `REVIEW_READY / owner=architect / iteration=4`，更新真实时间，释放 Lease并停止。
+
+---
+
+# Closed Fix Request — G0-T005 / Iteration 3
+
+> REV-G0T005-004 的 stop 非阻塞与端到端 deadline 已关闭；start failure join outcome 由
+> REV-G0T005-005 继续跟踪。
+
+只修复启动期间 lifecycle lock 导致 `stop()` 与 bounded `join()` 失去时限这一项。
+
+## P0 — REV-G0T005-004：Thread.start 持有 lifecycle lock，stop/join 可被无限阻塞
+
+### Evidence
+
+Iteration 2 将 `worker.start()` 移到 condition lock 内，避免了“RUNNING 但线程未启动”，但
+`Thread.start()` 是外部/OS 边界，若其变慢，所有需要该 lock 的 lifecycle 调用都会被阻塞。
+
+独立探针只暂停目标 worker 的 start，然后并发调用 `join(timeout=0.01)` 与 `stop()`：
+
+```text
+paused_start.join_done_after_100ms=False
+paused_start.stop_done_after_100ms=False
+paused_start.results={stop_elapsed: ~0.094, join_result: True, join_elapsed: ~0.094}
+```
+
+`join(0.01)` 超过期限近十倍，并且结果取决于 0.01 秒期限之后发生的 stop；`stop()` 也不能及时返回，
+违反 stop 不得无限阻塞与 bounded join 契约。
+
+现有 `test_concurrent_start_during_pause_no_second_worker` 在全局 patch `Thread.start` 后直接调用
+`t1.start()`/`t2.start()`，控制线程自身也进入 `pausing_start`，依靠 `release.wait(timeout=5)` 超时推进，
+测试耗时约 10 秒且没有确定性覆盖目标 worker 的 join/stop 交错。
+
+### Required Behavior / Tests
+
+- 不得在 lifecycle lock 内跨越可能阻塞的 `Thread.start()`；使用私有 starting flag + condition、显式
+  handshake 或等价两阶段状态机，仍保证最多启动一个 worker，且不发布虚假 RUNNING。
+- start 进行中调用 `stop()` 必须及时返回并记住 stop 请求；worker 真正启动后必须直接进入可清理的
+  STOPPING/STOPPED 路径，不接受 stop 之后的 enqueue，不泄漏线程。
+- `join(timeout)` 的 timeout 必须约束整个调用，包括等待 start handshake 与实际 thread join；使用单一
+  `time.monotonic()` deadline 计算剩余时间。start 未完成而期限到达时返回 False，不能等待到 start 释放。
+- 第二个并发 `start()` 不得创建第二 worker；start failure 仍保持 FAILED、type-only、安全 join。
+- 重写错误的 pause 测试：patch 只暂停目标 worker（按 thread identity/name 或注入 factory），控制线程用
+  未 patch 的原始 start；使用 Event/Barrier 完成交错，不使用 `time.sleep` 或 5 秒 timeout 推进逻辑。
+- 至少断言：暂停期间 `join(0.01)` 在合理上界内返回 False；`stop()` 在合理上界内完成；release 后唯一
+  worker 退出、最终 STOPPED、无同名存活线程、无裸 threading exception。
+- 保持 REV-G0T005-002/-003 修复与全部既有行为，完整运行回归、compileall、AST 并更新报告。
+
+## Iteration 3 Completion
+
+1. 只修 REV-G0T005-004。
+2. 设置 `REVIEW_READY / owner=architect / iteration=3`，更新真实时间，释放 Lease并停止。
+
+---
+
+# Closed Fix Request — G0-T005 / Iteration 2
+
+> REV-G0T005-002 与 -003 已关闭；REV-G0T005-001 的裸异常/虚假 RUNNING 部分已修复，但持锁启动造成的
+> bounded lifecycle 回归由 REV-G0T005-004 继续跟踪。
+
+只修复以下线程启动原子性、timeout 与异常边界问题，不接入 QMT、CLI、数据库、策略或交易。
+
+## P0 — REV-G0T005-001：RUNNING 在 worker 真正启动前发布，join/start failure 失控
+
+### Evidence
+
+确定性暂停 `Thread.start()`，让 `EventQueue.start()` 已写 RUNNING 但 worker 尚未启动：
+
+```text
+start_race.state_before_actual_start=RUNNING
+start_race.join_exception=RuntimeError cannot join thread before it is started
+```
+
+直接注入 `Thread.start()` 抛含敏感 token 的 `RuntimeError`：
+
+```text
+start_failure.exception=RuntimeError THREAD_SECRET
+start_failure.state=RUNNING
+start_failure.join_exception=RuntimeError cannot join thread before it is started
+```
+
+状态发布与真实线程启动不原子，既泄漏标准库异常/原文，也留下无法恢复、无法 join 的虚假 RUNNING。
+
+### Required Behavior / Tests
+
+- 在 lifecycle lock 内完成 worker start 与 RUNNING 发布，或使用显式 STARTING 状态/condition；任何调用方
+  不得观察到 RUNNING 但 thread 尚未启动。
+- `Thread.start()` 失败必须 fail closed：不得保留 RUNNING，不得泄漏原始异常文本；使用项目异常和稳定
+  类型摘要，后续 `join()` 不得泄漏 `RuntimeError` 或死锁。
+- 用 Event/Barrier + patched start 确定性交错 start 与 join/stop/第二次 start，证明无裸异常、无第二 worker、
+  无遗留测试线程。
+- 注入唯一 secret 的 start failure，断言 exception/stdout/stderr 不含 token，状态和 failure_type 一致。
+
+## P1 — REV-G0T005-002：join timeout 未拒绝 NaN / Infinity
+
+任务要求 timeout 为 None 或非负有限实数。当前只检查 `< 0`：
+
+```text
+timeout nan accepted_result=True
+timeout inf accepted_result=True
+```
+
+使用 `math.isfinite`（或等价）拒绝 `nan`、`inf`、`-inf`，统一抛 `EventQueueConfigError`；增加真实阻塞
+handler 的 join timeout 测试，必须在 worker 存活时返回 `False`，随后可释放并正常清理。
+
+## P1 — REV-G0T005-003：EventQueueFull 链接并暴露 queue.Full
+
+```text
+full.__cause__=Full
+```
+
+转换为项目异常时不得将 `queue.Full` 作为公开 cause/traceback 链；抛出稳定 `EventQueueFull`，其字符串、
+cause 与打印 traceback 均不暴露 `queue.Full`。测试同时证明 enqueue 仍为非阻塞且队列可正常 drain。
+
+## Iteration 2 Completion
+
+1. 只修 REV-G0T005-001 至 -003。
+2. 完整运行回归、compileall、AST 与上述确定性 Failure Injection。
+3. 更新完整证据与报告，逐 Issue 标记 FIXED/NOT_FIXED/DISAGREE。
+4. 设置 `REVIEW_READY / owner=architect / iteration=2`，更新真实时间，释放 Lease并停止。
+
+---
+
+# Closed Task Start — G0-T005 / Iteration 1
+
+G0-T005 初始任务已实现并完成第 1 轮 Review；以下均为历史 fix request。
+
+---
+
 # Closed Fix Request — G0-T004 / Iteration 4
 
 > REV-G0T004-006 已由架构师独立重放关闭；G0-T004 已 PASS。本文件以下内容均为验收历史。

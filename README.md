@@ -13,6 +13,7 @@ QMT 低频做 T 交易引擎（开发中）。
 - 示例配置 `config/config.example.yaml`（仅含 `0700.HK` 与 `000333.SZ` 示例数量，代码不写死任何证券或数量）。
 - `tgrid.persistence`（SQLite 基础，仅标准库 `sqlite3`）：显式路径打开、`PRAGMA foreign_keys=ON`、`busy_timeout`、完整性检查、有序事务化幂等 migration、schema 版本一致性校验，以及 `PersistenceError` / `DatabaseOpenError` / `DatabaseIntegrityError` / `SchemaVersionError` / `MigrationError` 异常。当前只有 `schema_migrations` 与 `application_metadata` 两张基础表，不含任何交易领域表。
 - `tgrid.reporting`（结构化 JSONL 日志，仅标准库）：`configure_jsonl_logger(name, path)` 显式路径配置、`emit(logger, event, message, level, context)` 写入单行可解析 JSON、`shutdown_logger(name)` 幂等关闭。输出 UTF-8 JSONL（`schema_version`/`timestamp`/`level`/`logger`/`event`/`message`/`context`），中文/换行/引号无损 round-trip；配置/序列化/写入失败抛 `LoggingError` / `LoggingConfigError` / `LoggingEmitError`，不静默吞错、不留半行。
+- `tgrid.events`（单消费者 Event Queue 骨架，仅标准库）：线程安全、容量有界、FIFO、单 worker 的 `EventQueue`，生命周期 `NEW → RUNNING → STOPPING → STOPPED`（handler 抛异常 → `FAILED`）。非阻塞 `enqueue`（满队列抛 `EventQueueFull`）、graceful `stop` + drain、有界 `join`、`raise_if_failed()`。异常：`EventQueueError` / `EventQueueConfigError` / `EventQueueLifecycleError` / `EventQueueFull` / `EventQueueWorkerError`。为后续 QMT callback 隔离提供线程边界，不含 QMT/策略/订单能力。
 
 ## 运行前提
 
@@ -49,6 +50,23 @@ python -m tgrid preflight --config config/config.example.yaml --database data/tg
 安装后 console script `tgrid` 指向同一入口。`preflight` 只做只读配置校验和本地资源 preflight（加载配置、拒绝 `live_trading=true`、配置 JSONL 日志、初始化/校验 SQLite、按序记录 `startup_begin`→`preflight_ok`→`shutdown_complete`、关闭全部资源），**不连接 QMT、不读取行情/账户、不产生任何交易**。三个路径参数均为 required，必须两两不同。
 
 退出码：`0` 成功、`1` 受控失败、`2` 用法错误、`130` 中断。受控失败只向 stderr 输出一行简洁错误，不打印 traceback。
+
+## Event Queue 骨架
+
+```python
+from tgrid import EventQueue
+
+q = EventQueue(lambda evt: print(evt), maxsize=100)
+q.start()
+q.enqueue({"kind": "startup"})
+q.stop()          # 优雅停止：已接受事件按 FIFO drain
+q.join(timeout=5) # 等待 worker 退出
+```
+
+- `enqueue` 非阻塞：队列满立即抛 `EventQueueFull`，不等待、不丢、不在 producer 线程执行 handler。
+- handler 只在唯一 worker 线程执行；抛任意 `BaseException` → `FAILED`，停止 dispatch。
+- `raise_if_failed()` 只报告异常类型，不泄漏原始 message/repr/traceback。
+- 仅供 Gate 0 本地骨架，不含 QMT/策略/订单能力。
 
 ## 结构化日志
 

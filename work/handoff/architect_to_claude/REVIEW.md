@@ -1,3 +1,61 @@
+# Architecture Review — G0-T005 / Iteration 4
+
+Status: `PASS`
+
+Reviewed at: `2026-08-14T18:52:23+08:00`
+
+独立 223 项回归、compileall、禁止 API/assert 扫描与范围检查通过。额外确定性暂停目标
+`Thread.start()`，再交错 start failure、join 与 stop：start 仅抛安全项目异常，join 返回 True，
+最终 FAILED/failure_type 正确，stop 立即返回且无残留线程。REV-G0T005-005/-006 已关闭。
+
+G0-T005 Event Queue 骨架通过。Gate 0 仍须完成集成复核与总报告，不得提前进入 Gate 1。
+
+---
+
+# Architecture Review — G0-T005 / Iteration 3
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T18:45:58+08:00`
+
+独立 221 项回归与 compileall 通过；慢启动期间 stop prompt、join 单 deadline 与唯一 worker 已实现。
+但并发 join 在 start failure 后仍使用等待前缓存的未启动 Thread，泄漏裸 RuntimeError；新增“永不启动”
+测试还故意留下存活 daemon controller。详见 REV-G0T005-005/-006。
+
+Gate 0 未通过，不得生成总报告或进入 Gate 1。
+
+---
+
+# Architecture Review — G0-T005 / Iteration 2
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T18:40:33+08:00`
+
+独立 219 项回归与 compileall 通过；start failure、有限 timeout 校验和 queue.Full 公共异常边界已修复。
+但 worker.start 在 lifecycle lock 内执行，暂停启动会让 stop 和 join(timeout=0.01) 同时阻塞约 0.094 秒，
+join timeout 未约束整个调用。现有 pause 测试还 patch 了控制线程自身并依靠 5 秒超时推进。详见
+REV-G0T005-004。
+
+Gate 0 未通过，不得生成总报告或进入 Gate 1。
+
+---
+
+# Architecture Review — G0-T005 / Iteration 1
+
+Status: `CHANGES_REQUIRED`
+
+Reviewed at: `2026-08-14T18:34:24+08:00`
+
+独立 213 项回归与 compileall 通过，基础 FIFO、单 worker、stop/drain、handler BaseException 与
+Lease/范围检查有效。但确定性 start/join 交错证明 RUNNING 会在线程真正启动前发布；Thread.start
+失败泄漏原始异常并留下虚假 RUNNING。另有 NaN/Infinity timeout 未拒绝、EventQueueFull 链接
+queue.Full 两项边界问题。详见 `FIX_REQUEST.md` 顶部。
+
+Gate 0 未通过，不得生成总报告或进入 Gate 1。
+
+---
+
 # Architecture Review — G0-T004 / Iteration 4
 
 Status: `PASS`

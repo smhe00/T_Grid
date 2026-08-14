@@ -1,43 +1,104 @@
-# Task G0-T004 — 离线 CLI 与 Startup/Shutdown 编排
+# Task G0-T005 — 单一 Event Queue 骨架
 
 ## Goal
 
-建立 Gate 0 的离线命令行入口与确定性 startup/shutdown 生命周期，把已经验收的配置、SQLite 与
-JSONL logging 基础组合成一个只读配置校验和本地 preflight 流程。当前任务不得连接 QMT、读取真实
-账号或产生任何交易行为。
+实现 Gate 0 的纯本地、通用单消费者 Event Queue 骨架，为后续 QMT callback isolation 提供可验证的
+线程边界。当前任务只建立队列与生命周期，不接入 QMT、CLI、数据库、策略、订单或任何真实数据。
 
 ## In Scope
 
-1. 新增 `tgrid.main` 与 `tgrid.__main__`，并在 `pyproject.toml` 注册 `tgrid` console script。
-2. 提供 `--help`、`--version` 与 `preflight` 子命令。
-3. `preflight` 只执行：显式参数校验、加载配置、拒绝 live trading、配置 JSONL logger、初始化/
-   验证 SQLite、记录 startup/shutdown 事件、关闭全部资源。
-4. 定义稳定退出码与无 traceback 的用户级错误输出。
-5. 对所有部分启动失败和 shutdown 失败进行可测试、fail-closed 的资源清理。
+1. 新增 `tgrid.events`，提供线程安全、容量有界、FIFO、单 worker 的 `EventQueue`。
+2. 定义明确的 lifecycle state、非阻塞 enqueue、graceful stop、bounded join 与 worker failure 状态。
+3. 在 risk exception 层新增 Event Queue 专用异常并导出公共 API。
+4. 测试并发生产者、stop/enqueue 竞态、队列满、handler 异常与线程清理。
+5. README 只说明这是 Gate 0 本地骨架，不含 QMT/交易能力。
 
 ## Out of Scope
 
-- Event Queue、后台 worker、定时器或常驻进程；后续 Gate 0 子任务实现。
-- QMT/XtQuant、行情、账号、持仓、委托、成交、下单或撤单。
-- 策略计算、SimBroker、dry-run、shadow/live execution。
-- `run`/`trade`/`live` 命令、自动重试或自动恢复。
-- 自动发现配置、数据库、日志路径，或读取环境变量中的真实路径/账号。
-- 修改已经验收的 config、persistence、reporting 实现。
-- Git push；Claude 不得 commit。
+- QMT/XtQuant callback 注册、行情、账号、持仓、委托、成交、连接或真实事件类型。
+- 策略状态机、Risk Engine 调用、OrderIntent、Reservation、broker adapter、下单/撤单。
+- SQLite、JSONL logger、CLI 或 startup/shutdown 的集成；已验收模块不得修改。
+- 定时器、调度器、重试、自动恢复、持久化 replay、多进程或 asyncio。
+- 自动开启 live trading；`live_trading_allowed` 必须保持 false。
+
+## Required Public Contract
+
+在 `src/tgrid/events.py` 至少提供：
+
+```python
+class EventQueueState(Enum):
+    NEW = "NEW"
+    RUNNING = "RUNNING"
+    STOPPING = "STOPPING"
+    STOPPED = "STOPPED"
+    FAILED = "FAILED"
+
+class EventQueue:
+    def __init__(self, handler, *, maxsize: int, thread_name: str = "tgrid-event-loop"): ...
+    @property
+    def state(self) -> EventQueueState: ...
+    @property
+    def failure_type(self) -> str | None: ...
+    def start(self) -> None: ...
+    def enqueue(self, event: object) -> None: ...
+    def stop(self) -> None: ...
+    def join(self, timeout: float | None = None) -> bool: ...
+    def raise_if_failed(self) -> None: ...
+```
+
+Python 3.9 兼容时类型注解可用 `Optional`。允许增加私有 helper，但不得增加业务语义。
+
+## Lifecycle Contract
+
+```text
+NEW --start--> RUNNING --stop--> STOPPING --drain accepted FIFO--> STOPPED
+                         |
+                         +-- handler BaseException --> FAILED
+```
+
+1. constructor：`handler` 必须 callable；`maxsize` 必须是非 bool 的正整数；`thread_name` 必须为
+   非空字符串。无效参数使用显式 Event Queue exception，不能泄漏裸 queue/threading 异常。
+2. `start()`：NEW 时只创建一个非 daemon worker；RUNNING 时幂等且不得创建第二线程；STOPPING、
+   STOPPED、FAILED 后禁止 restart，抛 lifecycle exception。
+3. `enqueue()`：只在 RUNNING 接受；状态检查与入队必须位于同一同步边界。使用非阻塞语义；满队列
+   立即抛 `EventQueueFull`，不得等待、重试、静默 drop，也不得在 producer/callback 线程执行 handler。
+4. `stop()`：不得无限阻塞；NEW 直接变 STOPPED；RUNNING 原子变 STOPPING，并拒绝所有之后的 enqueue；
+   STOPPING/STOPPED/FAILED 幂等。stop 前成功接受的事件必须按 FIFO drain，除非 handler 已失败。
+5. `join(timeout)`：只等待 worker 退出，返回 `True`/`False` 表示是否已退出；timeout 必须为 None 或
+   非负有限实数（bool 禁止）。不得从 worker 自身 join；该情况必须立即抛 lifecycle exception。
+6. 正常处理：每个被接受事件最多调用一次 handler；所有 handler 调用只能发生在唯一 worker 线程，
+   不得并发；多 producer 的成功 enqueue 不能丢失或重复。
+7. handler 抛任意 `BaseException` 时：worker 捕获线程边界、记录只含类型名的 `failure_type`、原子进入
+   FAILED、停止 dispatch、丢弃尚未处理的队列项并退出；后续 enqueue 必须拒绝。
+8. `raise_if_failed()`：FAILED 时抛 `EventQueueWorkerError`，用户消息只含异常类型，不含原始 message/
+   repr/traceback/事件内容；非 FAILED 时不操作。不得在后台线程打印 traceback。
+9. 所有 state/failure 可见性与 transition 必须由 lock/condition 保证；生产安全不得依赖 `assert`。
+
+## Exceptions
+
+在 `tgrid.risk.exceptions` 中定义并从 `tgrid.risk`、`tgrid` 导出至少：
+
+```text
+EventQueueError(TGridError)
+EventQueueConfigError(EventQueueError)
+EventQueueLifecycleError(EventQueueError)
+EventQueueFull(EventQueueError)
+EventQueueWorkerError(EventQueueError)
+```
+
+不得直接暴露标准库 `queue.Full` 或 handler 原始异常文本。
 
 ## Allowed Files
 
 Claude 只能新增或修改：
 
 ```text
-pyproject.toml
 README.md
 src/tgrid/__init__.py
-src/tgrid/__main__.py
-src/tgrid/main.py
+src/tgrid/events.py
 src/tgrid/risk/__init__.py
 src/tgrid/risk/exceptions.py
-tests/unit/test_cli.py
+tests/unit/test_events.py
 work/control/WORKFLOW_STATE.yaml
 work/control/CLAUDE_HEARTBEAT.md
 work/locks/WORKTREE_LEASE.yaml
@@ -45,10 +106,10 @@ work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md
 work/handoff/claude_to_architect/TEST_REPORT.md
 work/handoff/claude_to_architect/QUESTIONS.md
 work/gates/GATE_0/CLAUDE_REPORT.md
-work/reports/tests/G0-T004-test-output.txt
+work/reports/tests/G0-T005-test-output.txt
 ```
 
-`WORKTREE_LEASE.yaml` 只在工作期间存在，交接前必须释放删除。
+Lease 只在工作期间存在，交审前必须删除。
 
 ## Forbidden Files
 
@@ -56,21 +117,24 @@ work/reports/tests/G0-T004-test-output.txt
 TGrid_双Agent协作与Gate验收协议_V1.0.md
 TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md
 .gitignore
+pyproject.toml
 config/**
 src/tgrid/config.py
 src/tgrid/models.py
+src/tgrid/main.py
+src/tgrid/__main__.py
 src/tgrid/persistence/**
 src/tgrid/reporting/**
 tests/unit/test_config.py
 tests/unit/test_models.py
 tests/unit/test_persistence.py
 tests/unit/test_logging.py
+tests/unit/test_cli.py
 work/control/CURRENT_TASK.md
 work/control/ARCHITECT_HEARTBEAT.md
 work/gates/GATE_0/TASK.md
-work/gates/GATE_0/G0-T001_RESULT.md
-work/gates/GATE_0/G0-T002_RESULT.md
-work/gates/GATE_0/G0-T003_RESULT.md
+work/gates/GATE_0/G0-T005_TASK.md
+work/gates/GATE_0/*_RESULT.md
 work/gates/GATE_0/ARCHITECT_REVIEW.md
 work/handoff/architect_to_claude/**
 work/design/**
@@ -81,163 +145,62 @@ work/design/**
 
 ## Design References
 
-- 设计文档 §29：SAFE_HALT 保留日志且不得自动平仓。
-- §30：配置、数据库及未知异常必须 fail closed。
-- §33：`main.py` 推荐入口与真实数据/日志不得提交 Git。
-- §34：INV-009 fail closed、INV-010 幂等、INV-011 禁止生产安全依赖 `assert`。
-- §35：Gate 0 必须实现 CLI 并测试 startup/shutdown、invalid config，禁止 QMT 下单代码。
-- §52：当前阶段明确禁止 QMT、行情、策略和真实账号访问。
+- 设计 §3.1：QMT callbacks 未来只允许 enqueue；所有状态变更由唯一事件线程串行执行。
+- 设计 §35 / §50：Gate 0 包含 Event Queue 骨架，禁止 QMT 下单代码。
+- 设计 §34：INV-009 fail closed、INV-010 幂等、INV-011 禁止生产安全依赖 assert。
 - 协作协议 §7–§12、§18、§22、§29–§32。
-
-## CLI Contract
-
-必须支持：
-
-```text
-python -m tgrid --help
-python -m tgrid --version
-python -m tgrid preflight --config <path> --database <path> --log <path>
-```
-
-安装后 console script `tgrid` 必须指向同一 `main(argv=None) -> int` 入口。
-
-### Explicit Paths
-
-- `preflight` 的三个路径参数全部 required，不提供默认路径，不读取环境变量。
-- 在任何写入前将路径规范化并验证 config/database/log 两两不同；相同路径或可解析为同一路径的
-  alias 必须拒绝，避免日志或 SQLite 覆盖配置。
-- config 只读；database 与 log 可由已验收模块创建父目录。
-
-### Preflight Order
-
-```text
-parse explicit CLI arguments
-normalize and validate distinct paths
-load_config(config_path)
-reject config.global.live_trading == true
-configure_jsonl_logger(..., log_path)
-emit startup_begin
-initialize_database(database_path)
-emit preflight_ok
-close database
-emit shutdown_complete
-shutdown_logger
-return 0
-```
-
-实现可调整内部函数划分，但不得改变安全顺序：live trading 与路径冲突必须在数据库/日志写入前拒绝。
-
-## Exit Contract
-
-```text
-0    preflight 成功或 --help/--version 正常完成
-1    TGrid 配置、logging、database、startup/shutdown 等受控失败
-2    argparse 用法/缺参错误（标准 argparse 行为）
-130  KeyboardInterrupt
-```
-
-- 受控失败向 stderr 输出一行简洁错误，禁止 traceback。
-- stdout 只输出稳定、简洁的成功信息或 help/version；不得输出配置内容、账号或敏感数据。
-- 不捕获 `SystemExit`/`GeneratorExit`；`KeyboardInterrupt` 单独映射 130。
-
-## Logging Contract
-
-成功 preflight 的 JSONL event 顺序必须是：
-
-```text
-startup_begin
-preflight_ok
-shutdown_complete
-```
-
-context 只允许非敏感、稳定字段，例如 `schema_version` 不得由调用方覆盖；不得记录完整配置、环境变量、
-原始异常文本、账号信息或证券数量。失败发生在 logger 建立后时，应尽力记录稳定事件名与异常类型，
-但日志失败本身必须使 CLI 非零退出，不能伪报成功。
-
-## Lifecycle / Failure Rules
-
-1. 任一步失败均返回非零且不得继续到后续业务步骤。
-2. logger 配置后，无论 DB 初始化、事件写入还是其他受控异常，最终都必须尝试 shutdown logger。
-3. DB 成功打开后，无论后续步骤是否失败都必须 close；Windows 上返回后 DB/log 文件可移动。
-4. shutdown 中出现失败不能被吞掉；若启动异常与清理异常同时发生，保留主要失败并在安全边界报告清理失败，
-   不得返回 0。
-5. `preflight` 可重复运行：SQLite migration 不重复，JSONL 追加新的一组完整生命周期事件。
-6. Gate 0 无任何可开启 live trading 的路径；配置中 `live_trading: true` 必须在创建 DB/log 前拒绝。
-7. 生产安全不得依赖 Python `assert`。
 
 ## Acceptance Criteria
 
-1. `python -m tgrid --help`、`--version` 与 console entry point 配置正确。
-2. 缺少子命令或 required 参数时使用 argparse 标准 usage，退出 2。
-3. 合法、`live_trading=false` 配置的 preflight 返回 0，创建/验证 DB 与 JSONL，并按契约输出三事件。
-4. 配置中 `live_trading=true` 返回 1，且 DB/log 均未创建。
-5. 三路径冲突或 alias 冲突返回 1，并在任何数据库/日志写入前停止。
-6. invalid config、损坏 DB、日志打开失败、emit 失败均返回 1、无 traceback、无 success 文本。
-7. 部分启动失败后所有已获取资源关闭；故障注入后文件在 Windows 可移动/删除。
-8. 正常与失败 shutdown 顺序有测试；清理失败不能改变为成功。
-9. 重复 preflight 两次，migration history 仍一条，日志为两组按序事件，不覆盖原日志。
-10. 用户级输出不包含完整配置、数据库内容、原始 traceback 或敏感字段。
-11. 原有 142 项测试全部继续通过。
-12. 无新增第三方运行时依赖、无 QMT import、无券商/策略/交易代码、无生产 `assert`。
-13. README 明确 CLI 仅做离线 preflight，无 QMT/交易能力，并给出全部显式参数示例。
+1. 公共 API、状态机与 exception hierarchy 符合上述契约。
+2. 100 个以上事件由多个 producer 并发 enqueue 后，所有成功接受项恰好处理一次；handler 永不并发，
+   且只在同一个非主 worker thread 执行。
+3. stop/enqueue 的确定性交错能证明：stop 转 STOPPING 前接受的事件全部 drain，之后 enqueue 全部拒绝；
+   无静默 drop、重复或 worker 泄漏。
+4. 队列满立即抛项目 `EventQueueFull`，不泄漏 `queue.Full`，不阻塞 callback thread。
+5. handler 的 RuntimeError、KeyboardInterrupt、SystemExit、GeneratorExit 均进入 FAILED，停止后续 dispatch，
+   worker 退出；`failure_type`/`raise_if_failed()` 不泄漏唯一 secret token 或 traceback。
+6. start/stop/join/raise_if_failed 幂等与非法状态均有测试；start-stop 多次/并发不得产生第二 worker。
+7. join timeout 与 self-join 不死锁；测试结束后没有名为测试 thread_name 的存活线程。
+8. 原 178 项测试全部通过；新增测试稳定、无 sleep 驱动的竞态断言，优先使用 Event/Barrier。
+9. `compileall` 与 AST 扫描通过：无生产 `assert`、无 xtquant import、无 order_stock/cancel_order。
+10. 无新增第三方依赖、无 QMT/账号/策略/订单/数据库/CLI/logging 集成。
 
-## Required Tests
+## Required Tests / Failure Injection
 
-至少覆盖：
+- constructor 边界：handler/maxsize/thread_name 非法值。
+- NEW/RUNNING/STOPPING/STOPPED/FAILED 全 transition 与 restart rejection。
+- 多 producer + FIFO（单 producer 顺序及全局实际接受顺序）+ handler 单线程/不并发。
+- 满队列立即失败；stop 与 enqueue 的 lock-serialized 竞态。
+- stop 时 drain；stop before start；重复 start/stop/join；join timeout；worker self-join rejection。
+- handler RuntimeError/KeyboardInterrupt/SystemExit/GeneratorExit，pending 项不再 dispatch，worker 退出。
+- 唯一 secret token 不出现在 exception 文本、stdout、stderr；后台无 traceback。
+- 完整回归与禁止 API/assert AST 扫描。
 
-- parser/help/version、缺子命令、缺 required 参数与 exit code。
-- `main(argv)` 成功路径及 `python -m tgrid` 子进程最小 smoke（不调用 QMT）。
-- 成功 JSONL 三事件顺序、SQLite `user_version=1` 与 migration history 幂等。
-- `live_trading=true` 在 DB/log 创建前拒绝。
-- config/database、config/log、database/log 相同或 alias 路径冲突。
-- invalid YAML/配置、损坏 DB、日志目录路径/打开失败。
-- 注入 `initialize_database`、`emit`、DB close、`shutdown_logger` 失败，核对退出码和清理调用顺序。
-- startup 失败与 shutdown 失败同时发生时仍非零且无 traceback。
-- KeyboardInterrupt 返回 130，并清理已获取资源。
-- 重复 preflight 两次：DB migration 不重复、日志六事件按两组排列。
-- stdout/stderr 契约和敏感信息不泄漏。
-- AST 扫描生产源码无 `assert`、无 `xtquant`、无 `order_stock`/`cancel_order`。
-- 原 142 项测试回归。
-
-必须实际运行：
+必须实际运行并保存完整输出：
 
 ```text
 python -m unittest discover -s tests -p "test_*.py" -v
 python -m compileall -q src tests
-python -m tgrid --help
-python -m tgrid --version
 ```
-
-## Failure Injection
-
-至少注入并保存证据：
-
-1. invalid YAML / `live_trading=true`。
-2. 三类路径冲突。
-3. 损坏 SQLite 文件。
-4. log 目标为目录或 FileHandler 打开失败。
-5. startup event / preflight event emit 失败。
-6. DB close 与 logger shutdown 失败。
-7. KeyboardInterrupt 发生在 logger 建立后或 DB 打开后。
-
-所有异常必须 fail closed；不得连接 QMT、不得产生订单、不得把失败打印为成功。
 
 ## Deliverables
 
-1. Allowed Files 内的实现与测试。
-2. 更新 `IMPLEMENTATION_REPORT.md`、`TEST_REPORT.md`、`QUESTIONS.md`。
-3. `work/reports/tests/G0-T004-test-output.txt` 保存完整输出、CLI smoke 与 Failure Injection 证据。
-4. 更新 `CLAUDE_REPORT.md`，明确 Gate 0 尚未完成。
+1. Allowed Files 内实现与测试。
+2. 更新 Implementation/Test/Questions/Claude Gate 报告。
+3. `work/reports/tests/G0-T005-test-output.txt` 保存完整测试、compileall、AST 与 Failure Injection 证据。
 
 ## Stop Condition
 
-完成后：
+完成后检查 diff 仅含 Allowed Files，原子更新：
 
-1. 检查 Git diff 仅包含 Allowed Files。
-2. 原子更新 `WORKFLOW_STATE.yaml`：
-   - `state: "REVIEW_READY"`
-   - `owner: "architect"`
-   - 保持 `gate: 0`、`task_id: "G0-T004"`、`iteration: 1`
-   - 更新真实本机 `last_update`；未 commit 时 `git_head_commit` 保持基线并在 notes 说明。
-3. 释放 Lease。
-4. 停止写入，保持只读等待架构师 Review。
+```text
+state: REVIEW_READY
+owner: architect
+gate: 0
+task_id: G0-T005
+iteration: 1
+git_head_commit: f59801e765c539e9f9a7aa690215f2e66570fd79
+```
+
+更新真实本机时间、释放 Lease，不 commit、不 push，停止写入等待 Review。
