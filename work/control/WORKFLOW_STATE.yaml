@@ -4,24 +4,23 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 6
-handoff_id: "G2-T006-AUTH-20260815-006"
-authorized_next:
-  - "G2-T006"
+handoff_seq: 7
+handoff_id: "G2-T006-REVIEW-20260815-007"
+authorized_next: []
 design_version: "1.1"
 gate: 2
 task_id: "G2-T006"
-state: "CLAUDE_READY"
-owner: "claude"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 1
-last_actor: "architect"
-last_update: "2026-08-15T03:20:00+08:00"
+last_actor: "claude"
+last_update: "2026-08-15T03:30:20+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "e9572d67feab498ce421f8c9220366470c208a61"
-git_head_commit: "e9572d67feab498ce421f8c9220366470c208a61"
+git_base_commit: "2d8362485b6a1c3711bf65836146e041985cccaf"
+git_head_commit: "2d8362485b6a1c3711bf65836146e041985cccaf"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-notes: "G2-T005 iteration 2 PASS after Architect review of actual GitHub diff, 618-test raw evidence, 7x7 closure, write-failed FI, provenance, and safety scope. G2-T006 is now authorized: implement only a pure offline fail-closed position reconciliation decision engine using SymbolConfig.core_qty as the sole core source; exact Broker==Core+Strategic+OpenT -> RECONCILED, broker below core -> SAFE_MODE/CORE_FLOOR_BREACH, any other delta -> SAFE_MODE/BROKER_POSITION_MISMATCH. No auto reclassification, SQLite/QMT/startup orchestration/SAFE_MODE persistence/OrderIntent/trading. Claude may act only on G2-T006 and must STOP WRITE on remote change, dirty worktree, ownership mismatch, or scope drift. live_trading_allowed=false."
+notes: "G2-T006 iteration 1 REVIEW_READY. Offline fail-closed position reconciliation decision engine added: reconcile_position uses SymbolConfig.core_qty as the sole core source; LocalExpected=Core+Strategic+OpenT; broker<core -> SAFE_MODE/CORE_FLOOR_BREACH (priority), other non-zero delta -> SAFE_MODE/BROKER_POSITION_MISMATCH (no reclassification, t_unit-like deltas included), exact equality -> RECONCILED/MATCH. Frozen data-only result; strict input validation (exact SymbolConfig / exact non-empty str / exact non-negative int); malicious dunder/secret isolated; no QMT/SQLite/startup orchestration/SAFE_MODE persistence. 638 tests pass (618+20); compileall 0; PACKAGE_SCAN PASS (26 files); NEW_MODULE_SCAN PASS; independent FI replay matches boundaries. Will fast-forward push to GitHub main from 2d83624. live_trading_allowed=false."
