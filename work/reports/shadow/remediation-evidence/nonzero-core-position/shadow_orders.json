@@ -1,0 +1,20 @@
+[
+  {
+    "symbol": "510300.SH",
+    "side": "WOULD_BUY",
+    "qty": 100,
+    "limit_price": 434.719,
+    "bar_time": "2026-08-12T10:00:00",
+    "decision_kind": "BUY_T",
+    "reason": "BUY_TRIGGERED"
+  },
+  {
+    "symbol": "510300.SH",
+    "side": "WOULD_SELL",
+    "qty": 100,
+    "limit_price": 438.976,
+    "bar_time": "2026-08-12T10:05:00",
+    "decision_kind": "SELL_T",
+    "reason": "EXIT_TRIGGERED"
+  }
+]

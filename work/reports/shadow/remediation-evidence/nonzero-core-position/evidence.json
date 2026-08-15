@@ -1,0 +1,16 @@
+{
+  "class": "OFFLINE_SYNTHETIC_FIXTURES",
+  "scenario": "non-zero-real-core-position",
+  "settlement": {
+    "symbol": "510300.SH",
+    "rule": "T1"
+  },
+  "basis": {
+    "daily": "ADJUSTED",
+    "5m": "RAW"
+  },
+  "same_day_sell_kind": "SELL_T",
+  "same_day_sell_reason": "EXIT_TRIGGERED",
+  "next_day_sell_kind": "NO_ACTION",
+  "next_day_sell_reason": "PRICE_ABOVE_BUY_LEVEL"
+}

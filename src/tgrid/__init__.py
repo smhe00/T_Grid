@@ -55,12 +55,21 @@ from tgrid.reporting import (
     shutdown_logger,
 )
 from tgrid.shadow import (
+    BasisBinding,
     DailyReport,
     ReconciliationRow,
+    SETTLE_T0,
+    SETTLE_T1,
+    SettlementPolicy,
+    SettlementTracker,
+    ShadowDeltaRow,
     ShadowEngine,
     ShadowOrder,
     SignalRecord,
     build_shadow_reports,
+    compute_sellable,
+    fetch_bars,
+    resolve_basis,
 )
 from tgrid.strategy import (
     AccumulateStrategy,
@@ -234,6 +243,15 @@ __all__ = [
     "ShadowOrder",
     "SignalRecord",
     "ReconciliationRow",
+    "ShadowDeltaRow",
     "DailyReport",
     "build_shadow_reports",
+    "BasisBinding",
+    "fetch_bars",
+    "resolve_basis",
+    "SETTLE_T0",
+    "SETTLE_T1",
+    "SettlementPolicy",
+    "SettlementTracker",
+    "compute_sellable",
 ]

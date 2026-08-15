@@ -1,0 +1,16 @@
+{
+  "class": "OFFLINE_SYNTHETIC_FIXTURES",
+  "scenario": "zero-real-position",
+  "settlement": {
+    "symbol": "510300.SH",
+    "rule": "T1"
+  },
+  "basis": {
+    "daily": "ADJUSTED",
+    "5m": "RAW"
+  },
+  "same_day_sell_kind": "SELL_REJECTED",
+  "same_day_sell_reason": "INSUFFICIENT_AVAILABLE_VOLUME",
+  "next_day_sell_kind": "SELL_T",
+  "next_day_sell_reason": "EXIT_TRIGGERED"
+}

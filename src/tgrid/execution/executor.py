@@ -215,6 +215,29 @@ class ExecutionEngine:
             raise ExecutionInputError("limit_price must be a positive number")
         if script is None or not hasattr(script, "__iter__"):
             raise ExecutionInputError("script must be an iterable of steps")
+        # AUD-R1-007: exact-type validation BEFORE any arithmetic/conversion.
+        # ``expected_available_cash`` carries the caller-declared capacity; an
+        # untrusted object must never pass through int()/float() first.  BUY
+        # capacity is a non-negative number; SELL capacity is a plain
+        # non-negative int (quantity).
+        if side == BUY:
+            if (type(expected_available_cash) not in (int, float)
+                    or isinstance(expected_available_cash, bool)
+                    or expected_available_cash < 0):
+                raise ExecutionInputError(
+                    "expected_available_cash must be a non-negative number"
+                )
+            if cash_amount is None or (type(cash_amount) not in (int, float)
+                                       or isinstance(cash_amount, bool)
+                                       or cash_amount < 0):
+                raise ExecutionInputError(
+                    "reserved cash must be a non-negative number"
+                )
+        else:
+            if type(expected_available_cash) is not int or expected_available_cash < 0:
+                raise ExecutionInputError(
+                    "expected_available_qty must be a plain non-negative int"
+                )
 
         # Idempotency (INV-013): never send twice.
         try:
@@ -249,14 +272,16 @@ class ExecutionEngine:
 
         # Reservation conflict gate (design §18.3): the new reservation must fit
         # within the caller-provided capacity net of already-held reservations.
+        # Values are already exact-type validated above (AUD-R1-007); no
+        # int()/float() coercion happens on untrusted input here.
         if side == BUY:
-            if float(expected_available_cash) < 0 or float(cash_amount) > float(expected_available_cash):
+            if cash_amount > expected_available_cash:
                 self._store.release_reservation(booked.reservation.id, released_at=now)
                 raise ReservationConflictError(
                     "reserved cash would exceed the available cash"
                 )
         else:
-            if int(expected_available_cash) < 0 or int(qty) > int(expected_available_cash):
+            if qty > expected_available_cash:
                 self._store.release_reservation(booked.reservation.id, released_at=now)
                 raise ReservationConflictError(
                     "reserved sell qty would exceed the available T quantity"

@@ -4,27 +4,26 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 13
-handoff_id: "AUD-R1-GATE5-REMEDIATION-20260815-013"
-authorized_next:
-  - "AUD-R1-GATE5-REMEDIATION"
+handoff_seq: 14
+handoff_id: "AUD-R1-GATE5-REMEDIATION-DONE-20260815-014"
+authorized_next: ["AUDIT_NODE_A"]
 design_version: "1.1"
 gate: 5
 task_id: "AUD-R1-GATE5-REMEDIATION"
-state: "CHANGES_REQUIRED"
+state: "AUDIT_READY"
 owner: "dsh"
-iteration: 1
-last_actor: "independent_auditor"
-last_update: "2026-08-15T10:03:00+08:00"
+iteration: 2
+last_actor: "dsh"
+last_update: "2026-08-15T11:00:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md"
 git_base_commit: "2f4957b215beec9f6b6e40054cc6a0375198c29d"
-git_head_commit: "2f4957b215beec9f6b6e40054cc6a0375198c29d"
+git_head_commit: "PENDING_PUSH"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_NODE_A_AFTER_GATE5_REMEDIATION"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Independent stage audit retains Gate 2-4 implementation as provisional/self-certified, sets Gate 5 to CHANGES_REQUIRED, and blocks Gate 6/7. DSH is authorized only to execute the Gate-5 remediation in CURRENT_TASK / INDEPENDENT_AUDIT_20260815. Mandatory fixes cover explicit RAW/ADJUSTED basis, settlement/T+1-aware sellability, real-vs-shadow reconciliation semantics, evidence classification, repo/runtime-data sanitation, and control-plane consistency. No real order/cancel path may be invoked; live_trading_allowed=false. After remediation DSH must set AUDIT_READY and STOP for Audit Node A. A later Audit Node B is mandatory after real broker capability implementation and before any real order invocation."
+notes: "AUD-R1-001..007 remediation complete (SELF_CERTIFIED), state AUDIT_READY, awaiting independent audit NODE A. Fixed: explicit RAW/ADJUSTED basis (tgrid.shadow.marketdata), settlement/T+1 sellable model (tgrid.shadow.settlement), real-vs-shadow reconciliation separation, evidence classification (REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT), repo hygiene (_tmp/ + .gitignore + sanitized reports), control-plane consistency (SELF_CERTIFIED labels, Gate 6/7 BLOCKED), ExecutionEngine exact-type hardening (AUD-R1-007 closed). 818 tests OK, compileall 0, src AST scan 46 files 0 hits. Live shadow evidence refresh requires the MiniQMT client to be running (was not running at remediation time); the offline unit evidence is complete. Gate 5.5 NOT AUTHORIZED; no real order/cancel path; live_trading_allowed=false."

@@ -10,6 +10,7 @@ real-QMT wiring is the caller's job (reuse the Gate 1 read-only adapters).
 from tgrid.shadow.engine import (
     DailyReport,
     ReconciliationRow,
+    ShadowDeltaRow,
     ShadowEngine,
     ShadowError,
     ShadowInputError,
@@ -17,14 +18,35 @@ from tgrid.shadow.engine import (
     SignalRecord,
     build_shadow_reports,
 )
+from tgrid.shadow.marketdata import (
+    BasisBinding,
+    fetch_bars,
+    resolve_basis,
+)
+from tgrid.shadow.settlement import (
+    SETTLE_T0,
+    SETTLE_T1,
+    SettlementPolicy,
+    SettlementTracker,
+    compute_sellable,
+)
 
 __all__ = [
     "ShadowEngine",
     "ShadowOrder",
     "SignalRecord",
     "ReconciliationRow",
+    "ShadowDeltaRow",
     "DailyReport",
     "ShadowError",
     "ShadowInputError",
     "build_shadow_reports",
+    "BasisBinding",
+    "fetch_bars",
+    "resolve_basis",
+    "SETTLE_T0",
+    "SETTLE_T1",
+    "SettlementPolicy",
+    "SettlementTracker",
+    "compute_sellable",
 ]

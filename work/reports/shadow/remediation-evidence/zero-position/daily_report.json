@@ -1,0 +1,13 @@
+{
+  "symbol": "510300.SH",
+  "trade_date": "2026-08-13",
+  "anchor": 440.0,
+  "atr_pct": 0.02727272727272727,
+  "grid_g": 0.012,
+  "open_t_lots": 0,
+  "open_t_qty": 0,
+  "realized_t_pnl": 700.0,
+  "shadow_orders": 2,
+  "halted": "NONE",
+  "violations": 1
+}

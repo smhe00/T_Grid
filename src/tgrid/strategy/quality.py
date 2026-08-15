@@ -150,11 +150,19 @@ def check_bar_quality(
                     issues.append(BarQualityIssue.OUT_OF_ORDER_BAR)
                 else:
                     gap_seconds = _iso_seconds(bar.time) - _iso_seconds(previous_bar.time)
-                    # A gap spanning the scheduled lunch break is expected
-                    # (e.g. 11:30 -> 13:00 for A-shares), not missing data.
-                    lunch_padding = _lunch_gap_seconds(previous_bar.time, bar.time, session)
-                    if gap_seconds - lunch_padding > expected_interval_seconds * max_gap_multiple:
-                        issues.append(BarQualityIssue.MISSING)
+                    if bar.time[:10] != previous_bar.time[:10]:
+                        # Overnight boundary: the gap across a trading-day
+                        # boundary is expected (previous session close ->
+                        # next session open), never missing data.
+                        pass
+                    else:
+                        # A gap spanning the scheduled lunch break is expected
+                        # (e.g. 11:30 -> 13:00 for A-shares), not missing data.
+                        lunch_padding = _lunch_gap_seconds(
+                            previous_bar.time, bar.time, session
+                        )
+                        if gap_seconds - lunch_padding > expected_interval_seconds * max_gap_multiple:
+                            issues.append(BarQualityIssue.MISSING)
 
     return tuple(issues)
 
@@ -186,11 +194,30 @@ def _minute_of_day(iso_time: str) -> int:
 
 
 def _iso_seconds(value: str) -> int:
-    """Return whole seconds since an arbitrary epoch for ISO time strings."""
-    day = value[:10].replace("-", "")
-    time_part = value[11:19]
-    hours, minutes, seconds = (int(p) for p in time_part.split(":"))
-    return int(day) * 86400 + hours * 3600 + minutes * 60 + seconds
+    """Return whole seconds since an arbitrary epoch for ISO time strings.
+
+    Uses a true calendar epoch (days-since-1970 computed from the date
+    components), so ``YYYY-MM-DDTHH:MM:SS`` ordering is monotonic across day
+    boundaries — a later calendar day always has more seconds, never less.
+    """
+    year, month, day = (int(p) for p in value[:10].split("-"))
+    hours, minutes, seconds = (int(p) for p in value[11:19].split(":"))
+    days = _days_from_civil(year, month, day)
+    return days * 86400 + hours * 3600 + minutes * 60 + seconds
+
+
+def _days_from_civil(year: int, month: int, day: int) -> int:
+    """Days since 1970-01-01 (proleptic Gregorian, Howard Hinnant's algorithm).
+
+    Pure arithmetic — no datetime dependency — so ISO strings remain the only
+    time input and ordering stays deterministic (design §26.1).
+    """
+    year -= month <= 2
+    era = (year if year >= 0 else year - 399) // 400
+    yoe = year - era * 400
+    doy = (153 * (month + (-3 if month > 2 else 9)) + 2) // 5 + day - 1
+    doe = yoe * 365 + yoe // 4 - yoe // 100 + doy
+    return era * 146097 + doe - 719468
 
 
 class DataQualityGuard:

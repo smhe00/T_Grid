@@ -9,10 +9,15 @@ __pycache__/
 .venv/
 venv/
 
-# Local / secret configuration must never be committed
+# Local / secret configuration must never be committed.  Local runtime files
+# are excluded wherever they are generated, not only under config/ (AUD-R1-005).
 config/config.local.yaml
 config/*.local.yaml
 config/*.local.json
+*.local.json
+*.local.yaml
+*_local.json
+*_local.yaml
 
 # Runtime data, logs, and database artifacts
 data/
@@ -20,6 +25,12 @@ logs/
 *.db
 *.sqlite
 *.sqlite3
+
+# Transient scratch / probe directories (AUD-R1-005)
+_tmp/
+tmp/
+*.tmp
+.pytest_cache/
 
 # Transient dual-agent worktree ownership; never commit a held lease
 work/locks/WORKTREE_LEASE.yaml

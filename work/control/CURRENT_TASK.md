@@ -8,9 +8,28 @@ Self-review is useful evidence but must be labelled `SELF_CERTIFIED`; it is not 
 
 ## Status
 
-`CHANGES_REQUIRED`
+`AUDIT_READY`（修复完成，SELF_CERTIFIED，等待独立审计 NODE A）
 
 Gate 6 and Gate 7 are blocked. `live_trading_allowed=false` remains mandatory.
+
+## Completion Record (SELF_CERTIFIED — 2026-08-15)
+
+All seven findings closed:
+
+1. AUD-R1-001 explicit RAW/ADJUSTED basis — `tgrid.shadow.marketdata` (dividend_type
+   bound to underlying call, basis metadata, fail closed, tests).
+2. AUD-R1-002 settlement/T+1 sellable model — `tgrid.shadow.settlement`
+   (SettlementPolicy/Tracker, same-day lock, next-session release, tests).
+3. AUD-R1-003 real-vs-shadow reconciliation — `reconciliation` vs `shadow_delta`
+   separate reports (AUD-R1-003), no silent reclassification.
+4. AUD-R1-004 evidence classification — `REAL_QMT_HISTORICAL_REPLAY +
+   REAL_BROKER_SNAPSHOT` in `evidence.json` and reports.
+5. AUD-R1-005 repo hygiene — `_tmp/` removed + .gitignore; reports sanitized.
+6. AUD-R1-006 control plane — SELF_CERTIFIED labels; Gate 6/7 BLOCKED.
+7. AUD-R1-007 ExecutionEngine exact-type hardening — closed with tests.
+
+Evidence: 818 tests OK; compileall 0; src AST scan 46 files 0 hits.
+Details: `work/gates/GATE_5/REMEDIATION_REPORT.md`.
 
 ## Source of Requirements
 
