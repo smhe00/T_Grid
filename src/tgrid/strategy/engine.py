@@ -44,7 +44,7 @@ from tgrid.risk.exceptions import (
     SellReservationConflict,
 )
 from tgrid.strategy.bars import Bar, SessionWindow
-from tgrid.strategy.basis_transform import to_raw_domain
+from tgrid.strategy.basis_transform import to_raw_domain, to_raw_domain_factor
 from tgrid.strategy.exceptions import StrategyError, StrategyInputError
 from tgrid.strategy.grid import buy_level, exit_target_price, grid_pct, legalize_price
 from tgrid.strategy.halts import (

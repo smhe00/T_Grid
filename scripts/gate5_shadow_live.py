@@ -1,4 +1,4 @@
-"""Gate 5 shadow-mode live runner (design §40; remediation AUD-R1-001..004).
+"""Gate 5 shadow-mode live runner (design §40; NODEA-R3-001..004).
 
 Connects to the running MiniQMT (read-only, via the Gate 1 runtime bridge),
 downloads history data with an EXPLICIT RAW/ADJUSTED basis, feeds REAL daily +
@@ -15,7 +15,22 @@ It NEVER sends an order: execution is SHADOW (INV-009, ``live_trading_allowed``
 is never touched).  Run with the repo venv that has xtquant:
 
     python scripts/gate5_shadow_live.py --config config/gate1_qmt.local.json \
-        --out work/reports/shadow/2026-08-14 --date 2026-08-14 --run-days 10
+        --strategy-config config/strategy.local.yaml \
+        --out work/reports/shadow/2026-08-14 --date 2026-08-14 --run-days 10 \
+        --factor-map config/factors.local.json
+
+Fail-closed requirements (NODEA-R3-001..003):
+
+* the strategy config must be a trusted local file, NOT config.example.yaml;
+  the requested symbol must exist in it;
+* settlement must be explicit in that config or via --settlement; no
+  suffix-based default for an executable run;
+* the same-day ADJUSTED->RAW factor must come from a trusted per-day source
+  (--factor-map or an XtQuant dividend-factor adapter); no 1.0 default;
+* session hours must come from an explicit market policy; only the validated
+  A-share session is supported in this runner;
+* real reconciliation decomposition (Core/Strategic/OpenT) is loaded from
+  trusted local state; a missing component is UNKNOWN, never guessed zero.
 """
 
 from __future__ import annotations
@@ -31,7 +46,11 @@ from tgrid.shadow import (
     build_shadow_reports,
     fetch_bars,
 )
-from tgrid.shadow.settlement import SETTLE_T1, SettlementPolicy
+from tgrid.shadow.daily_factor import (
+    PROVENANCE_LOCAL_MAP,
+    DailyFactorRegistry,
+)
+from tgrid.shadow.settlement import SettlementPolicy
 from tgrid.strategy.bars import SessionWindow
 from tgrid.strategy.engine import AccumulateStrategy
 
@@ -44,46 +63,97 @@ EVIDENCE_CLASS = "REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT"
 DIVIDEND_DAILY = "front"
 DIVIDEND_M5 = "none"
 
+# Only the validated A-share session is supported (NODEA-R3-002): 09:30-11:30,
+# 13:00-15:00, lunch 11:30-13:00.  HK session policy is not implemented; the
+# runner rejects non-SH/SZ symbols rather than applying the wrong session.
+A_SHARE_SESSION = SessionWindow(570, 900, lunch_start=690, lunch_end=780)
+SUPPORTED_MARKETS = ("SH", "SZ")
 
-def _load_symbol_and_global(config_path: str, code: str):
+
+def _load_strategy_config(config_path: str, code: str):
+    """Load the TRUSTED strategy config; symbol must exist (NODEA-R3-002).
+
+    ``config.example.yaml`` is never used as runtime strategy state.
+    """
     from tgrid.config import load_config
 
     root = load_config(config_path)
     symbol_cfg = root.symbols.get(code)
     if symbol_cfg is None:
-        # NODEA-003: an unknown/unconfigured symbol must FAIL CLOSED in the
-        # real-QMT runner.  A synthetic permissive SymbolConfig would let the
-        # engine trade a symbol with no trusted parameters; that is forbidden.
         raise SystemExit(
-            f"[fail-closed] symbol {code!r} is not configured; refusing to "
-            "run the real-QMT shadow strategy without trusted per-symbol "
-            "parameters"
+            f"[fail-closed] symbol {code!r} is not configured in trusted "
+            f"strategy config {config_path}; refusing to run"
         )
     return symbol_cfg, root.global_config
 
 
-def _settlement_rule_for(code: str) -> str:
-    """Explicit settlement rule per symbol (AUD-R1-002, NODEA-003).
+def _load_factor_registry(factor_map_path: str, code: str, trading_days) -> DailyFactorRegistry:
+    """Load the trusted per-day factor map (NODEA-R3-001).
 
-    A-share (SH/SZ equities and A-share ETFs) settle T+1; HK same-day.  The
-    rule must be explicit per symbol; an unknown/unsupported pattern fails
-    closed in SettlementPolicy rather than guessing.  The runner prefers an
-    explicit ``--settlement`` argument; this default is only a documented
-    mapping and is validated by SettlementPolicy before any strategy run.
+    The map keys are ``"SYMBOL|YYYY-MM-DD"``; every replay day must have an
+    entry, otherwise the runner fails closed (no 1.0 default).
     """
-    if code.endswith(".HK"):
-        return "T0"
-    if code.endswith((".SH", ".SZ")):
-        return SETTLE_T1
-    raise SystemExit(
-        f"[fail-closed] no explicit settlement rule for {code!r}; pass "
-        "--settlement T0|T1"
-    )
+    path = Path(factor_map_path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"[fail-closed] cannot read factor map {path}: {exc}") from None
+    if not isinstance(raw, dict):
+        raise SystemExit("[fail-closed] factor map must be a JSON object")
+    factors = {}
+    for key, value in raw.items():
+        if not isinstance(key, str) or "|" not in key:
+            raise SystemExit(f"[fail-closed] invalid factor key {key!r}")
+        symbol, trade_date = key.split("|", 1)
+        factors[(symbol, trade_date)] = value
+    registry = DailyFactorRegistry(factors, provenance=PROVENANCE_LOCAL_MAP)
+    # Every replay day must have a trusted factor.
+    for day in trading_days:
+        registry.factor_for(code, day)  # raises (fail closed) if missing
+    return registry
+
+
+def _load_reconciliation_state(state_path: str, code: str) -> dict:
+    """Load trusted local decomposition for real reconciliation (NODEA-R3-003).
+
+    Returns {"core_qty": int, "strategic_extra": int, "open_t_position": int}.
+    A missing file fails closed; each component must be present (an unknown
+    component is NOT treated as zero).
+    """
+    path = Path(state_path)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(
+            f"[fail-closed] cannot read reconciliation state {path}: {exc}"
+        ) from None
+    entry = raw.get(code)
+    if not isinstance(entry, dict):
+        raise SystemExit(
+            f"[fail-closed] no reconciliation state for {code!r}"
+        )
+    for field in ("core_qty", "strategic_extra", "open_t_position"):
+        if field not in entry or type(entry[field]) is not int or entry[field] < 0:
+            raise SystemExit(
+                f"[fail-closed] reconciliation state for {code!r} is missing "
+                f"non-negative int {field!r}"
+            )
+    return {
+        "core_qty": entry["core_qty"],
+        "strategic_extra": entry["strategic_extra"],
+        "open_t_position": entry["open_t_position"],
+    }
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Gate 5 shadow-mode live runner")
     parser.add_argument("--config", required=True, help="gate1_qmt.local.json path")
+    parser.add_argument("--strategy-config", required=True,
+                        help="trusted strategy YAML config (never config.example.yaml)")
+    parser.add_argument("--factor-map", required=True,
+                        help="trusted per-day ADJUSTED->RAW factor JSON map")
+    parser.add_argument("--reconciliation-state", required=True,
+                        help="trusted local Core/Strategic/OpenT JSON state")
     parser.add_argument("--out", required=True, help="output directory for the reports")
     parser.add_argument("--date", required=True, help="last trade date YYYY-MM-DD")
     parser.add_argument("--days", type=int, default=30, help="daily history window (anchor/ATR)")
@@ -91,10 +161,7 @@ def main(argv=None) -> int:
     parser.add_argument("--run-days", type=int, default=1,
                         help="number of consecutive trading days to shadow (design 40: >= 5)")
     parser.add_argument("--settlement", default=None,
-                        help="explicit settlement rule T0/T1 (default per symbol)")
-    parser.add_argument("--adjusted-to-raw-factor", type=float, default=1.0,
-                        help="same-day ADJUSTED->RAW factor for the daily "
-                             "indicator basis (NODEA-001); must be > 0")
+                        help="explicit settlement rule T0/T1 (required unless in strategy config)")
     args = parser.parse_args(argv)
 
     from tgrid.integrations.qmt_gate1_runtime import (
@@ -119,7 +186,23 @@ def main(argv=None) -> int:
         qmt_path=runtime.qmt_path,
     )
     code = args.code or gate1.stock_code
-    settlement_rule = args.settlement or _settlement_rule_for(code)
+
+    # NODEA-R3-002: market restriction + explicit settlement, no suffix guess.
+    if not code.endswith(SUPPORTED_MARKETS):
+        raise SystemExit(
+            f"[fail-closed] runner supports only {SUPPORTED_MARKETS}; "
+            f"got {code!r}. HK session policy is not implemented."
+        )
+    symbol_cfg, global_cfg = _load_strategy_config(args.strategy_config, code)
+    if args.settlement is not None:
+        settlement_rule = args.settlement
+    else:
+        settlement_rule = getattr(symbol_cfg, "settlement_rule", None)
+        if settlement_rule is None:
+            raise SystemExit(
+                f"[fail-closed] no explicit settlement rule for {code!r}; "
+                "pass --settlement T0|T1"
+            )
     settlement = SettlementPolicy(symbol=code, rule=settlement_rule)
 
     # 1. Real market data with explicit basis (AUD-R1-001).
@@ -167,44 +250,39 @@ def main(argv=None) -> int:
             can_use = int(getattr(pos, "can_use_volume", 0) or 0)
     cash = float(getattr(asset, "cash", 0.0) or 0.0)
     bridge.stop()
-    # Do NOT print real account values to the report stream (AUD-R1-005); the
-    # console may print only counts, and reports must be sanitized.
     print(f"[shadow] real broker: {code} held={held} can_use={can_use}")
 
-    # 3. Strategy + shadow engine (pure offline, fed with real bars).
-    example_config = str(Path(args.config).parent / "config.example.yaml")
-    symbol_cfg, global_cfg = _load_symbol_and_global(example_config, code)
-    # A-share session: 09:30-11:30, 13:00-15:00 (lunch 11:30-13:00).
+    # 3. Trusted reconciliation decomposition (NODEA-R3-003): loaded from an
+    #    explicit local state file, never inferred from the broker residual.
+    rec_state = _load_reconciliation_state(args.reconciliation_state, code)
+
+    # 4. Strategy + shadow engine (pure offline, fed with real bars).
     strategy = AccumulateStrategy(
-        symbol_cfg, global_cfg,
-        session_window=SessionWindow(570, 900, lunch_start=690, lunch_end=780),
+        symbol_cfg, global_cfg, session_window=A_SHARE_SESSION,
     )
     shadow = ShadowEngine(
         strategy, symbol=code, settlement_policy=settlement,
-        core_qty=symbol_cfg.core_qty,
+        core_qty=rec_state["core_qty"],
     )
-    shadow.begin_day(daily, trade_date=args.date)
 
-    # 4. Feed 5m bars day by day (design §9: the anchor is frozen per trading
-    #    day, never across days).  The strategy sees the REAL broker position
-    #    plus the settlement-released shadow sellable (AUD-R1-002/-003); the
-    #    hypothetical shadow position is tracked separately and reported as
-    #    ``shadow_delta``, never mixed into the real reconciliation.
+    # 5. Feed 5m bars day by day (design §9: the anchor is frozen per trading
+    #    day, never across days).  Trading days must advance monotonically
+    #    (NODEA-R3-001: no backwards session transition from a pre-loop seed).
     by_day: dict = defaultdict(list)
     for bar in m5:
         by_day[bar.time[:10]].append(bar)
     trading_days = sorted(by_day)
     if args.run_days > 1:
         trading_days = trading_days[-args.run_days:]
+    factor_registry = _load_factor_registry(args.factor_map, code, trading_days)
+
     for index, day in enumerate(trading_days, start=1):
         day_bars = daily[: len(daily) - (len(trading_days) - index)]
-        # NODEA-001: the daily indicator history is ADJUSTED; the same-day
-        # ADJUSTED->RAW factor is explicit (default 1.0 when no corporate
-        # action applies).  The engine converts price-like basis fields to the
-        # RAW trading domain before any comparison with RAW 5m closes.
+        # NODEA-R3-001: trusted per-day factor; fail closed if absent.
+        factor = factor_registry.factor_for(code, day)
         shadow.begin_day(
             day_bars, trade_date=day,
-            adjusted_to_raw_factor=args.adjusted_to_raw_factor,
+            adjusted_to_raw_factor=factor,
             daily_price_basis=daily_binding.price_basis,
         )
         for bar in by_day[day]:
@@ -212,18 +290,18 @@ def main(argv=None) -> int:
                 bar,
                 broker_position=held,
                 can_use_qty=can_use,
-                strategic_extra=0,
+                strategic_extra=rec_state["strategic_extra"],
                 available_cash=cash,
                 assume_fill_price=bar.close,
                 trade_date=day,
             )
 
-    # 5. Four deliverables + shadow delta + evidence classification.
+    # 6. Four deliverables + shadow delta + evidence classification.
     reports = build_shadow_reports(
         shadow, trade_date=args.date,
         broker_positions={code: held},
-        strategic_extras={code: 0},
-        open_t_positions={code: 0},
+        strategic_extras={code: rec_state["strategic_extra"]},
+        open_t_positions={code: rec_state["open_t_position"]},
     )
     reports["evidence"] = {
         "class": EVIDENCE_CLASS,
@@ -233,7 +311,13 @@ def main(argv=None) -> int:
             "5m": {"dividend_type": DIVIDEND_M5,
                    "price_basis": m5_binding.price_basis},
         },
+        "factor_registry": factor_registry.sanitized_summary(),
         "settlement": {"symbol": settlement.symbol, "rule": settlement.rule},
+        "reconciliation_source": {
+            "core_qty_present": True,
+            "strategic_extra_present": True,
+            "open_t_position_present": True,
+        },
         "run_days": len(trading_days),
     }
     out = Path(args.out)

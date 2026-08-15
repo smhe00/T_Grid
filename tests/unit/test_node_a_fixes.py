@@ -138,12 +138,12 @@ class TestNodeA002SettlementCarryForward(unittest.TestCase):
 
 class TestNodeA003FailClosed(unittest.TestCase):
     def test_unknown_symbol_fails_closed(self):
-        # SettlementPolicy accepts any non-empty symbol string; the REAL-QMT
-        # runner layer is where an unconfigured/unknown symbol must fail
-        # closed (NODEA-003).  The runner's _load_symbol_and_global raises
-        # SystemExit when the symbol is absent from the config; verify via the
-        # helper that an unclassifiable market suffix is rejected.
+        # The REAL-QMT runner fails closed when the symbol is absent from the
+        # trusted strategy config (NODEA-R3-002): _load_strategy_config raises
+        # SystemExit.  A real (existing) config without the symbol triggers it.
         import importlib.util
+        import os
+        import tempfile
 
         spec = importlib.util.spec_from_file_location(
             "gate5_shadow_live", "scripts/gate5_shadow_live.py"
@@ -153,8 +153,27 @@ class TestNodeA003FailClosed(unittest.TestCase):
             spec.loader.exec_module(module)
         except SystemExit:
             pass  # module-level guard: main() must not run on import
-        with self.assertRaises(SystemExit):
-            module._settlement_rule_for("999999.XX")
+
+        cfg_text = (
+            "global:\n"
+            "  live_trading: false\n  database: data/tgrid.db\n  log_dir: logs\n"
+            "  bar_period: 5m\n  order_timeout_seconds: 120\n"
+            "  skip_open_minutes: 15\n  skip_close_minutes: 15\n"
+            "  volatility_halt_atr: 2.5\n  minimum_cash_buffer: 0.0\n"
+            "symbols:\n  000333.SZ:\n"
+            "    enabled: true\n    mode: ACCUMULATE\n    core_qty: 0\n"
+            "    target_qty: 5300\n    t_unit: 100\n    lot_size: 100\n"
+            "    price_tick: 0.01\n    max_t_lots: 2\n    max_t_capital: 150000.0\n"
+            "    anchor: VWAP20\n    atr_period: 14\n    atr_k: 1.2\n"
+            "    min_grid: 0.035\n    max_grid: 0.070\n    exit_multiple: 1.15\n"
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg_path = os.path.join(tmp, "strategy.yaml")
+            with open(cfg_path, "w", encoding="utf-8") as handle:
+                handle.write(cfg_text)
+            # Symbol absent from the trusted config -> fail closed.
+            with self.assertRaises(SystemExit):
+                module._load_strategy_config(cfg_path, "510300.SH")
 
     def test_unknown_settlement_rule_fails_closed(self):
         from tgrid.shadow.settlement import SettlementPolicy
@@ -162,8 +181,9 @@ class TestNodeA003FailClosed(unittest.TestCase):
         with self.assertRaises(ShadowInputError):
             SettlementPolicy(symbol="510300.SH", rule="T3")
 
-    def test_runner_settlement_default_unknown_market(self):
-        # _settlement_rule_for raises SystemExit for an unclassifiable symbol.
+    def test_runner_market_restriction(self):
+        # Only SH/SZ markets are supported by this runner (NODEA-R3-002);
+        # HK would require a session policy that is not implemented.
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
@@ -174,8 +194,8 @@ class TestNodeA003FailClosed(unittest.TestCase):
             spec.loader.exec_module(module)
         except SystemExit:
             pass  # module-level guard: main() must not run on import
-        with self.assertRaises(SystemExit):
-            module._settlement_rule_for("999999.XX")
+        self.assertEqual(module.SUPPORTED_MARKETS, ("SH", "SZ"))
+        self.assertTrue("0700.HK".endswith(module.SUPPORTED_MARKETS) is False)
 
 
 class TestNodeA004NoResidualInference(unittest.TestCase):

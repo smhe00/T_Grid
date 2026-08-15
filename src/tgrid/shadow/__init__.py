@@ -30,6 +30,11 @@ from tgrid.shadow.settlement import (
     SettlementTracker,
     compute_sellable,
 )
+from tgrid.shadow.daily_factor import (
+    PROVENANCE_LOCAL_MAP,
+    PROVENANCE_XTQUANT,
+    DailyFactorRegistry,
+)
 
 __all__ = [
     "ShadowEngine",
@@ -49,4 +54,7 @@ __all__ = [
     "SettlementPolicy",
     "SettlementTracker",
     "compute_sellable",
+    "PROVENANCE_LOCAL_MAP",
+    "PROVENANCE_XTQUANT",
+    "DailyFactorRegistry",
 ]

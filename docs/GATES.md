@@ -5,9 +5,10 @@
 > 调整为 `CHANGES_REQUIRED`，Gate 6/7 在后续独立审计前保持 `BLOCKED`。详细要求见
 > `work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md`。
 >
-> **2026-08-15 NODEA Iteration 3 修复后状态：** Gate 5 修复（AUD-R1-001..007 +
-> NODEA-001..006）已完成并自证（`SELF_CERTIFIED`），状态置 `AUDIT_READY`，等待
-> 独立审计 NODE A 复审。NODEA 修复证据见 `work/gates/GATE_5/NODEA_FIX_REPORT.md`。
+> **2026-08-15 NODEA-R3（Iteration 4）修复后状态：** Gate 5 修复（AUD-R1-001..007 +
+> NODEA-001..006 + NODEA-R3-001..004）已完成并自证（`SELF_CERTIFIED`），状态置
+> `AUDIT_READY`，等待独立审计 NODE A 复审。NODEA-R3 修复证据见
+> `work/gates/GATE_5/NODEA_R3_FIX_REPORT.md`。
 
 | Gate | 内容 | 当前状态 | 说明 / 验收证据 |
 |------|------|----------|-----------------|
@@ -16,7 +17,7 @@
 | G2 | Position + Ledger + Reconciliation | **PROVISIONAL / SELF_CERTIFIED** | G2-T005 已有独立历史验收；G2-T006 与汇总 Gate 2 由 DSH self-certify，保留实现，后续抽审 |
 | G3 | 策略算法离线模拟 | **PROVISIONAL / SELF_CERTIFIED** | 保留现有实现与测试；等待周期性独立抽审 |
 | G4 | Execution Dry Run：OrderIntent/Reservation、SimBroker、Executor、恢复 | **PROVISIONAL / SELF_CERTIFIED** | 架构方向保留；AUD-R1-007 exact-type hardening 已在本次修复关闭 |
-| G5 | Shadow 模式：REAL market/broker query + WOULD orders | **AUDIT_READY**（NODEA 修复后） | NODEA 修复证据 `work/gates/GATE_5/NODEA_FIX_REPORT.md`；审计 `work/gates/GATE_5/NODE_A_REVIEW_20260815.md` |
+| G5 | Shadow 模式：REAL market/broker query + WOULD orders | **AUDIT_READY**（NODEA-R3 修复后） | NODEA-R3 证据 `work/gates/GATE_5/NODEA_R3_FIX_REPORT.md`；审计 `work/gates/GATE_5/NODE_A_REVIEW_ITER3_20260815.md` |
 | G5.5 | Real Broker Adapter / pre-live capability | **NOT AUTHORIZED / BLOCKED** | 仅 Gate 5 Audit Node A 独立 PASS 后另行授权；实现完成后必须 Audit Node B |
 | G6 | 极小真实资金验证 | **BLOCKED** | Audit Node B 独立 PASS + 用户显式授权前禁止开始 |
 | G7 | V1 正式运行 | **BLOCKED** | Gate 6 完成并独立通过前禁止开始 |
@@ -24,7 +25,7 @@
 ## 当前测试证据（SELF_CERTIFIED）
 
 ```text
-python -m unittest discover -s tests -p "test_*.py"   # 832 tests OK
+python -m unittest discover -s tests -p "test_*.py"   # 840 tests OK
 python -m compileall -q src tests                      # exit 0
 src AST 扫描（assert / order_stock / cancel_order_stock / xtquant import）: 0 命中
 ```

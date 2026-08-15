@@ -56,7 +56,10 @@ from tgrid.reporting import (
 )
 from tgrid.shadow import (
     BasisBinding,
+    DailyFactorRegistry,
     DailyReport,
+    PROVENANCE_LOCAL_MAP,
+    PROVENANCE_XTQUANT,
     ReconciliationRow,
     SETTLE_T0,
     SETTLE_T1,
@@ -254,4 +257,7 @@ __all__ = [
     "SettlementPolicy",
     "SettlementTracker",
     "compute_sellable",
+    "DailyFactorRegistry",
+    "PROVENANCE_LOCAL_MAP",
+    "PROVENANCE_XTQUANT",
 ]

@@ -8,7 +8,28 @@ Self-review must be labelled `SELF_CERTIFIED`; it is not an independent Gate ver
 
 ## Status
 
-`CHANGES_REQUIRED`
+`AUDIT_READY`（Iteration 4 fixes complete, SELF_CERTIFIED, awaiting independent Node-A re-review）
+
+## Completion Record (SELF_CERTIFIED — 2026-08-15)
+
+1. NODEA-R3-001: trusted per-day ADJUSTED->RAW factor registry
+   (`tgrid.shadow.daily_factor.DailyFactorRegistry`, no 1.0 default, missing
+   day fail-closed); runner uses per-day factors, removes the pre-loop
+   `begin_day` seed, days advance monotonically; strategy-level 2:1 split
+   invariance tests prove BUY/no-buy/volatility-halt decisions are identical
+   across RAW and ADJUSTED scales.
+2. NODEA-R3-002: runner requires `--strategy-config` (trusted; never
+   `config.example.yaml`), symbol must be configured, settlement explicit
+   (`--settlement` or config; no suffix default), market restricted to SH/SZ
+   (HK session policy not implemented -> fail closed).
+3. NODEA-R3-003: real reconciliation loads Core/Strategic/OpenT from
+   `--reconciliation-state` trusted JSON; unknown component fails closed,
+   never silently zero.
+4. NODEA-R3-004: canonical metadata unified to **840 tests OK**; real commit
+   SHA recorded post-push; evidence wording `REAL_QMT_REPLAY_VERIFIED`.
+
+Evidence: 840 tests OK; compileall 0; src AST scan 0 hits;
+`work/gates/GATE_5/NODEA_R3_FIX_REPORT.md`.
 
 Gate 5.5 / Gate 6 / Gate 7 are blocked. `live_trading_allowed=false` remains mandatory.
 

@@ -5,26 +5,25 @@ remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
 handoff_seq: 17
-handoff_id: "AUD-NODEA-GATE5-FIX-ITER4-20260815-017"
-authorized_next:
-  - "AUD-NODEA-GATE5-FIX"
+handoff_id: "AUD-NODEA-R3-GATE5-FIX-DONE-20260815-017"
+authorized_next: ["AUDIT_NODE_A_REVIEW"]
 design_version: "1.1"
 gate: 5
 task_id: "AUD-NODEA-GATE5-FIX"
-state: "CHANGES_REQUIRED"
+state: "AUDIT_READY"
 owner: "dsh"
 iteration: 4
-last_actor: "independent_auditor"
-last_update: "2026-08-15T11:17:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-15T12:00:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5/NODE_A_REVIEW_ITER3_20260815.md"
 git_base_commit: "03d392341d0c558c5a2461637e6ac5cade6645ed"
-git_head_commit: "03d392341d0c558c5a2461637e6ac5cade6645ed"
+git_head_commit: "PENDING_PUSH_AFTER_ITER4"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_NODE_A_AFTER_ITERATION_4_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Audit Node A re-review of DSH Iteration 3 remains CHANGES_REQUIRED. Independently accepted: settlement carry-forward, tracked _tmp removal, BasisBinding metadata consistency, reconciliation-vs-shadow structural separation, no-live-order boundary. Remaining fixes: trusted per-day ADJUSTED->RAW factor provenance (no scalar 1.0 default, strategy-level discontinuity FI, monotonic replay sessions); trusted runtime strategy config plus explicit settlement/session policy (no config.example runtime state or suffix authorization); trusted local reconciliation decomposition and sanitized non-zero REAL_QMT summary or explicit BLOCKED; canonical test/commit/evidence metadata consistency. Gate 5.5/6/7 remain blocked; live_trading_allowed=false."
+notes: "NODEA-R3-001..004 fixed (SELF_CERTIFIED), state AUDIT_READY, awaiting independent Node-A re-review (Iteration 4). R3-001: trusted per-day ADJUSTED->RAW factor registry (tgrid.shadow.daily_factor, no 1.0 default, missing day fail-closed); strategy-level 2:1 split invariance tests (BUY/no-buy/halt identical across RAW and ADJUSTED scales); pre-loop begin_day seed removed; runner days advance monotonically. R3-002: runner requires --strategy-config (trusted, never config.example.yaml), symbol must be configured, settlement explicit (--settlement or config), market restricted to SH/SZ (HK session policy not implemented). R3-003: real reconciliation loads Core/Strategic/OpenT from --reconciliation-state trusted JSON; unknown component fails closed, never zero. R3-004: canonical metadata unified to 840 tests OK; real commit SHA recorded post-push; REAL_QMT_REPLAY_VERIFIED wording. Gate 5.5/6/7 BLOCKED; live_trading_allowed=false; no real order/cancel capability."
