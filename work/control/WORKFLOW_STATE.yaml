@@ -4,30 +4,29 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 25
-handoff_id: "NODEB-RR6-REMEDIATION-DONE-20260815-025"
-authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
+handoff_seq: 26
+handoff_id: "NODEB-PASS-PRELIVE-20260815-026"
+authorized_next: []
 design_version: "1.1"
 gate: 5.5
-task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
-state: "AUDIT_READY_PRELIVE"
-owner: "dsh"
+task_id: "AWAIT-EXPLICIT-USER-AUTHORIZATION-FOR-GATE6"
+state: "PASS_PRELIVE"
+owner: "user"
 iteration: 7
-last_actor: "dsh"
-last_update: "2026-08-15T16:40:00+08:00"
+last_actor: "independent_auditor"
+last_update: "2026-08-15T20:55:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER6_20260815.md"
-git_base_commit: "9b664d8c0ad29e29cc770f5481eba89d70d52eb4"
-implementation_commit: "8d51a471a9ae60338153b4d020b5d034c0f3d384"
-handoff_parent_commit: "9b664d8c0ad29e29cc770f5481eba89d70d52eb4"
-handoff_metadata_parent: "8d51a471a9ae60338153b4d020b5d034c0f3d384"
+audit_file: "work/gates/GATE_5_5/NODE_B_FINAL_PASS_PRELIVE_20260815.md"
+audit_base_commit: "085ed48fc641cdad085a23ca983aa312b29b144f"
+reviewed_implementation_commit: "8d51a471a9ae60338153b4d020b5d034c0f3d384"
+previous_independent_audit_commit: "9b664d8c0ad29e29cc770f5481eba89d70d52eb4"
 reference_repository: "https://github.com/smhe00/reverse_repo"
 reference_commit: "c9ecc701d9b1c47d6a8d03539b482368741204a3"
 live_trading_allowed: false
-user_escalation_required: false
-user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Node B Iteration-6 audit 9b664d8 = CHANGES_REQUIRED (NODEB-RR6-001..003). Iteration 7 remediation complete (SELF_CERTIFIED): RR6-001 no engine-reachable API accepts caller-supplied reconciliation results as authority — ExecutionEngine.reconcile_and_clear_safe_mode() executes authoritative reconcile_open_intents itself using engine store+broker (fabricated MATCHED objects cannot clear; unresolved/UNKNOWN fail-closed, reservations preserved); recovery no longer double-reports remark-matched broker orders as UNMATCHED (matched broker order ids tracked); RR6-002 bridge persists exact SECURITY_ACCOUNT + ACCOUNT_STATUS_OK resolved from the production session (no unverified default; build_live_session passes resolved constants through build_live_stack), _verify_bound_account_healthy requires id+type+status exact match with FI (wrong type / abnormal status / non-default constants success / unbound constants fail); RR6-003 git_head_commit removed as self-referential; non-self-referential fields: implementation_commit, handoff_parent_commit, handoff_metadata_parent with exact GitHub SHAs. 95x tests OK (final count in report); compileall 0; capability scan PASS. No real order/cancel invoked. State AUDIT_READY_PRELIVE, awaiting independent Audit Node B re-review; Gate 6/7 BLOCKED; live_trading_allowed=false."
+user_escalation_required: true
+user_escalation_reason: "Gate 6 first-real-order validation requires explicit user authorization after Node B PASS_PRELIVE. The shorthand 'f' is fetch/audit only and never authorizes real trading."
+next_independent_audit: ""
+pre_live_independent_audit: "PASS_PRELIVE"
+notes: "Independent Audit Node B PASS_PRELIVE on 2026-08-15 for implementation 8d51a471a9ae60338153b4d020b5d034c0f3d384 against pinned reverse_repo c9ecc701d9b1c47d6a8d03539b482368741204a3. RR6-001 authoritative SAFE_MODE reconciliation PASS; RR6-002 exact SECURITY_ACCOUNT + ACCOUNT_STATUS_OK reconnect binding PASS; RR6-003 non-self-referential metadata PASS. All prior frozen Node-B items remain accepted. Gate 6/7 remain BLOCKED and live_trading_allowed=false until explicit user authorization; no DSH implementation action is currently authorized."
