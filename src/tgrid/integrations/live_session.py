@@ -313,6 +313,8 @@ def build_live_session(
         runtime_confirmation_token=runtime_confirmation_token,
         strategy_name=strategy_name, order_timeout_seconds=timeout,
         config_live_enabled=global_cfg.live_trading,
+        security_account_type=int(security_type),
+        account_status_ok=int(status_ok),
     )
     # attach the opened connection so the caller can close it after teardown
     stack._db_conn = conn  # test/internal convenience only

@@ -101,17 +101,17 @@ class LiveStack:
     def reconcile_and_resume(self, *, token: str, session_date: str | None = None) -> None:
         """Reconciliation-driven SAFE_MODE release (RR-003 / RR4-002 / RR5-002).
 
-        The ONLY production SAFE_MODE release path.  It executes authoritative
-        broker/local reconciliation itself, then invokes the engine's internal
-        state transition — no public caller-supplied proof API exists.
+        The ONLY production SAFE_MODE release path.  The engine itself executes
+        the authoritative broker/local reconciliation — no public caller-
+        supplied proof API exists and a fabricated result cannot clear
+        SAFE_MODE (NODEB-RR6-001).
         """
         if session_date is not None:
             self.adapter.roll_day(session_date, session_date=session_date)
         self.adapter.reconstruct_daily_exposure(
             intents=self.engine.store.list_intents()
         )
-        results = reconcile_open_intents(self.engine.store, self.adapter)
-        self.engine._clear_safe_mode_after_reconciliation(results)
+        self.engine.reconcile_and_clear_safe_mode()
         self.adapter.confirm_runtime(token)
 
     def recover_after_disconnect(
@@ -155,9 +155,8 @@ class LiveStack:
             intents=self.engine.store.list_intents()
         )
         # 5) Authoritative broker/local reconciliation; unresolved intents
-        #    keep execution blocked.
-        results = reconcile_open_intents(self.engine.store, self.adapter)
-        self.engine._clear_safe_mode_after_reconciliation(results)
+        #    keep execution blocked.  The engine executes it itself (RR6-001).
+        self.engine.reconcile_and_clear_safe_mode()
         # 6) Explicit runtime reconfirmation.
         self.adapter.confirm_runtime(token)
         # 7) Only now clear the disconnect latch.
@@ -177,6 +176,8 @@ def build_live_stack(
     strategy_name: str = "TGRID",
     order_timeout_seconds: int = 120,
     config_live_enabled: bool = False,
+    security_account_type: int | None = None,
+    account_status_ok: int | None = None,
 ) -> LiveStack:
     """Assemble the live stack in the audited order (fake/real trader both ok).
 
@@ -184,9 +185,15 @@ def build_live_stack(
     in production wiring); the stack NEVER invokes a real order/cancel itself.
     ``config_live_enabled`` is the trusted runtime-config live flag; it
     defaults **false** and is applied via the adapter's trusted config path.
+    ``security_account_type`` / ``account_status_ok`` are the exact XtQuant
+    constants resolved during production session construction; they are
+    persisted into the bridge for reconnect account-health verification
+    (NODEB-RR6-002).
     """
     bridge = XtQuantBrokerBridge(
         trader, account, strategy_name=strategy_name, event_sink=event_queue,
+        security_account_type=security_account_type,
+        account_status_ok=account_status_ok,
     )
     adapter = LiveBrokerAdapter(
         broker=bridge, policy=policy,

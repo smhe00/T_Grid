@@ -350,6 +350,54 @@ class TestStrictQuery(unittest.TestCase):
         self.assertEqual(seen, [int(oid)])
 
 
+class TestAccountHealthVerification(unittest.TestCase):
+    """NODEB-RR6-002: reconnect must verify id + type + status exactly."""
+
+    def _bridge(self, *, security=1, status_ok=1, account_id="fake-account"):
+        trader = _FakeTrader()
+        bridge = XtQuantBrokerBridge(
+            trader, _FakeAccount(), event_sink=_Sink(),
+            security_account_type=security, account_status_ok=status_ok,
+        )
+        return trader, bridge
+
+    def _status(self, account_id="fake-account", account_type=1, status=1):
+        return type("S", (), {
+            "account_id": account_id, "account_type": account_type, "status": status,
+        })()
+
+    def test_success_with_non_default_constants(self):
+        # Correct id + type + status with NON-DEFAULT injected constants.
+        trader, bridge = self._bridge(security=23, status_ok=7)
+        trader.query_account_status = lambda: [self._status(account_type=23, status=7)]
+        bridge._verify_bound_account_healthy()  # must not raise
+
+    def test_wrong_account_type_fails(self):
+        trader, bridge = self._bridge(security=23, status_ok=7)
+        trader.query_account_status = lambda: [self._status(account_type=1, status=7)]
+        with self.assertRaises(Exception):
+            bridge._verify_bound_account_healthy()
+
+    def test_abnormal_status_fails(self):
+        trader, bridge = self._bridge(security=23, status_ok=7)
+        trader.query_account_status = lambda: [self._status(account_type=23, status=2)]
+        with self.assertRaises(Exception):
+            bridge._verify_bound_account_healthy()
+
+    def test_unbound_constants_fail_closed(self):
+        # No unverified default: constants must come from the session.
+        trader, bridge = self._bridge(security=None, status_ok=None)
+        trader.query_account_status = lambda: [self._status()]
+        with self.assertRaises(Exception):
+            bridge._verify_bound_account_healthy()
+
+    def test_missing_account_fails(self):
+        trader, bridge = self._bridge(security=23, status_ok=7)
+        trader.query_account_status = lambda: []
+        with self.assertRaises(Exception):
+            bridge._verify_bound_account_healthy()
+
+
 class TestCallbackIsolation(unittest.TestCase):
     """NODEB-004 / I2-003: concrete handler only enqueues immutable events."""
 

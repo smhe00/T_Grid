@@ -291,7 +291,8 @@ class XtQuantBrokerBridge(BrokerPort):
         *,
         strategy_name: str = "TGRID",
         event_sink: object | None = None,
-        account_status_ok: int = 1,
+        security_account_type: int | None = None,
+        account_status_ok: int | None = None,
     ) -> None:
         if type(strategy_name) is not str or strategy_name == "":
             raise BrokerError("strategy_name must be a non-empty string")
@@ -299,7 +300,11 @@ class XtQuantBrokerBridge(BrokerPort):
         self._account = account
         self._strategy_name = strategy_name
         self._event_sink = event_sink
-        self._account_status_ok = int(account_status_ok)
+        # NODEB-RR6-002: the exact XtQuant constants resolved during production
+        # session construction are persisted here; recovery verification must
+        # NOT rely on an unverified default.
+        self._security_account_type = security_account_type
+        self._account_status_ok = account_status_ok
         self._disconnected = False
         self._handler = XtQuantCallbackHandler(event_sink) if event_sink is not None else None
         if self._handler is not None:
@@ -364,7 +369,17 @@ class XtQuantBrokerBridge(BrokerPort):
             )
 
     def _verify_bound_account_healthy(self) -> None:
-        """Check the bound securities account is OK (internal, RR5-003)."""
+        """Check the bound securities account is OK (internal, RR5-003/RR6-002).
+
+        Requires the exact SECURITY_ACCOUNT type and ACCOUNT_STATUS_OK values
+        persisted from production session construction (never an unverified
+        default), and requires account id + type + status to match exactly.
+        """
+        if self._security_account_type is None or self._account_status_ok is None:
+            raise BrokerDisconnectedError(
+                "recovery constants were not bound from the production session; "
+                "cannot verify account health"
+            )
         status_fn = getattr(self._trader, "query_account_status", None)
         if not callable(status_fn):
             raise BrokerDisconnectedError(
@@ -381,7 +396,12 @@ class XtQuantBrokerBridge(BrokerPort):
             raise BrokerDisconnectedError("account-status verify failed") from exc
         for s in statuses:
             if str(getattr(s, "account_id", "")).strip() == account_id:
-                if int(getattr(s, "status", -1)) != int(self._account_status_ok or 1):
+                # NODEB-RR6-002: require id + type + status exact match.
+                if int(getattr(s, "account_type", -1)) != int(self._security_account_type):
+                    raise BrokerDisconnectedError(
+                        "bound account has the wrong account type; recovery denied"
+                    )
+                if int(getattr(s, "status", -1)) != int(self._account_status_ok):
                     raise BrokerDisconnectedError(
                         "bound account not OK after reconnect; recovery denied"
                     )

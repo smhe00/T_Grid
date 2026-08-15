@@ -398,16 +398,12 @@ class TestChainFailClosed(unittest.TestCase):
                     limit_price=4.6, order_remark="TG_510300SH_B002", now="t2",
                     expected_available_cash=100000.0, reserved_cash=460.0,
                 )
-            # Explicit resolution resumes execution through the internal
-            # reconciliation-driven transition (RR5-002: no public naked clear).
+            # Explicit resolution resumes execution through the engine's
+            # authoritative reconciliation (RR6-001: the engine executes the
+            # reconciliation itself; no fabricated result can clear SAFE_MODE).
             trader.orders[int(result.broker_order_id)].order_status = 56
             trader.orders[int(result.broker_order_id)].traded_volume = 100
-            engine._clear_safe_mode_after_reconciliation(
-                (type("R", (), {
-                    "outcome": "MATCHED", "broker_status": "FILLED",
-                    "client_order_key": "K1",
-                })(),)
-            )
+            engine.reconcile_and_clear_safe_mode()
             final = engine.poll_order("K1", now="t3")
             self.assertEqual(final.status, OrderStatus.FILLED)
         finally:

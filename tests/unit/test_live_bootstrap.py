@@ -321,7 +321,10 @@ class TestQueueHealthBlocksOrders(unittest.TestCase):
         queue = EventQueue(lambda e: None, maxsize=100)
         queue.start()
         try:
-            bridge = XtQuantBrokerBridge(trader, _FakeAccount(), event_sink=queue)
+            bridge = XtQuantBrokerBridge(
+                trader, _FakeAccount(), event_sink=queue,
+                security_account_type=1, account_status_ok=1,
+            )
             trader.callback.on_disconnected()
             self.assertFalse(bridge.execution_healthy)
             adapter = LiveBrokerAdapter(
@@ -990,16 +993,17 @@ class TestBootstrap(unittest.TestCase):
             queue.join(timeout=1.0)
             conn.close()
 
-    def test_safe_mode_cannot_be_cleared_without_reconciliation(self):
-        # NODEB-RR4-002 / RR5-002: no PUBLIC SAFE_MODE clear exists; the
-        # internal transition rejects unresolved outcomes and cannot be fed
-        # an empty/fabricated proof.
+    def test_safe_mode_cannot_be_cleared_with_fabricated_results(self):
+        # NODEB-RR4-002 / RR5-002 / RR6-001: no engine-reachable API accepts
+        # caller-supplied reconciliation result objects as authority.  Only
+        # the engine's own authoritative reconciliation can clear SAFE_MODE.
         conn = initialize(_temp_db_path())
         try:
             store = ExecutionStore(conn)
             from tgrid.execution.simbroker import SimBroker
 
-            engine = ExecutionEngine(store, SimBroker())
+            broker = SimBroker()
+            engine = ExecutionEngine(store, broker)
             # An open intent exists, so SAFE_MODE applies to real work.
             store.create_intent_with_reservation(
                 client_order_key="K1", symbol="0700.HK", side=BUY, qty=100,
@@ -1008,31 +1012,25 @@ class TestBootstrap(unittest.TestCase):
                 cash_amount=42000.0,
             )
             engine.engage_safe_mode("test unresolved")
-            # No public clear_safe_mode / clear_safe_mode_after_reconciliation.
+            # No public/named clear API accepting fabricated results exists.
             self.assertFalse(hasattr(engine, "clear_safe_mode"))
             self.assertFalse(hasattr(engine, "clear_safe_mode_after_reconciliation"))
-            # An EMPTY tuple with open intents is not proof of reconciliation
-            # (RR5-002): the internal transition must reject it.
+            self.assertFalse(hasattr(engine, "_clear_safe_mode_after_reconciliation"))
+            # The authoritative reconcile cannot clear while the broker has no
+            # matching order (INTENT_ONLY) -> SAFE_MODE retained.
             with self.assertRaises(Exception):
-                engine._clear_safe_mode_after_reconciliation(())
+                engine.reconcile_and_clear_safe_mode()
             self.assertTrue(engine.safe_mode)
-            # Fabricated unresolved outcome keeps SAFE_MODE.
-            with self.assertRaises(Exception):
-                engine._clear_safe_mode_after_reconciliation(
-                    (type("R", (), {
-                        "outcome": "INTENT_ONLY", "broker_status": None,
-                        "client_order_key": "K1",
-                    })(),)
-                )
-            self.assertTrue(engine.safe_mode)
-            # A genuine resolved tuple from authoritative reconciliation
-            # clears it through the internal transition.
-            engine._clear_safe_mode_after_reconciliation(
-                (type("R", (), {
-                    "outcome": "MATCHED", "broker_status": "SUBMITTED",
-                    "client_order_key": "K1",
-                })(),)
+            # Place a matching broker order so reconciliation resolves.
+            order_id = broker.place_order(
+                symbol="0700.HK", side=BUY, qty=100, limit_price=420.0,
+                order_remark="TG_0700_B01",
             )
+            store.update_intent_status(
+                "K1", status=OrderStatus.SUBMITTED, updated_at="t1",
+                broker_order_id=order_id,
+            )
+            engine.reconcile_and_clear_safe_mode()
             self.assertFalse(engine.safe_mode)
         finally:
             conn.close()

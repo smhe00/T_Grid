@@ -145,29 +145,19 @@ class ExecutionEngine:
             raise ExecutionInputError("safe-mode reason must be a non-empty string")
         self._safe_mode_reason = reason
 
-    def _clear_safe_mode_after_reconciliation(self, results: tuple) -> None:
-        """INTERNAL reconciliation-driven SAFE_MODE release (NODEB-RR5-002).
+    def reconcile_and_clear_safe_mode(self) -> None:
+        """Authoritative SAFE_MODE release (NODEB-RR6-001).
 
-        Private: production callers MUST go through the LiveStack-orchestrated
-        path (:meth:`tgrid.integrations.live_bootstrap.LiveStack.reconcile_and_resume`),
-        which itself executes authoritative broker/local reconciliation.  This
-        method trusts ONLY the outcome tuple produced by that reconciliation;
-        it is never a public caller-supplied proof API.
+        This method ITSELF executes the authoritative broker/local
+        reconciliation using the engine's store + broker — it never accepts
+        caller-supplied result objects as authority, so a fabricated
+        ``MATCHED`` object cannot clear SAFE_MODE.  Unresolved outcomes
+        (UNMATCHED / INTENT_ONLY / UNKNOWN / ambiguous) keep SAFE_MODE and
+        fail closed; reservations are preserved.
         """
-        if type(results) is not tuple:
-            raise ExecutionError("reconciliation results must be a tuple")
-        # NODEB-RR5-002: an empty result is acceptable ONLY when there is
-        # nothing to reconcile.  When non-terminal intents exist, an empty
-        # tuple proves the caller skipped reconciliation and must not clear.
-        open_intents = [
-            i for i in self._store.list_intents()
-            if i.status not in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN")
-        ]
-        if not results and open_intents:
-            raise ExecutionError(
-                "empty reconciliation results with open intents are not proof "
-                "of resolution; SAFE_MODE retained"
-            )
+        from tgrid.execution.recovery import reconcile_open_intents
+
+        results = reconcile_open_intents(self._store, self._broker)
         unresolved = [
             r for r in results
             if getattr(r, "outcome", None) in ("UNMATCHED_BROKER_ORDER", "INTENT_ONLY")
@@ -175,7 +165,8 @@ class ExecutionEngine:
         ]
         if unresolved:
             raise ExecutionError(
-                "reconciliation did not resolve all intents; SAFE_MODE retained"
+                "authoritative reconciliation did not resolve all intents; "
+                "SAFE_MODE retained"
             )
         self._safe_mode_reason = None
 

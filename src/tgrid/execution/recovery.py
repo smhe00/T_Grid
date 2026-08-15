@@ -127,16 +127,20 @@ def reconcile_open_intents(
 
     # Broker orders tagged TGRID that have no local intent: duplicate-order risk.
     local_keys = {i.client_order_key for i in store.list_intents()}
-    matched_keys = {r.client_order_key for r in results if r.outcome == "MATCHED"}
+    matched_ids = {
+        r.matched_broker_order_id
+        for r in results
+        if r.outcome == "MATCHED" and r.matched_broker_order_id is not None
+    }
     for order in broker_orders:
         remark = getattr(order, "order_remark", None)
         if remark is None or not remark.startswith("TG_"):
             continue
         if order.order_id in local_keys:
             continue
+        if order.order_id in matched_ids:
+            continue  # already reconciled to a local intent (by remark)
         if getattr(order, "client_order_key", None) in local_keys:
-            continue
-        if getattr(order, "client_order_key", None) in matched_keys:
             continue
         if order.status in ("FILLED", "CANCELED", "REJECTED"):
             continue  # historical noise, not an open risk
