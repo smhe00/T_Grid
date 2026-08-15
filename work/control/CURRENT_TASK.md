@@ -1,105 +1,118 @@
-# Current Task — Audit Node A Iteration 5 Fixes
+# Current Task — Gate 5.5 Live Broker Adapter (Pre-Live Only)
 
 ## Owner
 
 `DSH (DeepSeek Harness)` — single programming Agent, implementation + self-review allowed.
 
-Self-review must be labelled `SELF_CERTIFIED`; it is not an independent Gate verdict.
+Self-review must be labelled `SELF_CERTIFIED`; it is not an independent pre-live authorization.
 
 ## Status
 
-`AUDIT_READY`（Iteration 5 fixes complete, SELF_CERTIFIED, awaiting independent Node-A re-review）
+`AUTHORIZED_FOR_IMPLEMENTATION_ONLY`
 
-## Completion Record (SELF_CERTIFIED — 2026-08-15)
+Gate 5 passed independent Audit Node A on 2026-08-15. Gate 6 / Gate 7 remain blocked. `live_trading_allowed=false` remains mandatory.
 
-1. NODEA-R4-001 (P0): replay basis uses ONLY strictly-prior daily bars
-   (`bar_date < D`); `AccumulateStrategy.begin_day` also filters and fails
-   closed if none remain; strategy-level FI proves extreme day-D OHLC/volume
-   does not change day-D basis or intraday decisions; boundary tests confirm
-   the last prior bar is included and the current-day bar excluded.
-2. NODEA-R4-002 (P0): `SymbolConfig.core_qty` is the sole Core authority;
-   reconciliation-state carries no Core (or exact-match-checked then
-   discarded); mismatch fails closed before strategy execution.
-3. NODEA-R4-003 (P1): runbook rewritten to the current CLI (placeholders, no
-   absolute paths); `LIVE_VERIFICATION.md` marked `SUPERSEDED`; current-code
-   replay evidence to be regenerated with the new CLI.
-4. NODEA-R4-004 (P1): canonical SHA uses exact full GitHub hashes;
-   `implementation_commit` distinguished from the metadata handoff commit.
+## Source of Authorization
 
-Evidence: 846 tests OK; compileall 0; src AST scan 0 hits;
-`work/gates/GATE_5/NODEA_R4_FIX_REPORT.md`.
-```
-
-Gate 5.5 / Gate 6 / Gate 7 remain blocked. `live_trading_allowed=false` remains mandatory.
-
-## Accepted Work — Do Not Redo
-
-- per-day factor registry with no implicit 1.0 fallback;
-- strategy-level 2:1 RAW/ADJUSTED invariance tests;
-- trusted strategy-config input;
-- explicit settlement / SH-SZ-only session restriction;
-- settlement sellable carry-forward;
-- real reconciliation vs shadow-delta structural separation;
-- `_tmp/` removal;
-- ExecutionEngine exact-type hardening;
-- no real order/cancel capability.
-
-## Required Work
-
-### 1. P0 — Remove daily-bar look-ahead from replay
-
-For replay day D, pre-market basis may use only completed daily bars with date `< D`. Never include D's daily bar. Add strict no-look-ahead tests and fail closed on insufficient prior history.
-
-### 2. P0 — Restore single Core authority
-
-`SymbolConfig.core_qty` is the sole Core source. Reconciliation state must not independently define Core. Prefer schema = `{strategic_extra, open_t_position}` only; if a legacy Core is present, require exact equality and discard it. `ShadowEngine` must use `symbol_cfg.core_qty`.
-
-### 3. P1 — Refresh operational evidence and runbook
-
-After the two P0 fixes:
-
-- update `GATE5_RUNBOOK.md` to the current CLI with placeholders only;
-- remove all machine-specific absolute paths;
-- mark old `LIVE_VERIFICATION.md` result as superseded/historical;
-- execute a fresh REAL_QMT historical replay with current code and trusted inputs;
-- commit only sanitized evidence bound to exact implementation SHA and input provenance/hash identifiers;
-- provide sanitized non-zero REAL_QMT reconciliation summary when available; otherwise state the environment limitation explicitly and do not claim REAL_QMT evidence from synthetic fixtures.
-
-### 4. P1 — Fix canonical SHA / metadata consistency
-
-The actual Iteration-4 implementation commit is:
+Read and comply with:
 
 ```text
-4e7d04a27733df52c902321fd4049d5a3a1a3bab
+work/gates/GATE_5/NODE_A_FINAL_REVIEW_20260815.md
 ```
 
-The metadata-only child is:
+Audit target:
 
 ```text
-e6091ee77e1a9e534c02318eec6dd91a974b894e
+df1cbb53471d8f765c89c4bc644323d5839d0dd6
 ```
 
-Do not use the nonexistent `4e7d04a0bdef...` SHA. Keep exact test count/status/evidence class consistent across canonical files and Gate-5 reports.
+Accepted Gate-5 implementation commit:
 
-## Required Verification
+```text
+5a2e2fd32e21328badd1ceb2c92b973436c4c95a
+```
 
-- full `unittest` regression;
-- `python -m compileall -q src tests`;
-- capability AST scan proving no real order/cancel path;
-- no-look-ahead FI (current-day daily OHLC/volume mutation cannot affect same-day decisions);
-- last-prior-day included/current-day excluded boundary test;
-- Core-authority mismatch FI;
-- current factor/config/settlement/reconciliation fail-closed tests retained;
-- `_tmp/` absent and committed evidence sanitized;
-- refreshed REAL_QMT replay evidence after the P0 fixes;
-- `live_trading_allowed=false`.
+## Objective
 
-## Stop / Handoff — Audit Node A
+Implement Gate 5.5: the real broker execution adapter and its pre-live safety boundary, while **never invoking a real order or real cancel** during this task.
 
-When complete:
+Target architecture:
 
-1. push normally to `main`;
-2. set `state=AUDIT_READY`;
-3. record the exact implementation commit and any later evidence/metadata commit separately;
-4. authorize only `AUDIT_NODE_A_REVIEW`;
-5. STOP before Gate 5.5 or any real broker order/cancel capability.
+```text
+ExecutionEngine
+    -> LiveBrokerAdapter
+    -> XtQuantTrader
+```
+
+The adapter may contain the broker capability needed for later live execution, but this task ends before the first real invocation.
+
+## Mandatory Requirements
+
+1. `live_trading` defaults false and cannot be enabled implicitly.
+2. A second explicit runtime confirmation is required in addition to configuration before broker execution is permitted.
+3. Explicit symbol allowlist.
+4. Hard per-order quantity limit.
+5. Hard per-order and/or per-day cash exposure limit.
+6. Kill switch / emergency disable path.
+7. Broker callbacks may only enqueue events; callbacks must not directly mutate T-Lots, position state, reservations, DB strategy state, or issue new orders.
+8. Reuse Gate-4 idempotent OrderIntent + Reservation-before-send semantics.
+9. Partial fills must be modeled explicitly.
+10. Timeout path must be `cancel request -> broker re-query -> reconcile`; cancellation acknowledgement must never be interpreted as proof of zero fill.
+11. Order/trade reconciliation and restart/crash recovery must be deterministic and fail closed.
+12. Exact-type validation must occur before arithmetic or broker calls.
+13. No force push / history rewrite.
+14. Do not commit account identifiers, balances, holdings, ports, userdata paths, secrets or local runtime configs.
+
+## Mandatory Carry-Forward Fix — NODEB-P0-001
+
+Fix the legacy reconciliation Core mismatch guard before Node B review.
+
+Current issue: `_load_reconciliation_state()` discards an optional legacy `core_qty` before `_check_core_authority()` can inspect it. Therefore a legacy file containing a Core different from `SymbolConfig.core_qty` is silently ignored instead of failing closed.
+
+Required resolution:
+
+- either reject `core_qty` as an unexpected reconciliation-state field; or
+- preserve it, require exact equality with `SymbolConfig.core_qty`, then discard it.
+
+Add a loader-to-runner test proving a mismatched legacy Core fails closed before any broker execution capability can be invoked.
+
+## Forbidden During Gate 5.5
+
+- no real order invocation;
+- no real cancel invocation;
+- no enabling `live_trading_allowed` in canonical state;
+- no Gate 6 tiny-capital run;
+- no production/live soak claim;
+- no bypass of Node B.
+
+## Required Self-Certified Evidence
+
+- full unit regression;
+- compileall;
+- capability scan identifying every real broker order/cancel call site introduced by Gate 5.5;
+- tests for double enable/confirmation;
+- allowlist and hard-limit tests;
+- callback isolation tests;
+- idempotency/reservation tests against the live adapter boundary using mocks/fakes only;
+- partial fill / cancel / re-query / uncertain-state tests;
+- restart/recovery tests;
+- NODEB-P0-001 integration test;
+- proof that no real order/cancel was invoked while producing the evidence.
+
+## Stop / Handoff — Audit Node B
+
+When implementation is complete:
+
+1. push normally to GitHub `main`;
+2. set canonical state to `AUDIT_READY_PRELIVE`;
+3. record exact implementation commit(s), test counts and capability call sites;
+4. authorize only `AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`;
+5. STOP.
+
+The first real order is prohibited until:
+
+```text
+Audit Node B = PASS
+AND
+explicit user authorization = YES
+```
