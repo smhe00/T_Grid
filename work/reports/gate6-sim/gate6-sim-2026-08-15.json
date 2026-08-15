@@ -1,26 +1,7 @@
 {
-  "activated": true,
-  "bridge_constants": {
-    "account_status_ok": 0,
-    "security_account_type": 2
-  },
-  "broker_reconcile": {
-    "filled_qty": 0,
-    "status": "REJECTED"
-  },
-  "exposure_used": 472.6,
-  "finished_at": "2026-08-15T21:29:35.393623+08:00",
-  "last_poll": {
-    "filled_qty": 0,
-    "status": "REJECTED"
-  },
-  "quote_price": 4.726,
-  "send_result": {
-    "broker_order_id": "1098907651",
-    "filled_qty": 0,
-    "status": "SUBMITTED"
-  },
-  "session_built": true,
-  "started_at": "2026-08-15T21:29:31.606331+08:00",
-  "terminal_state": "REJECTED"
+  "finished_at": "2026-08-15T22:03:23.572358+08:00",
+  "in_execution_window": false,
+  "is_trading_day": false,
+  "skipped_reason": "non-trading-day",
+  "started_at": "2026-08-15T22:03:23.274246+08:00"
 }

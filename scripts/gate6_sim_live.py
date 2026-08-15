@@ -40,6 +40,34 @@ from tgrid.integrations.live_session import build_live_session
 from tgrid.models import GlobalConfig, RootConfig
 
 
+def _is_exchange_trading_day(xtdata, trade_date: str) -> bool:
+    """reverse_repo is_exchange_trading_day (get_trading_dates, not calendar)."""
+    stamp = trade_date.replace("-", "")
+    result = xtdata.get_trading_dates("SH", stamp, stamp, count=-1)
+    if result is None:
+        raise RuntimeError("exchange trading-day query returned None")
+    return bool(list(result))
+
+
+def _is_execution_window(now_hhmm: str) -> bool:
+    """reverse_repo is_first_execution_time window (09:30-11:28 / 13:00-15:28)."""
+    hh, mm = int(now_hhmm[:2]), int(now_hhmm[2:4])
+    t = hh * 60 + mm
+    return (9 * 60 + 30) <= t <= (11 * 60 + 28) or (13 * 60) <= t <= (15 * 60 + 28)
+
+
+def _write_evidence(project: Path, args, evidence: dict, *, ok: bool) -> int:
+    evidence["finished_at"] = datetime.now().astimezone().isoformat()
+    out_dir = Path(project) / args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"gate6-sim-{args.trade_date}.json"
+    out_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True),
+                        encoding="utf-8")
+    print(f"evidence written: {out_path}")
+    print(json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0 if ok else 3
+
+
 def _policy(*, symbol: str, qty_cap: int, cash_cap: float) -> LiveBrokerPolicy:
     return LiveBrokerPolicy(
         allowlist=frozenset({symbol}),
@@ -87,7 +115,29 @@ def main(argv=None) -> int:
     )
     queue = EventQueue(lambda e: None, maxsize=100)
     evidence: dict = {"started_at": datetime.now().astimezone().isoformat()}
+    stack = None
     try:
+        # reverse_repo preflight: exchange trading day + execution window check
+        # BEFORE any broker connection/order (get_trading_dates, not calendar).
+        from tgrid.integrations.qmt_gate1_runtime import _real_xtdata
+
+        xtdata = _real_xtdata()
+        xtdata.enable_hello = False
+        evidence["is_trading_day"] = _is_exchange_trading_day(xtdata, args.trade_date)
+        evidence["in_execution_window"] = _is_execution_window(
+            datetime.now().astimezone().strftime("%H%M")
+        )
+        if not evidence["is_trading_day"]:
+            print("NON-TRADING-DAY: order path skipped (simulation verification "
+                  "requires an exchange trading day); evidence only")
+            evidence["skipped_reason"] = "non-trading-day"
+            return _write_evidence(project, args, evidence, ok=False)
+        if not evidence["in_execution_window"]:
+            print("OUTSIDE-EXECUTION-WINDOW: order path skipped (trading-hours "
+                  "rerun required for FILL/CANCEL); evidence only")
+            evidence["skipped_reason"] = "outside-execution-window"
+            return _write_evidence(project, args, evidence, ok=False)
+
         stack = build_live_session(
             root_config=root,
             gate1_config_path=str(project / args.gate1_config),
@@ -179,20 +229,14 @@ def main(argv=None) -> int:
     finally:
         queue.stop()
         queue.join(timeout=1.0)
-        try:
-            stack._db_conn.close()
-        except Exception:  # noqa: BLE001
-            pass
+        if stack is not None:
+            try:
+                stack._db_conn.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     evidence["finished_at"] = datetime.now().astimezone().isoformat()
-    out_dir = Path(project) / args.out
-    out_dir.mkdir(parents=True, exist_ok=True)
-    out_path = out_dir / f"gate6-sim-{args.trade_date}.json"
-    out_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True),
-                        encoding="utf-8")
-    print(f"evidence written: {out_path}")
-    print(json.dumps(evidence, ensure_ascii=False, indent=2, sort_keys=True))
-    return 0 if ok else 3
+    return _write_evidence(project, args, evidence, ok=ok)
 
 
 if __name__ == "__main__":
