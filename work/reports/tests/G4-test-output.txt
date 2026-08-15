@@ -1,0 +1,48 @@
+test_buy_requires_cash_amount (tests.unit.test_execution.TestExecutionStore.test_buy_requires_cash_amount) ... ok
+test_duplicate_intent_rejected (tests.unit.test_execution.TestExecutionStore.test_duplicate_intent_rejected) ... ok
+test_intent_and_reservation_atomic (tests.unit.test_execution.TestExecutionStore.test_intent_and_reservation_atomic) ... ok
+test_missing_intent (tests.unit.test_execution.TestExecutionStore.test_missing_intent) ... ok
+test_release_reservation (tests.unit.test_execution.TestExecutionStore.test_release_reservation) ... ok
+test_sell_reservation_has_no_cash (tests.unit.test_execution.TestExecutionStore.test_sell_reservation_has_no_cash) ... ok
+test_terminal_intent_not_transitionable (tests.unit.test_execution.TestExecutionStore.test_terminal_intent_not_transitionable) ... ok
+test_cancel_failure_never_assumes (tests.unit.test_execution.TestExecutor.test_cancel_failure_never_assumes) ... ok
+test_disconnect_at_send (tests.unit.test_execution.TestExecutor.test_disconnect_at_send) ... ok
+test_duplicate_callback_is_noop (tests.unit.test_execution.TestExecutor.test_duplicate_callback_is_noop) ... ok
+test_pending_order_keys (tests.unit.test_execution.TestExecutor.test_pending_order_keys) ... ok
+test_poll_partial_then_full (tests.unit.test_execution.TestExecutor.test_poll_partial_then_full) ... ok
+test_reject_at_send (tests.unit.test_execution.TestExecutor.test_reject_at_send) ... ok
+test_send_buy_idempotent_and_submitted (tests.unit.test_execution.TestExecutor.test_send_buy_idempotent_and_submitted) ... ok
+test_send_sell_reserves_qty (tests.unit.test_execution.TestExecutor.test_send_sell_reserves_qty) ... ok
+test_timeout_cancel_and_reconcile (tests.unit.test_execution.TestExecutor.test_timeout_cancel_and_reconcile) ... ok
+test_intent_only_no_broker_order (tests.unit.test_execution.TestRecovery.test_intent_only_no_broker_order) ... ok
+test_matched_broker_order (tests.unit.test_execution.TestRecovery.test_matched_broker_order) ... ok
+test_terminal_intents_skipped (tests.unit.test_execution.TestRecovery.test_terminal_intents_skipped) ... ok
+test_unmatched_broker_order_flags_safe_mode (tests.unit.test_execution.TestRecovery.test_unmatched_broker_order_flags_safe_mode) ... ok
+test_reserved_cash_conflict_blocks_second_buy (tests.unit.test_execution.TestReservationConflicts.test_reserved_cash_conflict_blocks_second_buy) ... ok
+test_reserved_sell_conflict_blocks_second_sell (tests.unit.test_execution.TestReservationConflicts.test_reserved_sell_conflict_blocks_second_sell) ... ok
+test_restart_reconstructs_from_broker_and_store (tests.unit.test_execution.TestRestart.test_restart_reconstructs_from_broker_and_store) ... ok
+test_cancel_failure_script (tests.unit.test_execution.TestSimBroker.test_cancel_failure_script) ... ok
+test_cancel_success (tests.unit.test_execution.TestSimBroker.test_cancel_success) ... ok
+test_disconnect (tests.unit.test_execution.TestSimBroker.test_disconnect) ... ok
+test_partial_fill (tests.unit.test_execution.TestSimBroker.test_partial_fill) ... ok
+test_place_and_fill_script (tests.unit.test_execution.TestSimBroker.test_place_and_fill_script) ... ok
+test_reject (tests.unit.test_execution.TestSimBroker.test_reject) ... ok
+test_crash_after_broker_send_before_intent_update (tests.unit.test_execution_dryrun.TestCrashAfterSend.test_crash_after_broker_send_before_intent_update) ... ok
+test_buy_fill_sell_fill_pnl (tests.unit.test_execution_dryrun.TestFullLoop.test_buy_fill_sell_fill_pnl) ... ok
+test_no_fill_keeps_lot_pending (tests.unit.test_execution_dryrun.TestFullLoop.test_no_fill_keeps_lot_pending) ... ok
+test_partial_fill_then_full (tests.unit.test_execution_dryrun.TestFullLoop.test_partial_fill_then_full) ... ok
+test_reject_creates_no_lot (tests.unit.test_execution_dryrun.TestFullLoop.test_reject_creates_no_lot) ... ok
+test_strict_types (tests.unit.test_execution_dryrun.TestHarnessGuards.test_strict_types) ... ok
+
+----------------------------------------------------------------------
+Ran 35 tests in 1.729s
+
+OK
+===== compileall =====
+compileall_exit=0
+===== AST forbidden-API scan =====
+AST_SCAN files=42 forbidden=0
+AST_SCAN_PASS
+===== full regression =====
+783 tests OK (748 + 35 execution)
+

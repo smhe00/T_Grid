@@ -823,6 +823,214 @@ def _verify_bootstrap_schema(conn: sqlite3.Connection) -> None:
         raise SchemaVersionError("application_metadata project_name has empty updated_at")
 
 
+# Gate 4 order_intents (design §18.2).  id = client_order_key (explicit NOT NULL
+# TEXT PRIMARY KEY); every required text non-empty; side BUY/SELL; qty positive
+# int; limit_price positive numeric; status one of the §24 set.
+_ORDER_INTENTS_COLUMNS = [
+    ("client_order_key", "TEXT", 1, 1),
+    ("symbol", "TEXT", 1, 0),
+    ("side", "TEXT", 1, 0),
+    ("qty", "INTEGER", 1, 0),
+    ("limit_price", "REAL", 1, 0),
+    ("status", "TEXT", 1, 0),
+    ("strategy_name", "TEXT", 1, 0),
+    ("order_remark", "TEXT", 1, 0),
+    ("broker_order_id", "TEXT", 0, 0),
+    ("created_at", "TEXT", 1, 0),
+    ("updated_at", "TEXT", 1, 0),
+]
+
+# Gate 4 order_reservations (design §18.3).  id is the reservation id; qty
+# positive int; cash_amount NULL or non-negative numeric; client_order_key FK
+# to order_intents; released_at NULL while active.
+_ORDER_RESERVATIONS_COLUMNS = [
+    ("id", "TEXT", 1, 1),
+    ("symbol", "TEXT", 1, 0),
+    ("side", "TEXT", 1, 0),
+    ("qty", "INTEGER", 1, 0),
+    ("cash_amount", "REAL", 0, 0),
+    ("client_order_key", "TEXT", 1, 0),
+    ("created_at", "TEXT", 1, 0),
+    ("released_at", "TEXT", 0, 0),
+]
+
+
+def _verify_order_intents_schema(conn: sqlite3.Connection) -> None:
+    """Verify the on-disk order_intents schema matches migration 4."""
+    if MAX_SCHEMA_VERSION < 4:
+        return
+    if not _table_exists(conn, "order_intents"):
+        raise SchemaVersionError("missing table 'order_intents'")
+    _verify_columns(conn, "order_intents", _ORDER_INTENTS_COLUMNS)
+    if not _trigger_exists(conn, "order_intents_no_delete"):
+        raise SchemaVersionError(
+            "order_intents is missing the 'order_intents_no_delete' trigger"
+        )
+    _verify_order_intents_constraints(conn)
+
+
+def _valid_intent_row(**overrides) -> dict:
+    row = {
+        "client_order_key": "__tgrid_probe_intent",
+        "symbol": "600000.SH",
+        "side": "BUY",
+        "qty": 100,
+        "limit_price": 10.0,
+        "status": "NEW",
+        "strategy_name": "TGRID",
+        "order_remark": "TG_600000_B01",
+        "broker_order_id": None,
+        "created_at": "2026-08-14T10:00:00",
+        "updated_at": "2026-08-14T10:00:00",
+    }
+    row.update(overrides)
+    return row
+
+
+def _verify_order_intents_constraints(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN")
+    try:
+        _expect_accept(
+            conn,
+            "order_intents",
+            _valid_intent_row(
+                client_order_key=_pick_execution_key(conn, "order_intents", "__tgrid_probe_valid")
+            ),
+            label="valid minimal intent row",
+        )
+        invalid_probes = (
+            ("client_order_key NULL", {"client_order_key": None}),
+            ("client_order_key empty", {"client_order_key": ""}),
+            ("symbol empty", {"symbol": ""}),
+            ("side lowercase", {"side": "buy"}),
+            ("side unknown", {"side": "MID"}),
+            ("qty=0", {"qty": 0}),
+            ("qty=-1", {"qty": -1}),
+            ("qty fractional", {"qty": 1.5}),
+            ("limit_price=0", {"limit_price": 0.0}),
+            ("limit_price=-1", {"limit_price": -1.0}),
+            ("status empty", {"status": ""}),
+            ("status unknown", {"status": "BOGUS"}),
+            ("strategy_name empty", {"strategy_name": ""}),
+            ("order_remark empty", {"order_remark": ""}),
+            ("created_at empty", {"created_at": ""}),
+            ("updated_at empty", {"updated_at": ""}),
+        )
+        for label, overrides in invalid_probes:
+            row = _valid_intent_row()
+            row.update(overrides)
+            if row["client_order_key"]:
+                row["client_order_key"] = _pick_execution_key(
+                    conn, "order_intents", f"__tgrid_probe_invalid_{label}"
+                )
+            _expect_integrity(conn, "order_intents", row, label=label)
+    finally:
+        conn.execute("ROLLBACK")
+
+
+def _pick_execution_key(conn: sqlite3.Connection, table: str, tag: str) -> str:
+    """Return a probe client_order_key confirmed absent from ``table``.
+
+    ``order_intents`` keys on ``client_order_key`` (not ``id``), so the generic
+    ``_pick_probe_id`` cannot be used.  ``table`` is an internal constant, never
+    caller input.
+    """
+    existing = {
+        row[0]
+        for row in conn.execute(
+            f"SELECT client_order_key FROM {table} WHERE client_order_key IS NOT NULL"
+        ).fetchall()
+    }
+    candidate = tag
+    n = 0
+    while candidate in existing:
+        n += 1
+        candidate = f"{tag}_{n}"
+    return candidate
+
+
+def _verify_order_reservations_schema(conn: sqlite3.Connection) -> None:
+    """Verify the on-disk order_reservations schema matches migration 5."""
+    if MAX_SCHEMA_VERSION < 5:
+        return
+    if not _table_exists(conn, "order_reservations"):
+        raise SchemaVersionError("missing table 'order_reservations'")
+    _verify_columns(conn, "order_reservations", _ORDER_RESERVATIONS_COLUMNS)
+    _verify_order_reservations_foreign_key(conn)
+    if not _trigger_exists(conn, "order_reservations_no_delete"):
+        raise SchemaVersionError(
+            "order_reservations is missing the 'order_reservations_no_delete' trigger"
+        )
+    _verify_order_reservations_constraints(conn)
+
+
+def _verify_order_reservations_foreign_key(conn: sqlite3.Connection) -> None:
+    fks = conn.execute("PRAGMA foreign_key_list(order_reservations)").fetchall()
+    for row in fks:
+        if row[2] == "order_intents" and row[3] == "client_order_key" and row[4] == "client_order_key":
+            return
+    raise SchemaVersionError(
+        "order_reservations is missing foreign key "
+        "client_order_key -> order_intents(client_order_key)"
+    )
+
+
+def _valid_reservation_row(**overrides) -> dict:
+    row = {
+        "id": "__tgrid_probe_reservation",
+        "symbol": "600000.SH",
+        "side": "BUY",
+        "qty": 100,
+        "cash_amount": 1000.0,
+        "client_order_key": "__tgrid_probe_intent",
+        "created_at": "2026-08-14T10:00:00",
+        "released_at": None,
+    }
+    row.update(overrides)
+    return row
+
+
+def _verify_order_reservations_constraints(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN")
+    try:
+        intent_key = _pick_execution_key(conn, "order_intents", "__tgrid_probe_intent")
+        _insert_row(conn, "order_intents", _valid_intent_row(client_order_key=intent_key))
+        _expect_accept(
+            conn,
+            "order_reservations",
+            _valid_reservation_row(
+                id=_pick_probe_id(conn, "order_reservations", "__tgrid_probe_valid"),
+                client_order_key=intent_key,
+            ),
+            label="valid minimal reservation row",
+        )
+        dangling_key = _pick_execution_key(conn, "order_intents", "__tgrid_probe_no_such_intent")
+        invalid_probes = (
+            ("id NULL", {"id": None}),
+            ("id empty", {"id": ""}),
+            ("symbol empty", {"symbol": ""}),
+            ("side lowercase", {"side": "sell"}),
+            ("side unknown", {"side": "MID"}),
+            ("qty=0", {"qty": 0}),
+            ("qty=-1", {"qty": -1}),
+            ("cash_amount negative", {"cash_amount": -1.0}),
+            ("cash_amount text", {"cash_amount": "abc"}),
+            ("client_order_key empty", {"client_order_key": ""}),
+            ("client_order_key dangling", {"client_order_key": dangling_key}),
+            ("created_at empty", {"created_at": ""}),
+        )
+        for label, overrides in invalid_probes:
+            row = _valid_reservation_row(client_order_key=intent_key)
+            row.update(overrides)
+            if row["id"]:
+                row["id"] = _pick_probe_id(
+                    conn, "order_reservations", f"__tgrid_probe_invalid_{label}"
+                )
+            _expect_integrity(conn, "order_reservations", row, label=label)
+    finally:
+        conn.execute("ROLLBACK")
+
+
 def initialize(path: str) -> sqlite3.Connection:
     """Open, validate, and migrate the database at ``path``.
 
@@ -848,6 +1056,8 @@ def initialize(path: str) -> sqlite3.Connection:
         _verify_bootstrap_schema(conn)
         _verify_t_lot_schema(conn)
         _verify_t_lot_audit_log_schema(conn)
+        _verify_order_intents_schema(conn)
+        _verify_order_reservations_schema(conn)
     except PersistenceError:
         conn.close()
         raise

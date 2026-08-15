@@ -17,6 +17,11 @@ Migration 3 creates the append-only ``t_lot_audit_log`` table (design §6 "all
 state changes must be recorded by an Audit Log"): every audit row is immutable —
 triggers forbid both ``UPDATE`` and ``DELETE`` — and ``t_lot_id`` must reference
 an existing ``t_lots`` row so no event can ever dangle.
+
+Migration 4 creates the Gate-4 execution foundation: ``order_intents``
+(client_order_key idempotency, design §18.2) and ``order_reservations``
+(position/cash reservation, design §18.3).  Both are append-mostly: an intent
+is never deleted and a reservation is only released via ``released_at``.
 """
 
 from __future__ import annotations
@@ -141,6 +146,63 @@ T_LOT_AUDIT_LOG_STATEMENTS: Tuple[str, ...] = (
 )
 
 
+# Gate 4 order intents (design §18.2): a durable, idempotent order intent is
+# written BEFORE any broker send; client_order_key is the unique idempotency
+# key; status moves READY_TO_SEND -> SUBMITTED -> PARTIAL/FILLED/REJECTED/
+# CANCELED/UNKNOWN.  strategy_name/order_remark are the §18 order tags.
+ORDER_INTENT_STATEMENTS: Tuple[str, ...] = (
+    "CREATE TABLE order_intents ("
+    " client_order_key TEXT NOT NULL PRIMARY KEY"
+    " CHECK(length(trim(client_order_key)) > 0),"
+    " symbol TEXT NOT NULL CHECK(length(trim(symbol)) > 0),"
+    " side TEXT NOT NULL CHECK(side IN ('BUY', 'SELL')),"
+    " qty INTEGER NOT NULL CHECK(typeof(qty) = 'integer' AND qty > 0),"
+    " limit_price REAL NOT NULL CHECK(typeof(limit_price) IN ('integer', 'real')"
+    " AND limit_price > 0),"
+    " status TEXT NOT NULL CHECK(status IN ('NEW', 'READY_TO_SEND',"
+    " 'SUBMITTED', 'PARTIAL', 'FILLED', 'CANCEL_REQUESTED', 'CANCELED',"
+    " 'REJECTED', 'UNKNOWN')),"
+    " strategy_name TEXT NOT NULL CHECK(length(trim(strategy_name)) > 0),"
+    " order_remark TEXT NOT NULL CHECK(length(trim(order_remark)) > 0),"
+    " broker_order_id TEXT,"
+    " created_at TEXT NOT NULL CHECK(length(trim(created_at)) > 0),"
+    " updated_at TEXT NOT NULL CHECK(length(trim(updated_at)) > 0)"
+    ")",
+    # Idempotency contract (INV-013): the client_order_key must be unique;
+    # SQLite's PRIMARY KEY gives this.  No DELETE is ever allowed.
+    "CREATE TRIGGER order_intents_no_delete "
+    "BEFORE DELETE ON order_intents "
+    "BEGIN "
+    " SELECT RAISE(ABORT, 'order_intents rows cannot be deleted'); "
+    "END",
+)
+
+# Gate 4 reservations (design §18.3): ReservedSellQty / ReservedCash are
+# booked atomically with the OrderIntent that consumes them and released only
+# against the true terminal order state.  A row records the side, the reserved
+# quantity (shares for SELL, cash for BUY via amount) and the owning intent.
+ORDER_RESERVATION_STATEMENTS: Tuple[str, ...] = (
+    "CREATE TABLE order_reservations ("
+    " id TEXT NOT NULL PRIMARY KEY CHECK(length(trim(id)) > 0),"
+    " symbol TEXT NOT NULL CHECK(length(trim(symbol)) > 0),"
+    " side TEXT NOT NULL CHECK(side IN ('BUY', 'SELL')),"
+    " qty INTEGER NOT NULL CHECK(typeof(qty) = 'integer' AND qty > 0),"
+    " cash_amount REAL CHECK(cash_amount IS NULL OR"
+    " (typeof(cash_amount) IN ('integer', 'real') AND cash_amount >= 0)),"
+    " client_order_key TEXT NOT NULL"
+    " REFERENCES order_intents(client_order_key),"
+    " created_at TEXT NOT NULL CHECK(length(trim(created_at)) > 0),"
+    " released_at TEXT"
+    ")",
+    # A reservation is never deleted; it is released by setting released_at.
+    "CREATE TRIGGER order_reservations_no_delete "
+    "BEFORE DELETE ON order_reservations "
+    "BEGIN "
+    " SELECT RAISE(ABORT, 'order_reservations rows cannot be deleted'); "
+    "END",
+)
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -155,6 +217,12 @@ MIGRATIONS: Tuple[Migration, ...] = (
     ),
     Migration(
         version=3, name="t_lot_audit_log", statements=T_LOT_AUDIT_LOG_STATEMENTS
+    ),
+    Migration(
+        version=4, name="order_intents", statements=ORDER_INTENT_STATEMENTS
+    ),
+    Migration(
+        version=5, name="order_reservations", statements=ORDER_RESERVATION_STATEMENTS
     ),
 )
 

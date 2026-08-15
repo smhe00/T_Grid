@@ -1,169 +1,136 @@
-# Task G2-T006 — Offline Position Reconciliation Decision Engine
+# Task G2-T004 — Atomic T-Lot Status Transition Writer
+
+## Completion
+
+`PASS` — Architect independent review completed at `2026-08-15T00:23:10+08:00` (iteration 2).
+The next task is intentionally left for the GitHub/web-ChatGPT handoff.
 
 ## Goal
 
-Implement a **pure offline, fail-closed position reconciliation decision layer** for one symbol. It compares the externally supplied broker position with the local expected decomposition and returns an immutable reconciliation decision. Any unexplained mismatch must result in `SAFE_MODE`; the component must never guess that a delta is Strategic, T-Lot, or a user trade.
+在已验收的 `t_lots` 与 `t_lot_audit_log` schema 上实现一个纯离线、fail-closed 的持久化原语：使用
+SQLite 单事务 compare-and-set 更新一个 T-Lot 的 status/updated_at，并追加一条不可变 Audit Log。任何
+一步失败都必须完整回滚。本任务不决定业务状态转换矩阵，也不连接 QMT。
 
-This task is deliberately a decision engine only. It does not connect to QMT, does not query SQLite, does not persist SAFE_MODE, and does not implement startup orchestration.
+## Iteration 2 Review Findings
 
-## Architectural Intent
+Iteration 1 未通过。只修 `REV-G2T004-001..003`：
 
-Design §21 requires startup reconciliation before strategy start and requires:
+- CAS 后的 `KeyboardInterrupt/SystemExit/GeneratorExit` 未进入 rollback，留下 active 半完成事务。
+- status 在 exact-str 校验前做 tuple membership，执行恶意 `__eq__` 并泄露 secret。
+- 两连接测试是完全串行执行，没有形成确定性交错/竞争。
 
-```text
-BrokerPosition ?= LocalExpectedPosition
-mismatch -> SAFE_MODE
-```
-
-Design §22.1 / INV-016 requires unknown manual/external position changes to enter symbol SAFE_MODE instead of being silently classified.
-
-G2-T006 establishes that safety decision as a deterministic offline primitive before later tasks wire authoritative broker/ledger readers around it.
+Iteration 2 禁止扩大 writer API、字段、状态策略或数据库层。
 
 ## In Scope
 
-Add a new position-domain reconciliation module with a minimal public API equivalent to:
-
-```python
-reconcile_position(
-    symbol_config,
-    *,
-    symbol,
-    broker_position,
-    strategic_extra,
-    open_t_lot_position,
-) -> PositionReconciliationResult
-```
-
-The exact function name may differ only if clearly justified in the report; semantics must not differ.
-
-### Required result
-
-Return a frozen/data-only result containing at least:
-
-- `symbol`
-- `decision`: exactly `RECONCILED` or `SAFE_MODE`
-- `reason`: exactly one of `MATCH`, `CORE_FLOOR_BREACH`, `BROKER_POSITION_MISMATCH`
-- `broker_position`
-- `local_expected_position`
-- `delta = broker_position - local_expected_position`
-- the validated local components needed to audit the decision (`core_qty`, `strategic_extra`, `open_t_lot_position`)
-
-### Local expected position
-
-Core must come only from the existing frozen `SymbolConfig.core_qty`; there must be no second caller-supplied core value.
-
-```text
-LocalExpectedPosition = CoreQty + StrategicExtra + OpenTLotPosition
-```
-
-### Decision priority
-
-1. Invalid/untrusted inputs -> fail closed with the existing position-domain project error layer; no result and no side effect.
-2. If `broker_position < core_qty` -> `SAFE_MODE / CORE_FLOOR_BREACH`.
-3. Else if `broker_position != local_expected_position` -> `SAFE_MODE / BROKER_POSITION_MISMATCH`.
-4. Else -> `RECONCILED / MATCH`.
-
-No positive or negative delta may be auto-reclassified.
+- 新增唯一的 T-Lot status transition writer；输入为已初始化的 `sqlite3.Connection` 与显式字段。
+- writer 必须显式接收：`t_lot_id`、`expected_status`、`new_status`、`audit_id`、`event_type`、
+  `details_json`、`actor`、`occurred_at`。
+- 事务开始前验证全部输入为 exact `str`、必填非空；status 必须属于既有七状态且 old != new。
+- writer 只接受当前没有活动 transaction 的连接；若调用者已有事务，显式拒绝且不得 commit/rollback
+  调用者状态。
+- 使用 `BEGIN IMMEDIATE` + 单次 compare-and-set：`UPDATE ... WHERE id=? AND status=?`；rowcount 必须为 1。
+- 同一事务追加 audit，`from_status=expected_status`、`to_status=new_status`，并更新 `updated_at=occurred_at`。
+- audit insert、约束、CAS、COMMIT 任一步失败时 rollback；不得留下只更新未审计或只审计未更新状态。
+- 提供最小明确的 persistence 异常：输入无效、T-Lot 不存在、expected-status 冲突、原子写入失败。
+- 返回 data-only/frozen 结果，仅包含 lot id、from/to status、audit id、occurred_at；不返回连接/游标。
 
 ## Deliberate Boundary
 
-The caller supplies `strategic_extra` and `open_t_lot_position`. G2-T006 does **not** define how those values are loaded from SQLite or broker state. It only validates them as plain non-negative integers and makes the reconciliation decision.
-
-This task therefore does not yet claim full startup Reconciliation or Crash Recovery. Later tasks will supply authoritative read models/orchestration.
+- 本原语只保证“调用者请求的两个合法状态之间”原子 CAS + Audit，不定义哪些边合法。
+- 业务状态转换矩阵、人工授权（CONVERT/MANUAL_EXIT）、OrderIntent/成交驱动规则由后续状态机任务实现。
+- 不提供 delete、通用 UPDATE、任意 SQL、重试或 bypass-audit API。
 
 ## Out of Scope
 
-- SQLite/T-Lot queries, CRUD, migrations, Audit Log writes, status transitions.
-- QMT/XtQuant connection, account/asset/position/order/trade queries.
-- Event Queue/startup orchestration, persistence of SAFE_MODE, crash recovery.
-- Manual-trade classification UI/workflow or automatic Strategic/T-Lot reclassification.
-- OrderIntent, Reservation, order state machine, partial fills, cancel/reject handling.
-- Corporate Action adjustment.
-- Any order/cancel/download/subscribe/live or dry-run trading execution.
+- T-Lot create/full CRUD/list/query repository、数量/价格修改、LIFO、目标价计算。
+- 业务 transition matrix、SUSPENDED review action、Corporate Action payload 解释。
+- Reconciliation、Crash Recovery、SAFE_MODE、OrderIntent、Reservation、订单/成交/callback。
+- QMT/XtQuant、账号、行情、下单、撤单、订阅、下载以及任何 live/dry-run 执行。
+- schema migration 4、真实数据库、配置、日志、reverse_repo 修改或跨仓依赖。
 
 ## Reuse Direction
 
-- Reuse existing `SymbolConfig`; core quantity must be obtained only from `SymbolConfig.core_qty`.
-- Reuse the existing position/risk exception hierarchy, preferably `PositionInvariantError`; do not create an unrelated exception root.
-- Do not modify or weaken the already-PASS `PositionSnapshot` / `CorePositionGuard` behavior in `manager.py`.
-- Do not use `PositionSnapshot` to hide a mismatch: that type intentionally enforces equality and cannot represent a reconciliation discrepancy.
+- 必须直接使用 G2-T002/G2-T003 已验收的 `t_lots` 与 `t_lot_audit_log`；禁止新表、新 migration、新审计文件。
+- 状态集合必须从一个现有 persistence 定义复用或最小提取为共享常量；不得复制第三份漂移列表。
+- 复用现有 `PersistenceError` 层；新增异常必须继承该层，禁止第二个异常根类型。
+- 不复制 reverse_repo journal/交易执行代码；其执行日志不能替代本项目数据库 Audit Log。
 
 ## Allowed Files
 
-- `src/tgrid/position/reconciliation.py` (new)
-- `src/tgrid/position/__init__.py` (only minimal exports for this task)
-- `tests/unit/test_position_reconciliation.py` (new)
-- `work/reports/tests/G2-T006-test-output.txt` (new)
+- `src/tgrid/persistence/migrations.py`（仅允许最小公开/复用既有状态 tuple；不得改 SQL/schema/version）
+- `src/tgrid/persistence/database.py`（仅必要的共享状态引用调整；不得改 schema/version/verifier 语义）
+- `src/tgrid/persistence/t_lot_writer.py`（新增）
+- `src/tgrid/persistence/__init__.py`（仅导出本任务批准的 writer/result/exceptions）
+- `tests/unit/test_t_lot_writer.py`（新增）
+- `work/reports/tests/G2-T004-test-output.txt`（新增）
+- `work/gates/GATE_2/G2-T004_RESULT.md`（新增）
 - `work/gates/GATE_2/CLAUDE_REPORT.md`
 - `work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md`
 - `work/handoff/claude_to_architect/TEST_REPORT.md`
-- `work/handoff/claude_to_architect/QUESTIONS.md` (only if genuinely needed)
+- `work/handoff/claude_to_architect/QUESTIONS.md`（仅确有问题时）
 - `work/control/WORKFLOW_STATE.yaml`
-
-A local Lease may be used according to protocol but must never be staged/committed.
+- `work/control/CLAUDE_HEARTBEAT.md`
+- `work/locks/WORKTREE_LEASE.yaml`（仅持有期间）
 
 ## Forbidden Files
 
-- `src/tgrid/position/manager.py` and its existing tests.
-- all `src/tgrid/persistence/**`, schema/migration/database/writer/policy files.
-- Architect-owned `CURRENT_TASK.md`, `REVIEW.md`, `FIX_REQUEST.md`, Gate result/task files, design/protocol files.
-- `work/control/CLAUDE_HEARTBEAT.md`.
-- integrations/adapters/probes/risk implementations, models/config/scripts/docs/README.
-- reverse_repo and any real/local DB, account, QMT userdata, logs, or secrets.
+- 设计/协议原文、`CURRENT_TASK.md` 与架构师控制文件。
+- 现有 persistence/CLI/T-Lot schema 测试；本任务不改变 schema version/history 预期。
+- `src/tgrid/position/**`、`src/tgrid/integrations/**`、`src/tgrid/adapters/**`、`src/tgrid/probes/**`。
+- `src/tgrid/models.py`、`src/tgrid/risk/**`、`config/**`、`scripts/**`、`docs/**`、`README.md`。
+- `D:/gitee/miniQMT/reverse_repo/**` 与任何真实/local 数据库、配置、日志、账号或业务数据。
+
+## Design References
+
+- §6：所有 T-Lot 状态变化必须保留 Audit Log；禁止删除历史批次。
+- §16–16.1：SUSPENDED/review 动作必须可审计，但业务授权后续实现。
+- §21–23：本地 SQLite 是恢复输入之一，禁止静默修复，callback 不是唯一事实来源。
+- §34：INV-002、INV-005、INV-008、INV-010、INV-011。
+- §37 Gate 2：T-Lot Ledger + Audit Log 的原子写入基础；不实现交易信号。
 
 ## Invariants
 
-1. Core source is single-authority `SymbolConfig.core_qty`; no alternate core argument/override.
-2. All quantities are exact plain non-negative `int`; reject bool, float, string, bytes, containers, int subclasses, and arbitrary objects before arithmetic.
-3. Symbol is an exact plain non-empty `str`; reject subclasses and whitespace-only values.
-4. Unknown objects must not have `str/repr/bool/iter/__eq__/__int__/__index__` invoked during rejection.
-5. A mismatch never mutates or reclassifies `strategic_extra` or `open_t_lot_position`.
-6. `broker_position < core_qty` has priority and always returns SAFE_MODE/CORE_FLOOR_BREACH.
-7. Any other non-zero delta returns SAFE_MODE/BROKER_POSITION_MISMATCH, regardless of magnitude or whether it equals a plausible `t_unit`.
-8. Exact equality returns RECONCILED/MATCH.
-9. Result is frozen/data-only and contains no callable, connection, cursor, client, config mutator, or external capability.
-10. No QMT, SQLite, filesystem/network, order/cancel/download/subscribe capability; no Python `assert` used as a safety mechanism.
-11. `live_trading_allowed=false` remains binding.
+1. status update 与 audit insert 必须 all-or-nothing；不存在可观察的半完成状态。
+2. CAS rowcount != 1 时 fail closed；不得猜测、重试、upsert 或自动创建 T-Lot。
+3. expected status 不匹配时原 lot/audit 逐值不变。
+4. audit_id 重复、audit constraint/trigger/commit 失败时 lot status/updated_at 完整回滚。
+5. writer 不接受已有 transaction，不提交/回滚调用者 transaction。
+6. 不执行未知对象的 `str/repr/bool/iter`；输入类型错误返回固定、data-free project error。
+7. 普通 SQLite 异常转换为固定、data-free `PersistenceError` 子类；不得暴露 SQL/参数/底层异常图。
+8. 无 Python `assert` 承担生产安全；无自动 retry。
+9. `live_trading_allowed=false`；无 QMT/order/cancel/download/subscribe 调用。
 
 ## Acceptance Criteria
 
-- `Broker=600, Core=600, Strategic=0, OpenT=0` -> `RECONCILED/MATCH`, expected=600, delta=0.
-- `Broker=700, LocalExpected=600` -> `SAFE_MODE/BROKER_POSITION_MISMATCH`, delta=+100; no auto classification.
-- `Broker=600, LocalExpected=700` -> `SAFE_MODE/BROKER_POSITION_MISMATCH`, delta=-100; no auto repair.
-- `Broker < CoreQty` -> `SAFE_MODE/CORE_FLOOR_BREACH` even if another mismatch reason could also apply.
-- Mixed valid holdings (Core + Strategic + OpenT) reconcile only on exact equality.
-- A positive delta equal to common T-unit-like values is still mismatch/SAFE_MODE; no inference from quantity pattern.
-- Exact-type and malicious-object tests prove invalid inputs are rejected without user dunder/secret leakage.
-- Result immutability and exact field semantics are tested.
-- Existing 618-test baseline remains passing; new tests are additive.
-- AST/capability scan confirms no sqlite/xtquant/order/cancel/download/subscribe/filesystem/network and no `assert` in the new module.
+- 合法 CAS 精确更新 status/updated_at 一次并追加精确一条 audit，返回 frozen data-only result。
+- 不存在 lot 与 expected-status 冲突可区分，均不写 audit、不改 lot。
+- duplicate audit_id、非法 audit payload、数据库约束失败、commit failure 均完整 rollback。
+- 已有 transaction 输入立即拒绝，调用者原 transaction/数据保持可继续控制。
+- 两连接竞争同一 expected status 时最多一个成功；另一个显式 conflict，不新增第二条 audit。
+- writer 没有 delete、通用 update、create、retry、QMT 或交易入口。
+- 既有 579 项测试保持通过。
 
 ## Required Tests / Failure Injection
 
-- happy-path exact equality: zero-only, core+strategic, core+T, mixed.
-- positive and negative broker deltas across boundaries 1, typical t-unit-like value, and large values.
-- broker below core floor priority.
-- zero values where legal; negative values rejected.
-- bool/float/str/bytes/list/dict/int-subclass and arbitrary malicious quantity objects.
-- malicious symbol object / str subclass; secret-bearing dunders must not execute and project exception graph must not expose secret.
-- exact `SymbolConfig` required; fake/subclass objects rejected without reading arbitrary attributes.
-- frozen result mutation attempt fails.
-- deterministic proof that input components remain unchanged and no mutation/repair callback exists.
-- AST forbidden-capability scan + full unittest + compileall + `git diff --check` + Allowed Files diff-check.
+- happy path：OPEN→SUSPENDED、字段映射、exact one audit、frozen result。
+- missing lot；stale expected status；old==new；七状态外值；空/NULL/非 exact-str 输入。
+- duplicate audit_id 与审计表约束故障：验证 lot/audit/history/user_version 前后逐值不变。
+- 在 audit insert 后注入 commit failure，验证 rollback；若 sqlite 原生难以可靠注入，使用最小受控
+  connection seam，不得建立第二个数据库 wrapper。
+- caller active transaction：writer 拒绝且不 commit/rollback，调用者可自行 rollback。
+- 两个 SQLite connection 的确定性交错/CAS 竞争；不得靠 sleep。
+- 异常 secret 注入：项目异常 message、`__cause__`、`__context__` 不可达 secret。
+- 完整 unittest、compileall、AST assert/forbidden API scan、diff-check。
 
 ## Deliverables
 
-- offline reconciliation decision primitive + frozen result.
-- comprehensive unit/FI tests and raw output artifact.
-- Implementation/Test/Claude reports must state explicitly:
-  - decision/reason matrix;
-  - Core source authority;
-  - mismatch non-reclassification evidence;
-  - Failure Injection results;
-  - no SQLite/QMT/startup orchestration/SAFE_MODE persistence implemented.
+- 原子 writer、frozen result、最小 persistence exceptions 与单元/FI 测试。
+- 完整测试输出、Implementation/Test/Claude/G2-T004 Result 报告。
+- 报告单列 Reuse Evidence、事务边界、Failure Injection 及明确未实现的状态矩阵/CRUD/QMT。
+- 不提交 commit；由 Desktop ChatGPT 独立复核后决定验收提交。
 
 ## Stop Condition
 
-After implementation/tests, fetch GitHub `main` again. If remote head is unchanged from the authorized baseline, publish a new unique handoff with `handoff_seq + 1`, `state=REVIEW_READY`, `owner=architect`, `task_id=G2-T006`, `iteration=1`, `authorized_next=[]`, and correct GitHub provenance; normal non-force push only.
-
-If remote changed, worktree ownership is unclear, or the task cannot be completed without touching forbidden files, STOP WRITE. No force/rebase/merge/reset/stash/cherry-pick/blind retry.
+完成后删除 Lease，设置 `REVIEW_READY / owner=architect / task_id=G2-T004 / iteration=2` 并停止写入。
+若无法在 Allowed Files 内保持真正原子性，设置 BLOCKED，不得扩大为新数据库框架。

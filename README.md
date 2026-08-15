@@ -2,9 +2,15 @@
 
 QMT 低频做 T 交易引擎（开发中）。
 
-> **当前状态：Gate 0 / Gate 1 只读边界。** 本仓库目前有配置读取、配置数据模型、显式风险异常类型、SQLite 持久化基础，以及一个**严格只读的 QMT Adapter 边界**（`tgrid.adapters.qmt_readonly`）。它**没有任何行情、账户、持仓、下单、撤单或真实交易能力**，也没有策略计算能力；Adapter 只通过依赖注入的 client 调用固定只读方法，不 import XtQuant、不连接真实 QMT。
+> **当前状态：Gate 0–5 已通过（离线）。** 本仓库已有配置、风险异常、SQLite 持久化（migration
+> 1–5：bootstrap / t_lot_ledger / t_lot_audit_log / order_intents / order_reservations）、
+> 只读 QMT Adapter 边界（Gate 1）、Position + Ledger + Reconciliation（Gate 2）、离线策略算法
+> （Gate 3）、Execution Dry Run（Gate 4）、Shadow 模式（Gate 5）。**没有任何真实下单能力**：
+> 执行层只通过注入的 SimBroker 干跑，Shadow 只产出 WOULD_BUY/WOULD_SELL；
+> `live_trading_allowed=false`，真实 QMT 接入需人工执行 Gate 6/7（见
+> `work/gates/GATE_6/GATE67_MANUAL_CHECKLIST.md`）。
 
-## 已实现（G0-T001 / G0-T002 / G1-T002 / G1-T003 / G1-T004 / G1-T005 / G1-T006）
+## 已实现（G0 / G1 / G2 / G3 / G4 / G5）
 
 - `tgrid.config.load_config(path)`：从调用方显式传入的 YAML 路径读取并校验配置，返回有类型的 `RootConfig`。
 - 配置数据模型（`GlobalConfig` / `SymbolConfig` / `RootConfig`），全部为不可变 dataclass。
@@ -18,6 +24,14 @@ QMT 低频做 T 交易引擎（开发中）。
 - `tgrid.adapters.marketdata_readonly`（只读 MarketData 查询 Adapter 边界，G1-T003）：`ReadOnlyMarketDataAdapter`，构造时冻结 8 个固定只读查询 callable，参数先校验（失败抛 `MarketDataValidationError` 且不调用底层）、序列参数单次快照、外部异常安全转 `MarketDataQueryError`（cause/context 干净）；无订阅/下载/连接/账号/交易面、不 import XtQuant。异常：`MarketDataReadOnlyError` / `MarketDataAdapterConfigError` / `MarketDataValidationError` / `MarketDataQueryError`。
 - `tgrid.adapters.quote_subscription_readonly`（单路 Quote Subscription 只读生命周期 Adapter，G1-T004）：`ReadOnlyQuoteSubscriptionAdapter` + `QuoteSubscriptionState`，每实例最多一个 `subscribe_quote` 订阅、`unsubscribe_quote` 至多一次清理，显式状态/sequence id/failure_type；参数验证（`QuoteSubscriptionValidationError`）、外部异常安全转 `QuoteSubscriptionError` 层级（cause/context 干净）；无 download/query/account/connect/order/cancel、不执行 callback、不 import XtQuant。异常：`QuoteSubscriptionError` / `QuoteSubscriptionConfigError` / `QuoteSubscriptionValidationError` / `QuoteSubscriptionLifecycleError` / `QuoteSubscriptionStartError` / `QuoteSubscriptionStopError`。
 - `tgrid.probes.gate1_readonly`（Gate 1 只读集成探针编排器，G1-T005）：`run_gate1_readonly_probe` 按固定顺序组合 `ReadOnlyTraderAdapter` + `ReadOnlyMarketDataAdapter` 的 15 个只读操作并 `trader.stop()` 至多一次，返回 `Gate1ReadOnlyProbeSummary`（固定 operation name tuple + cleanup 布尔，无业务数据）；精确类型校验、失败/清理安全异常（cause/context 干净）、BaseException 先清理后传播。异常：`Gate1ProbeError` / `Gate1ProbeConfigError` / `Gate1ProbeExecutionError`。
+- `tgrid.integrations.qmt_gate1_runtime`（Gate 1 只读 XtQuant Runtime Bridge，G1-T006）：生产 `src/tgrid` 中唯一授权 importlib 延迟加载 XtQuant 的模块；Trader bridge 只暴露 8 个已批准 callable，账号按 SHA-256 指纹内存匹配，无 order/cancel 面。
+- `tgrid.position`（Gate 2，离线）：`PositionSnapshot`（Broker = Core + Strategic + OpenT 不可变分解）、`CorePositionGuard` 三重卖出保护（Core Floor → CanUseVolume → Reservation，INV-001/005）、`snapshot_from_symbol_config`（Core 唯一来自 SymbolConfig）、`reconcile_position`（broker<core → CORE_FLOOR_BREACH 优先；其它非零 delta → BROKER_POSITION_MISMATCH；相等 → MATCH，禁止静默修复 INV-006）。
+- `tgrid.persistence`（Gate 2/4，SQLite，仅标准库）：migration 1–5。`t_lots`（§6 + §16.1 suspended review 字段，禁删触发器）、`t_lot_audit_log`（追加式，UPDATE/DELETE 双禁，FK 到 t_lots）、`order_intents`（§18.2 client_order_key 幂等 + §24 状态）、`order_reservations`（§18.3 ReservedSellQty/ReservedCash）。行为化 schema 验证（列结构/CHECK/FK/触发器/约束探针）全部在 `initialize` 中 fail-closed 执行。
+- `tgrid.persistence.t_lot_writer`（G2-T004）：`transition_t_lot_status` — `BEGIN IMMEDIATE` 单事务 CAS status + 追加一条 audit，all-or-nothing；BaseException 覆盖 rollback。
+- `tgrid.persistence.t_lot_transition_policy`（G2-T005）：五边闭集 `resolve_t_lot_transition` / `apply_t_lot_transition`，未批准组合零 DB 写入；人工/no-op 动作显式不可执行。
+- `tgrid.strategy`（Gate 3，离线策略算法，design §38）：`Bar`/`SessionWindow`、`vwap20`/`ema20`/`atr14`/`atr_pct`、`grid_pct`（G=clip(max(G_min,K_ATR×ATR%),G_min,G_max)）、`buy_level`（Buy_n=Anchor(1-G)^n）、`exit_target_price`、`legalize_price`（price_tick 合法化，Decimal 精确）、`PriceBasis`/`CorporateActionFactor`/`adjust_historical_prices`（§7.1 统一复权口径）、`DataQualityGuard`（§26.2 七类问题→DATA_HALT）、`volatility_halt`/`EventBlockRule`（§28/§29）、`AccumulateStrategy`（§12–§16/§31：每日冻结 Anchor、5m bar 决策流、LIFO、max_t_lots、target_qty 上限、挂单互斥、卖出门复用 Gate 2 CorePositionGuard）。设计 §38 场景 A-D 全部通过。
+- `tgrid.execution`（Gate 4，Execution Dry Run，design §39）：`ExecutionStore`（意图+预留原子事务）、`SimBroker`（确定性 FILL/PARTIAL/REJECT/TIMEOUT/CANCEL_FAIL/断线）、`ExecutionEngine`（意图先写后报单 INV-013、预留冲突门 §18.3、poll tick-then-read、timeout→cancel→re-query→reconcile §25、实际成交价回填 §24）、`reconcile_open_intents`（MATCHED/INTENT_ONLY/UNMATCHED_BROKER_ORDER，§23 崩溃恢复）、`DryRunHarness`（行情→信号→订单→成交→T-Lot→卖出→PnL 全链路）。§39 失败矩阵全部覆盖。
+- `tgrid.shadow`（Gate 5，Shadow 模式，design §40）：`ShadowEngine` 产出 **WOULD_BUY/WOULD_SELL**（绝无券商调用面，INV-009）、Signal Log、Shadow vs Broker 对账、Daily Report，`build_shadow_reports` 组装四份 §40 交付物。真实 QMT 5 交易日影子运行见 `work/gates/GATE_5/GATE5_RUNBOOK.md`。
 
 ## 只读 QMT Adapter 边界（G1-T002）
 
@@ -233,13 +247,13 @@ print(cfg.symbols["0700.HK"].core_qty)  # 600
 ## 安全边界
 
 - `live_trading` 缺省为 `false`，本阶段不存在任何可开启它的执行路径。
-- 不 `import xtquant`，不出现任何券商下单/撤单调用。
+- 不 `import xtquant`（唯一例外：`tgrid.integrations.qmt_gate1_runtime` 经 importlib 延迟加载且
+  只读），不出现任何券商下单/撤单调用（`order_stock` / `cancel_order_stock` 全仓 AST 扫描命中 0）。
 - `tgrid.adapters.qmt_readonly` / `tgrid.adapters.marketdata_readonly` /
   `tgrid.adapters.quote_subscription_readonly` 无 order/cancel/改单方法、无 download/query/account/
   connect 面、无动态转发、无 `client` 公共属性；只读 Adapter 边界之外不存在任何 QMT 访问入口。
-  quote subscription 只订阅/撤销单路行情，不执行 callback、不进入业务逻辑。
-- `tgrid.probes.gate1_readonly` 只调用两个批准 Adapter 的固定公共只读方法，不读账号/行情、不保存/
-  打印业务数据、不加入订阅/CLI/DB/日志/交易逻辑。
+- `tgrid.execution` 只面向注入的 `SimBroker`（确定性干跑），`tgrid.shadow` 只产出
+  WOULD_BUY/WOULD_SELL，二者均无真实券商调用面（INV-009）。
 - 生产风控不得依赖 Python `assert`；风险/配置异常均为显式类型。
 
 ## 测试
@@ -260,4 +274,9 @@ work/             # 双 Agent 协作控制面（任务/状态/交接）
 
 ## 后续 Gate
 
-SQLite 持久化、logging、CLI、Event Queue、Position Manager、T-Lot Ledger 等按设计文档 Gate 体系依次推进。未经架构师 PASS 不得进入下一 Gate。
+- **GATE 3 PASS**（策略离线模拟）、**GATE 4 PASS**（Execution Dry Run）、**GATE 5 PASS**
+  （Shadow 模式，离线部分）—— 验收证据见 `work/gates/GATE_*/ARCHITECT_REVIEW.md`。
+- **GATE 6 / GATE 7**（真实资金）：必须由用户在真实 MiniQMT 环境人工执行，清单见
+  `work/gates/GATE_6/GATE67_MANUAL_CHECKLIST.md`；真实 QMT 影子运行手册见
+  `work/gates/GATE_5/GATE5_RUNBOOK.md`。
+- 未经架构师 PASS 不得进入下一 Gate（单代理模式下由同一上下文自审）。

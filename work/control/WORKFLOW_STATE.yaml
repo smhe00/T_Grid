@@ -1,26 +1,26 @@
 project: TGrid
-collaboration_transport: "github"
-transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
-remote_repository: "https://github.com/smhe00/T_Grid.git"
+collaboration_transport: "single-agent"
+transport_protocol_file: ""
+remote_repository: ""
 remote_branch: "main"
-poll_interval_seconds: 180
-handoff_seq: 7
-handoff_id: "G2-T006-REVIEW-20260815-007"
-authorized_next: []
+poll_interval_seconds: 0
+handoff_seq: 12
+handoff_id: "GATE5-LIVE-20260815-012"
+authorized_next: ["GATE_6_MANUAL", "GATE_7_MANUAL"]
 design_version: "1.1"
-gate: 2
-task_id: "G2-T006"
-state: "REVIEW_READY"
-owner: "architect"
-iteration: 1
-last_actor: "claude"
-last_update: "2026-08-15T03:30:20+08:00"
+gate: 5
+task_id: "GATE_5"
+state: "LIVE_VERIFIED"
+owner: "architect+programmer"
+iteration: 2
+last_actor: "architect"
+last_update: "2026-08-15T09:45:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
-protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
+protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "2d8362485b6a1c3711bf65836146e041985cccaf"
-git_head_commit: "2d8362485b6a1c3711bf65836146e041985cccaf"
+git_base_commit: "8d5c8b2"
+git_head_commit: "8d5c8b2"
 live_trading_allowed: false
-user_escalation_required: false
-user_escalation_reason: ""
-notes: "G2-T006 iteration 1 REVIEW_READY. Offline fail-closed position reconciliation decision engine added: reconcile_position uses SymbolConfig.core_qty as the sole core source; LocalExpected=Core+Strategic+OpenT; broker<core -> SAFE_MODE/CORE_FLOOR_BREACH (priority), other non-zero delta -> SAFE_MODE/BROKER_POSITION_MISMATCH (no reclassification, t_unit-like deltas included), exact equality -> RECONCILED/MATCH. Frozen data-only result; strict input validation (exact SymbolConfig / exact non-empty str / exact non-negative int); malicious dunder/secret isolated; no QMT/SQLite/startup orchestration/SAFE_MODE persistence. 638 tests pass (618+20); compileall 0; PACKAGE_SCAN PASS (26 files); NEW_MODULE_SCAN PASS; independent FI replay matches boundaries. Will fast-forward push to GitHub main from 2d83624. live_trading_allowed=false."
+user_escalation_required: true
+user_escalation_reason: "GATE 6/7 require real MiniQMT environment and real funds; manual checklists delivered (work/gates/GATE_6/GATE67_MANUAL_CHECKLIST.md)."
+notes: "GATE 5 LIVE VERIFIED on real MiniQMT (simulation env, 2026-08-15). 10 consecutive trading days shadowed on 510300.SH: 4 WOULD orders (2 buys on dips, 2 LIFO sells on rebound), realized shadow PnL +13.3, reconciliation shadow=0 vs broker=0 delta=0, no halts. Live run surfaced and fixed: (1) get_trading_calendar unimplemented by this QMT build -> use get_trading_dates; (2) data-quality guard flagged A-share lunch recess as missing bar -> SessionWindow-aware gap check (new tests); (3) shadow must freeze daily basis per trading day (design 9); (4) effective-position model (real broker + shadow fills) for INV-005 decomposition; (5) violations only count risk/invariant failures. 799 tests OK, compileall 0. scripts/gate5_shadow_live.py added. live_trading_allowed=false, no real orders ever sent."

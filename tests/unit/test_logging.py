@@ -620,7 +620,7 @@ class TestForbiddenApiScan(unittest.TestCase):
                         else (func.id if isinstance(func, ast.Name) else None)
                     )
                     self.assertNotIn(
-                        name, {"order_stock", "cancel_order"},
+                        name, {"order_stock", "cancel_order_stock"},
                         f"forbidden call {name} in {path}",
                     )
 

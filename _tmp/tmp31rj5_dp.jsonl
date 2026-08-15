@@ -1,0 +1,5 @@
+{"schema_version": 1, "timestamp": "2026-08-15T00:14:58.541189+00:00", "level": "DEBUG", "logger": "tgrid.test.levelstd", "event": "evt_DEBUG", "message": "m", "context": {}}
+{"schema_version": 1, "timestamp": "2026-08-15T00:14:58.541189+00:00", "level": "INFO", "logger": "tgrid.test.levelstd", "event": "evt_INFO", "message": "m", "context": {}}
+{"schema_version": 1, "timestamp": "2026-08-15T00:14:58.541189+00:00", "level": "WARNING", "logger": "tgrid.test.levelstd", "event": "evt_WARNING", "message": "m", "context": {}}
+{"schema_version": 1, "timestamp": "2026-08-15T00:14:58.541189+00:00", "level": "ERROR", "logger": "tgrid.test.levelstd", "event": "evt_ERROR", "message": "m", "context": {}}
+{"schema_version": 1, "timestamp": "2026-08-15T00:14:58.541189+00:00", "level": "CRITICAL", "logger": "tgrid.test.levelstd", "event": "evt_CRITICAL", "message": "m", "context": {}}

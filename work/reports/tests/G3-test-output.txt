@@ -1,0 +1,123 @@
+test_atr14_constant_range (tests.unit.test_strategy_indicators.TestAtr14.test_atr14_constant_range) ... ok
+test_atr14_rejects_high_lt_low (tests.unit.test_strategy_indicators.TestAtr14.test_atr14_rejects_high_lt_low) ... ok
+test_atr14_requires_15_bars (tests.unit.test_strategy_indicators.TestAtr14.test_atr14_requires_15_bars) ... ok
+test_atr14_wilder_smoothing (tests.unit.test_strategy_indicators.TestAtr14.test_atr14_wilder_smoothing) ... ok
+test_atr14_zero_range (tests.unit.test_strategy_indicators.TestAtr14.test_atr14_zero_range) ... ok
+test_atr_pct (tests.unit.test_strategy_indicators.TestAtrPct.test_atr_pct) ... ok
+test_atr_pct_invalid_close (tests.unit.test_strategy_indicators.TestAtrPct.test_atr_pct_invalid_close) ... ok
+test_atr_pct_negative_atr (tests.unit.test_strategy_indicators.TestAtrPct.test_atr_pct_negative_atr) ... ok
+test_atr_pct_rejects_bool_and_str (tests.unit.test_strategy_indicators.TestAtrPct.test_atr_pct_rejects_bool_and_str) ... ok
+test_atr_pct_zero_atr (tests.unit.test_strategy_indicators.TestAtrPct.test_atr_pct_zero_atr) ... ok
+test_ema20_constant_series (tests.unit.test_strategy_indicators.TestEma20.test_ema20_constant_series) ... ok
+test_ema20_known_value (tests.unit.test_strategy_indicators.TestEma20.test_ema20_known_value) ... ok
+test_ema20_rejects_sequence_duck_types (tests.unit.test_strategy_indicators.TestEma20.test_ema20_rejects_sequence_duck_types) ... ok
+test_ema20_requires_20 (tests.unit.test_strategy_indicators.TestEma20.test_ema20_requires_20) ... ok
+test_vwap20_empty_fails (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_empty_fails) ... ok
+test_vwap20_flat (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_flat) ... ok
+test_vwap20_rejects_bad_price_shape (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_rejects_bad_price_shape) ... ok
+test_vwap20_rejects_negative_volume (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_rejects_negative_volume) ... ok
+test_vwap20_rejects_non_bar (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_rejects_non_bar) ... ok
+test_vwap20_uses_last_20 (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_uses_last_20) ... ok
+test_vwap20_weighted (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_weighted) ... ok
+test_vwap20_zero_volume_fails_closed (tests.unit.test_strategy_indicators.TestVwap20.test_vwap20_zero_volume_fails_closed) ... ok
+test_anchor_positive (tests.unit.test_strategy_grid.TestBuyLevel.test_anchor_positive) ... ok
+test_g_bounds (tests.unit.test_strategy_grid.TestBuyLevel.test_g_bounds) ... ok
+test_geometric_levels (tests.unit.test_strategy_grid.TestBuyLevel.test_geometric_levels) ... ok
+test_n_must_be_positive_int (tests.unit.test_strategy_grid.TestBuyLevel.test_n_must_be_positive_int) ... ok
+test_entry_positive (tests.unit.test_strategy_grid.TestExitTargetPrice.test_entry_positive) ... ok
+test_exit_above_entry (tests.unit.test_strategy_grid.TestExitTargetPrice.test_exit_above_entry) ... ok
+test_exit_multiple_minimum_one (tests.unit.test_strategy_grid.TestExitTargetPrice.test_exit_multiple_minimum_one) ... ok
+test_clips_to_max (tests.unit.test_strategy_grid.TestGridPct.test_clips_to_max) ... ok
+test_clips_to_min_when_volatility_low (tests.unit.test_strategy_grid.TestGridPct.test_clips_to_min_when_volatility_low) ... ok
+test_inverted_bounds_rejected (tests.unit.test_strategy_grid.TestGridPct.test_inverted_bounds_rejected) ... ok
+test_nan_rejected (tests.unit.test_strategy_grid.TestGridPct.test_nan_rejected) ... ok
+test_negative_atr_rejected (tests.unit.test_strategy_grid.TestGridPct.test_negative_atr_rejected) ... ok
+test_non_positive_params_rejected (tests.unit.test_strategy_grid.TestGridPct.test_non_positive_params_rejected) ... ok
+test_uses_atr_term_when_above_min (tests.unit.test_strategy_grid.TestGridPct.test_uses_atr_term_when_above_min) ... ok
+test_zero_atr_degrades_to_min (tests.unit.test_strategy_grid.TestGridPct.test_zero_atr_degrades_to_min) ... ok
+test_buy_floors (tests.unit.test_strategy_grid.TestLegalizePrice.test_buy_floors) ... ok
+test_invalid_side (tests.unit.test_strategy_grid.TestLegalizePrice.test_invalid_side) ... ok
+test_invalid_tick (tests.unit.test_strategy_grid.TestLegalizePrice.test_invalid_tick) ... ok
+test_non_finite_price (tests.unit.test_strategy_grid.TestLegalizePrice.test_non_finite_price) ... ok
+test_sell_ceils (tests.unit.test_strategy_grid.TestLegalizePrice.test_sell_ceils) ... ok
+test_indicator_continuity_across_split (tests.unit.test_strategy_corporate_action.TestAdjustHistoricalPrices.test_indicator_continuity_across_split) ... ok
+test_input_never_mutated (tests.unit.test_strategy_corporate_action.TestAdjustHistoricalPrices.test_input_never_mutated) ... ok
+test_pre_action_bars_scaled_to_adjusted (tests.unit.test_strategy_corporate_action.TestAdjustHistoricalPrices.test_pre_action_bars_scaled_to_adjusted) ... ok
+test_rejects_negative_adjusted_price (tests.unit.test_strategy_corporate_action.TestAdjustHistoricalPrices.test_rejects_negative_adjusted_price) ... ok
+test_rejects_non_bar_element (tests.unit.test_strategy_corporate_action.TestAdjustHistoricalPrices.test_rejects_non_bar_element) ... ok
+test_rejects_wrong_factor_type (tests.unit.test_strategy_corporate_action.TestAdjustHistoricalPrices.test_rejects_wrong_factor_type) ... ok
+test_empty_action_rejected (tests.unit.test_strategy_corporate_action.TestCorporateActionFactor.test_empty_action_rejected) ... ok
+test_factor_is_frozen (tests.unit.test_strategy_corporate_action.TestCorporateActionFactor.test_factor_is_frozen) ... ok
+test_nan_rejected (tests.unit.test_strategy_corporate_action.TestCorporateActionFactor.test_nan_rejected) ... ok
+test_non_positive_factors_rejected (tests.unit.test_strategy_corporate_action.TestCorporateActionFactor.test_non_positive_factors_rejected) ... ok
+test_valid_factor (tests.unit.test_strategy_corporate_action.TestCorporateActionFactor.test_valid_factor) ... ok
+test_bad_parameters_rejected (tests.unit.test_strategy_quality.TestCheckBarQuality.test_bad_parameters_rejected) ... ok
+test_clean_bar (tests.unit.test_strategy_quality.TestCheckBarQuality.test_clean_bar) ... ok
+test_duplicate_bar (tests.unit.test_strategy_quality.TestCheckBarQuality.test_duplicate_bar) ... ok
+test_future_timestamp_suspect (tests.unit.test_strategy_quality.TestCheckBarQuality.test_future_timestamp_suspect) ... ok
+test_missing_bar (tests.unit.test_strategy_quality.TestCheckBarQuality.test_missing_bar) ... ok
+test_non_bar_rejected (tests.unit.test_strategy_quality.TestCheckBarQuality.test_non_bar_rejected) ... ok
+test_out_of_order_bar (tests.unit.test_strategy_quality.TestCheckBarQuality.test_out_of_order_bar) ... ok
+test_price_invalid_high_lt_low (tests.unit.test_strategy_quality.TestCheckBarQuality.test_price_invalid_high_lt_low) ... ok
+test_price_invalid_non_positive (tests.unit.test_strategy_quality.TestCheckBarQuality.test_price_invalid_non_positive) ... ok
+test_stale_bar (tests.unit.test_strategy_quality.TestCheckBarQuality.test_stale_bar) ... ok
+test_suspension_zero_volume (tests.unit.test_strategy_quality.TestCheckBarQuality.test_suspension_zero_volume) ... ok
+test_volume_invalid (tests.unit.test_strategy_quality.TestCheckBarQuality.test_volume_invalid) ... ok
+test_guard_remembers_previous (tests.unit.test_strategy_quality.TestDataQualityGuard.test_guard_remembers_previous) ... ok
+test_sequence_clean (tests.unit.test_strategy_quality.TestDataQualityGuard.test_sequence_clean) ... ok
+test_sequence_detects_gap (tests.unit.test_strategy_quality.TestDataQualityGuard.test_sequence_detects_gap) ... ok
+test_bad_symbol_rejected (tests.unit.test_strategy_halts.TestEventBlockRule.test_bad_symbol_rejected) ... ok
+test_default_window_days (tests.unit.test_strategy_halts.TestEventBlockRule.test_default_window_days) ... ok
+test_negative_days_rejected (tests.unit.test_strategy_halts.TestEventBlockRule.test_negative_days_rejected) ... ok
+test_non_mapping_events_rejected (tests.unit.test_strategy_halts.TestEventBlockRule.test_non_mapping_events_rejected) ... ok
+test_valid_rule (tests.unit.test_strategy_halts.TestEventBlockRule.test_valid_rule) ... ok
+test_inside_window (tests.unit.test_strategy_halts.TestEventBlocked.test_inside_window) ... ok
+test_invalid_inputs (tests.unit.test_strategy_halts.TestEventBlocked.test_invalid_inputs) ... ok
+test_malformed_event_date_fails_closed (tests.unit.test_strategy_halts.TestEventBlocked.test_malformed_event_date_fails_closed) ... ok
+test_no_events_never_blocked (tests.unit.test_strategy_halts.TestEventBlocked.test_no_events_never_blocked) ... ok
+test_other_symbol_not_blocked (tests.unit.test_strategy_halts.TestEventBlocked.test_other_symbol_not_blocked) ... ok
+test_outside_window (tests.unit.test_strategy_halts.TestEventBlocked.test_outside_window) ... ok
+test_wider_window (tests.unit.test_strategy_halts.TestEventBlocked.test_wider_window) ... ok
+test_daily_move_exceeds_atr_threshold (tests.unit.test_strategy_halts.TestVolatilityHalt.test_daily_move_exceeds_atr_threshold) ... ok
+test_daily_move_within_threshold (tests.unit.test_strategy_halts.TestVolatilityHalt.test_daily_move_within_threshold) ... ok
+test_drop_also_halts (tests.unit.test_strategy_halts.TestVolatilityHalt.test_drop_also_halts) ... ok
+test_gap_exceeds_2g (tests.unit.test_strategy_halts.TestVolatilityHalt.test_gap_exceeds_2g) ... ok
+test_gap_within_2g (tests.unit.test_strategy_halts.TestVolatilityHalt.test_gap_within_2g) ... ok
+test_invalid_inputs (tests.unit.test_strategy_halts.TestVolatilityHalt.test_invalid_inputs) ... ok
+test_begin_day_requires_daily_bars (tests.unit.test_strategy_engine.TestEngineGates.test_begin_day_requires_daily_bars) ... ok
+test_data_quality_halt (tests.unit.test_strategy_engine.TestEngineGates.test_data_quality_halt) ... ok
+test_disabled_symbol_rejected (tests.unit.test_strategy_engine.TestEngineGates.test_disabled_symbol_rejected) ... ok
+test_event_block_halt (tests.unit.test_strategy_engine.TestEngineGates.test_event_block_halt) ... ok
+test_insufficient_cash_blocks_buy (tests.unit.test_strategy_engine.TestEngineGates.test_insufficient_cash_blocks_buy) ... ok
+test_lifo_picks_newest_lot (tests.unit.test_strategy_engine.TestEngineGates.test_lifo_picks_newest_lot) ... ok
+test_no_basis_halts (tests.unit.test_strategy_engine.TestEngineGates.test_no_basis_halts) ... ok
+test_open_lots_snapshot_frozen (tests.unit.test_strategy_engine.TestEngineGates.test_open_lots_snapshot_frozen) ... ok
+test_pending_order_blocks_duplicate (tests.unit.test_strategy_engine.TestEngineGates.test_pending_order_blocks_duplicate) ... ok
+test_record_sell_fill_enforces_lifo (tests.unit.test_strategy_engine.TestEngineGates.test_record_sell_fill_enforces_lifo) ... ok
+test_strict_constructor_types (tests.unit.test_strategy_engine.TestEngineGates.test_strict_constructor_types) ... ok
+test_target_ceiling_blocks_buy (tests.unit.test_strategy_engine.TestEngineGates.test_target_ceiling_blocks_buy) ... ok
+test_time_window_blocks_buy_near_close (tests.unit.test_strategy_engine.TestEngineGates.test_time_window_blocks_buy_near_close) ... ok
+test_time_window_blocks_buy_near_open (tests.unit.test_strategy_engine.TestEngineGates.test_time_window_blocks_buy_near_open) ... ok
+test_buy_at_dip (tests.unit.test_strategy_engine.TestScenarioA.test_buy_at_dip) ... ok
+test_no_action_above_buy_level (tests.unit.test_strategy_engine.TestScenarioA.test_no_action_above_buy_level) ... ok
+test_sell_at_rebound_core_unchanged (tests.unit.test_strategy_engine.TestScenarioA.test_sell_at_rebound_core_unchanged) ... ok
+test_two_lots_then_capacity_full (tests.unit.test_strategy_engine.TestScenarioB.test_two_lots_then_capacity_full) ... ok
+test_gap_triggers_volatility_halt (tests.unit.test_strategy_engine.TestScenarioC.test_gap_triggers_volatility_halt) ... ok
+test_halt_persists_for_the_day (tests.unit.test_strategy_engine.TestScenarioC.test_halt_persists_for_the_day) ... ok
+test_core_floor_breach_rejects_sell (tests.unit.test_strategy_engine.TestScenarioD.test_core_floor_breach_rejects_sell) ... ok
+test_insufficient_available_volume_rejects_sell (tests.unit.test_strategy_engine.TestScenarioD.test_insufficient_available_volume_rejects_sell) ... ok
+test_position_invariant_rejects_sell (tests.unit.test_strategy_engine.TestScenarioD.test_position_invariant_rejects_sell) ... ok
+test_sell_reservation_conflict_rejects_sell (tests.unit.test_strategy_engine.TestScenarioD.test_sell_reservation_conflict_rejects_sell) ... ok
+
+----------------------------------------------------------------------
+Ran 110 tests in 0.015s
+
+OK
+===== compileall =====
+compileall_exit=0
+===== AST forbidden-API scan =====
+AST_SCAN files=35 forbidden=0
+AST_SCAN_PASS
+===== full regression =====
+748 tests OK (638 + 110 strategy)
+

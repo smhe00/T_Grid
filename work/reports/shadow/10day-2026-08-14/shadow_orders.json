@@ -1,0 +1,38 @@
+[
+  {
+    "symbol": "510300.SH",
+    "side": "WOULD_BUY",
+    "qty": 100,
+    "limit_price": 4.651,
+    "bar_time": "2026-08-03T09:45:00",
+    "decision_kind": "BUY_T",
+    "reason": "BUY_TRIGGERED"
+  },
+  {
+    "symbol": "510300.SH",
+    "side": "WOULD_BUY",
+    "qty": 100,
+    "limit_price": 4.595,
+    "bar_time": "2026-08-03T14:05:00",
+    "decision_kind": "BUY_T",
+    "reason": "BUY_TRIGGERED"
+  },
+  {
+    "symbol": "510300.SH",
+    "side": "WOULD_SELL",
+    "qty": 100,
+    "limit_price": 4.659,
+    "bar_time": "2026-08-04T13:40:00",
+    "decision_kind": "SELL_T",
+    "reason": "EXIT_TRIGGERED"
+  },
+  {
+    "symbol": "510300.SH",
+    "side": "WOULD_SELL",
+    "qty": 100,
+    "limit_price": 4.668,
+    "bar_time": "2026-08-04T14:10:00",
+    "decision_kind": "SELL_T",
+    "reason": "EXIT_TRIGGERED"
+  }
+]

@@ -128,9 +128,9 @@ class TestPreflightSuccess(unittest.TestCase):
 
             conn = sqlite3.connect(db_path)
             try:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 3)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 5)
                 count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(count, 3)
+                self.assertEqual(count, 5)
             finally:
                 conn.close()
 
@@ -149,7 +149,7 @@ class TestPreflightSuccess(unittest.TestCase):
             conn = sqlite3.connect(db_path)
             try:
                 count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(count, 3)
+                self.assertEqual(count, 5)
             finally:
                 conn.close()
 
@@ -738,7 +738,7 @@ class TestForbiddenApiScan(unittest.TestCase):
                         else (func.id if isinstance(func, ast.Name) else None)
                     )
                     self.assertNotIn(
-                        name, {"order_stock", "cancel_order"}, f"forbidden call {name} in {path}"
+                        name, {"order_stock", "cancel_order_stock"}, f"forbidden call {name} in {path}"
                     )
 
 

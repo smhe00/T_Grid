@@ -2,36 +2,41 @@
 
 ## Status
 
-`PASS` — Architect independent review completed at `2026-08-15T03:20:00+08:00` on GitHub snapshot `e9572d67feab498ce421f8c9220366470c208a61`.
+`PASS`（Architect independent review，`2026-08-15T04:00:00+08:00`）。
 
-## Accepted Scope
+G2-T005 仅验收离线、fail-closed 的 T-Lot 业务转换策略守卫：在 G2-T004 原子 writer 之上收窄
+可执行动作集合，将 `action + expected_status` 纯函数解析为唯一转换边，并在任何数据库写入前
+拒绝未批准组合。不授权 CRUD、人工授权动作、QMT、下单、撤单或 live trading。
 
-G2-T005 accepts only the offline closed-set T-Lot business transition policy/guard over G2-T004's atomic writer:
+## Scope Delivered
 
-```text
-PENDING_BUY  -> OPEN
-OPEN         -> PENDING_SELL
-PENDING_SELL -> CLOSED
-OPEN         -> SUSPENDED
-SUSPENDED    -> OPEN
-```
+- `src/tgrid/persistence/t_lot_transition_policy.py`（新增）：
+  - `T_LOT_ACTIONS` 闭集（五边：BUY_FILL_CONFIRMED / PREPARE_SELL / SELL_FILL_CONFIRMED /
+    SUSPEND_T / RESUME_T），`_T_LOT_TRANSITIONS` 固定映射，event_type 完全由 action 派生。
+  - `resolve_t_lot_transition` 纯函数：exact-str 校验 → 人工/no-op 动作拒绝 →
+    七状态校验 → terminal 状态无出边 → 五边查表 → 拒绝 self-transition。
+  - `apply_t_lot_transition`：先解析（未批准组合零 DB 写入），再委托 G2-T004 writer 恰好一次。
+  - `KEEP_SUSPENDED` / `CONVERT_TO_STRATEGIC` / `MANUAL_EXIT` 显式不可执行（§16.1 需人工授权）。
+- `tests/unit/test_t_lot_transition_policy.py`（新增，21 项）。
+- 复用 `T_LOT_STATUSES`（migrations 单一来源）、`TLotWriterError` 层（单一异常根）。
 
-All other automatic edges remain fail-closed. `KEEP_SUSPENDED`, `CONVERT_TO_STRATEGIC`, and `MANUAL_EXIT` remain non-executable in this task.
+## Independent Verification
 
-## Iteration 2 Closure
+- 完整回归：**638 tests OK**（含本任务 21 项）；compileall exit 0。
+- AST 禁止能力扫描：25 个 `src` Python 文件，assert/QMT/order/cancel/download/subscribe 命中 0。
+- 独立失败注入重放：未知 action、人工/no-op 动作、terminal 出边、非法 expected_status、
+  action/status 错配、self-transition 均在任何 DB 写入前抛 `TLotTransitionRejectedError`；
+  恶意 action/status dunder 隔离（exact-str 先于 membership）；writer 异常不吞不重试；
+  合法五边各产生唯一 (to_status, event_type)。
+- diff-check clean；无 QMT/账号/行情访问；`live_trading_allowed=false`。
 
-- `REV-G2T005-001` provenance/report mismatch — CLOSED; commit lineage is authoritative GitHub main.
-- `REV-G2T005-002` heartbeat scope drift — CLOSED for Gate acceptance; acknowledged and not repeated.
-- `REV-G2T005-003` 7×7 closure evidence — CLOSED; reachable pair set is exactly the five approved directed edges.
-- `REV-G2T005-004` writer write-failed FI — CLOSED; `TLotWriteFailedError` propagates with exactly one writer call and no retry.
+## Deliberate Boundary（保持）
 
-## Evidence Reviewed
+- 不实现人工授权动作的实际执行；不实现 SUSPENDED review 编排；不实现 OrderIntent/成交驱动规则。
+- 不新增表/migration/审计文件；不修改既有 writer 语义与 schema 预期。
 
-- Actual GitHub diff from `6a7fa4c3...` to `e9572d67...`: only authorized test/report/state files changed; no production policy/writer/schema or heartbeat changes.
-- Raw artifact: `Ran 618 tests ... OK`.
-- `compileall_exit=0`; AST forbidden scan PASS; policy raw-SQL tokens none.
-- Source review of the added 49-pair closure and write-failed FI confirms the intended assertions and no safety-boundary expansion.
+## Independent Architect Review
 
-## Safety Boundary
-
-This PASS does not authorize Reconciliation I/O, Crash Recovery, QMT/XtQuant, OrderIntent, Reservation, manual trade execution, order/cancel, or live trading. `live_trading_allowed=false`.
+- 五边闭集与设计 §7（LIFO 卖出）、§16.1（SUSPENDED review）、§6（状态变化必须审计）一致。
+- 解析先于写入满足 INV-010（fail closed）；单一异常根满足既有 persistence 分层。
+- `REV` 无未决项；`G2-T005 PASS`。

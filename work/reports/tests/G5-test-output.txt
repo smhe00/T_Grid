@@ -1,0 +1,24 @@
+test_assembler_strict_types (tests.unit.test_shadow.TestDailyReportAndAssembler.test_assembler_strict_types) ... ok
+test_build_shadow_reports (tests.unit.test_shadow.TestDailyReportAndAssembler.test_build_shadow_reports) ... ok
+test_daily_report_shape (tests.unit.test_shadow.TestDailyReportAndAssembler.test_daily_report_shape) ... ok
+test_no_order_stock_in_shadow_source (tests.unit.test_shadow.TestNoBrokerSurface.test_no_order_stock_in_shadow_source) ... ok
+test_exact_match (tests.unit.test_shadow.TestReconciliation.test_exact_match) ... ok
+test_invalid_position_rejected (tests.unit.test_shadow.TestReconciliation.test_invalid_position_rejected) ... ok
+test_mismatch_flagged (tests.unit.test_shadow.TestReconciliation.test_mismatch_flagged) ... ok
+test_rejections_counted_as_violations (tests.unit.test_shadow.TestShadowOrderGeneration.test_rejections_counted_as_violations) ... ok
+test_signal_log_records_every_bar (tests.unit.test_shadow.TestShadowOrderGeneration.test_signal_log_records_every_bar) ... ok
+test_would_buy_recorded_not_sent (tests.unit.test_shadow.TestShadowOrderGeneration.test_would_buy_recorded_not_sent) ... ok
+test_would_sell_recorded_with_fill_assumption (tests.unit.test_shadow.TestShadowOrderGeneration.test_would_sell_recorded_with_fill_assumption) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.021s
+
+OK
+===== compileall =====
+compileall_exit=0
+===== AST forbidden-API scan =====
+AST_SCAN files=43 forbidden=0 (order_stock/cancel_order_stock/cancel_order none in shadow)
+AST_SCAN_PASS
+===== full regression =====
+794 tests OK (783 + 11 shadow)
+

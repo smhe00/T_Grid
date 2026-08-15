@@ -273,7 +273,7 @@ class TestAtomicity(unittest.TestCase):
             self.assertEqual(lot, (PENDING_SELL, "t1"))
             self.assertEqual(_audit_count(conn), 1)
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 3
+                conn.execute("PRAGMA user_version").fetchone()[0], 5
             )
         finally:
             conn.close()
