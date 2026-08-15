@@ -71,15 +71,19 @@ def resolve_basis(dividend_type: str) -> str:
 
 
 def _parse_iso_time(value) -> str:
-    # xtdata timestamps look like 20260814093500 -> 2026-08-14T09:35:00.
+    # xtdata daily timestamps look like 20260105 (8 digits); intraday ones look
+    # like 20260814093500 (14 digits) -> 2026-08-14T09:35:00.  A daily row is
+    # stamped at 15:00 (session close) so ordering stays monotonic.
     text = str(value)
     digits = "".join(ch for ch in text if ch.isdigit())
-    if len(digits) < 14:
-        raise ShadowInputError("market-data timestamp is not parseable")
-    return (
-        f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}T"
-        f"{digits[8:10]}:{digits[10:12]}:{digits[12:14]}"
-    )
+    if len(digits) == 8:
+        return f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}T15:00:00"
+    if len(digits) >= 14:
+        return (
+            f"{digits[0:4]}-{digits[4:6]}-{digits[6:8]}T"
+            f"{digits[8:10]}:{digits[10:12]}:{digits[12:14]}"
+        )
+    raise ShadowInputError("market-data timestamp is not parseable")
 
 
 def fetch_bars(

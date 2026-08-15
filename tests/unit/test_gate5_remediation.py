@@ -58,8 +58,9 @@ class _FakeRow(dict):
 class _FakeXtdata:
     """Records the exact arguments passed to get_market_data_ex."""
 
-    def __init__(self):
+    def __init__(self, index=None):
         self.calls = []
+        self._index = index or ["20260813093500", "20260813094000"]
 
     def get_market_data_ex(self, field_list, stock_list, period, **kwargs):
         self.calls.append({
@@ -72,7 +73,7 @@ class _FakeXtdata:
             _FakeRow(open="10.0", high="10.5", low="9.9", close="10.2", volume="1000"),
             _FakeRow(open="10.2", high="10.8", low="10.1", close="10.6", volume="1200"),
         ]
-        return {"510300.SH": _FakeFrame(rows, ["20260813093500", "20260813094000"])}
+        return {"510300.SH": _FakeFrame(rows, self._index)}
 
 
 class TestAudR1001BasisBinding(unittest.TestCase):
@@ -135,6 +136,29 @@ class TestAudR1001BasisBinding(unittest.TestCase):
             )
         # No underlying call was made for the rejected mode.
         self.assertEqual(len(fake.calls), 0)
+
+    def test_fetch_bars_daily_8digit_timestamp(self):
+        # Daily (1d) xtdata rows use 8-digit date indexes (e.g. 20260105).
+        fake = _FakeXtdata(index=["20260105", "20260106"])
+        bars, binding = fetch_bars(
+            fake, code="510300.SH", period="1d",
+            start_time="20260101", end_time="20260110",
+            dividend_type="front",
+        )
+        self.assertEqual(len(bars), 2)
+        self.assertEqual(bars[0].time, "2026-01-05T15:00:00")
+        self.assertEqual(bars[1].time, "2026-01-06T15:00:00")
+        self.assertEqual(bars[0].kind, "DAILY")
+        self.assertEqual(binding.price_basis, "ADJUSTED")
+
+    def test_fetch_bars_unparseable_timestamp_fails_closed(self):
+        fake = _FakeXtdata(index=["not-a-timestamp"])
+        with self.assertRaises(ShadowInputError):
+            fetch_bars(
+                fake, code="510300.SH", period="1d",
+                start_time="20260101", end_time="20260110",
+                dividend_type="front",
+            )
 
 
 class TestAudR1002Settlement(unittest.TestCase):

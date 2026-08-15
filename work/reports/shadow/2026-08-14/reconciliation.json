@@ -1,8 +1,8 @@
 [
   {
     "symbol": "510300.SH",
-    "shadow_position": 0,
     "broker_position": 0,
+    "local_expected_position": 0,
     "delta": 0,
     "reconciled": true
   }

@@ -40,6 +40,15 @@ work/locks/WORKTREE_LEASE.yaml
 !work/reports/
 !work/reports/**
 
+# Live-shadow runs against real accounts may embed real holding quantities.
+# Such artifacts are kept local-only; committed evidence must be sanitized or
+# synthesized (AUD-R1-005).  The zero-position replay (held=0) is safe to
+# commit; nonzero-position live reports are excluded by the "nonzero-*" and
+# "*-held-*" directory naming used by the live runner.
+work/reports/shadow/nonzero-*/
+work/reports/shadow/*-nonzero-*/
+work/reports/shadow/held-*/
+
 # Editor / OS noise
 .DS_Store
 Thumbs.db

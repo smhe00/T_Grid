@@ -1,0 +1,18 @@
+{
+  "class": "REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT",
+  "basis": {
+    "daily": {
+      "dividend_type": "front",
+      "price_basis": "ADJUSTED"
+    },
+    "5m": {
+      "dividend_type": "none",
+      "price_basis": "RAW"
+    }
+  },
+  "settlement": {
+    "symbol": "510300.SH",
+    "rule": "T1"
+  },
+  "run_days": 10
+}

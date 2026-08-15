@@ -74,9 +74,13 @@
 - 回归：`python -m unittest discover -s tests -p "test_*.py"` → **818 tests OK**。
 - `python -m compileall -q src tests` → exit 0。
 - AST 扫描（`assert` / `order_stock` / `cancel_order_stock` / `xtquant` import）→ 0 命中。
-- 实机 shadow 证据（修复后刷新）：`work/reports/shadow/*/{shadow_orders,signal_log,
-  reconciliation,shadow_delta,daily_report,evidence}.json`，含零真实持仓与非零真实
-  持仓场景、结算策略与复权口径证据。
+- 实机 shadow 证据（修复后刷新）：
+  - 零真实持仓（510300.SH，10 日历史回放）：`work/reports/shadow/10day-2026-08-14/`
+    （reconciliation `reconciled:true`、shadow_delta 独立、evidence.json 含 basis/
+    settlement/run_days；4 条 WOULD 订单、PnL +13.3、无 halt）。
+  - 非零真实持仓（511010.SH，5 日回放）：本地 artifact（含真实持仓数值，按
+    AUD-R1-005 不提交，`.gitignore` 排除 `work/reports/shadow/nonzero-*/`）；
+    离线合成脱敏版见 `work/reports/shadow/remediation-evidence/nonzero-core-position/`。
 
 ## 未决 / 移交
 
