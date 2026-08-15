@@ -4,27 +4,33 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 21
-handoff_id: "NODEB-I2-REMEDIATION-DONE-20260815-021"
-authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
+handoff_seq: 22
+handoff_id: "NODEB-RR-CONFORMANCE-FIX-20260815-022"
+authorized_next:
+  - "NODEB-PRELIVE-REFERENCE-CONFORMANCE-FIX"
 design_version: "1.1"
 gate: 5.5
-task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
-state: "AUDIT_READY_PRELIVE"
+task_id: "NODEB-PRELIVE-REFERENCE-CONFORMANCE-FIX"
+state: "CHANGES_REQUIRED"
 owner: "dsh"
-iteration: 3
-last_actor: "dsh"
-last_update: "2026-08-15T14:00:00+08:00"
+iteration: 4
+last_actor: "independent_auditor"
+last_update: "2026-08-15T14:48:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER2_20260815.md"
-git_base_commit: "cb7aeb660661811673b873171b76957aa5af1f07"
-git_head_commit: "469116c83ca94d4b93a0f0aefb50ec687450d15d"
-implementation_commit: "469116c83ca94d4b93a0f0aefb50ec687450d15d"
+audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER3_REFERENCE_20260815.md"
+git_base_commit: "2146f09e689ed2fc07c943e2bf7cd2a7609a8a2e"
+git_head_commit: "2146f09e689ed2fc07c943e2bf7cd2a7609a8a2e"
+audit_target_commit: "2146f09e689ed2fc07c943e2bf7cd2a7609a8a2e"
+reviewed_implementation_commit: "469116c83ca94d4b93a0f0aefb50ec687450d15d"
+previous_independent_audit_commit: "cb7aeb600661811673b873171b76957aa5af1f07"
+accepted_gate5_implementation_commit: "5a2e2fd32e21328badd1ceb2c92b973436c4c95a"
+reference_repository: "https://github.com/smhe00/reverse_repo"
+reference_commit: "c9ecc701d9b1c47d6a8d03539b482368741204a3"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
+next_independent_audit: "AUDIT_NODE_B_AFTER_REFERENCE_CONFORMANCE_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Node B Iteration-2 audit cb7aeb6 = CHANGES_REQUIRED (NODEB-I2-001..006). Iteration 3 remediation complete (SELF_CERTIFIED): native int XtQuant order-id contract (fake trader int ids, single audited str->int conversion, cancel receives int); UNKNOWN/ambiguous state fail-closed (poll_order raises + SAFE_MODE gate, recovery rejects UNKNOWN/multi-match); bridge wired to real TGrid EventQueue with disconnect/account-status/order-error/cancel-error immutable events and execution_healthy health signal; durable exposure crash-safety (required durable store, exposure_ready startup gate, pre-send reservation, terminal same-day reconstruction, ISO date validation, trusted-session roll); ExecutionEngine math.isfinite before any store/broker call; single build_live_stack production bootstrap factory (cannot order before activate; ambiguous recovery fails closed). 929 tests OK; compileall 0; capability scan PASS (2 bridge call sites, 0 outside). No real order/cancel invoked. State AUDIT_READY_PRELIVE, awaiting independent Audit Node B re-review; Gate 6/7 BLOCKED; live_trading_allowed=false."
+notes: "Audit Node B Iteration 3 verdict CHANGES_REQUIRED after user identified smhe00/reverse_repo as the production miniQMT reference. This supersedes any broader partial-review speculation and narrows the final remediation to reference-conformance only. Accepted/frozen: BrokerPort/live chain, native int order-id boundary, UNKNOWN->SAFE_MODE, multiple-match rejection, immutable EventQueue callbacks, kill-switch cancel behavior, reservation+idempotency, pre-send BUY exposure reservation, executor/adapter NaN/Inf hardening, legacy Core guard, single real XtQuant call bridge. Remaining only NODEB-RR-001..006: production account/environment/QMT-path binding must reuse Gate1/reverse_repo; strict query None/retry semantics; mandatory startup recovery and reconciliation-only SAFE_MODE release; concrete durable exposure journal + trusted session rollover; actual EventQueue/disconnect health gating; exact metadata SHA. reverse_repo commit c9ecc701d9b1c47d6a8d03539b482368741204a3 is the QMT golden reference. Gate 6/7 BLOCKED; live_trading_allowed=false; no real TGrid order/cancel authorized."
