@@ -22,8 +22,11 @@
 > **ExecutionMutex 跨进程执行互斥**（`execution_lock_path` 可选开启，同一交易日
 > 最多一个执行进程，争用 fail-closed）；**SUBMIT_UNKNOWN remark 反查恢复**
 > （`recover_unknown_submission`：唯一匹配→RECOVERED_*，0 匹配→SAFE_HALT
-> 禁自动重发，查询失败/多匹配/身份不一致→RECOVERY_AMBIGUOUS→SAFE_HALT+SAFE_MODE）。
-> 回归 **996 tests OK**。
+> 禁自动重发，查询失败/多匹配/身份不一致→RECOVERY_AMBIGUOUS→SAFE_HALT+SAFE_MODE）；
+> **journal 驱动崩溃恢复**（reload 中继机器 → RESTART→RECOVERY，启动对账后按
+> reconcile 结果驱动 RECOVERY_ACTIVE/CANCEL_PENDING/TERMINAL/CLEAR；终态
+> journal 拒绝重复激活 fail-closed）。
+> 回归 **998 tests OK**。
 > `live_trading_allowed=false`；真实资金 Gate 6/7 仍 BLOCKED，须用户另行显式授权。
 
 | Gate | 内容 | 当前状态 | 说明 / 验收证据 |
@@ -42,7 +45,7 @@
 ## 当前测试证据（SELF_CERTIFIED）
 
 ```text
-python -m unittest discover -s tests -p "test_*.py"   # 996 tests OK
+python -m unittest discover -s tests -p "test_*.py"   # 998 tests OK
 python -m compileall -q src tests                      # exit 0
 src AST 扫描（assert / xtquant import / 桥外 order_stock/cancel_order_stock）: 0 命中
 capability_scan: 真实 order/cancel 调用点仅限 xtquant_bridge.py（桥内 2、桥外 0）

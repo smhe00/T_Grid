@@ -39,6 +39,14 @@ pinned commit `c9ecc701d9b1c47d6a8d03539b482368741204a3`。
      订单可能已到达 broker）；
    - 查询失败 / 多匹配 / 身份不一致 / 未知状态 → `RECOVERY_AMBIGUOUS` →
      SAFE_HALT + SAFE_MODE（fail-closed，绝不静默降级）。
+3. **journal 驱动崩溃恢复**：`LiveStack.activate()` 按**加载的机器状态**选择
+   启动事件——全新 journal（NEW）→ BEGIN→PREFLIGHT_OK；**崩溃/中断恢复**
+   （PREFLIGHT/WAIT_TRIGGER/SNAPSHOT/READY/INTENT/SUBMIT_UNKNOWN/
+   ORDER_ACTIVE/CANCEL_PENDING/RECONCILE）→ **RESTART→RECOVERY**；
+   终态 journal（DONE/SKIPPED/SAFE_HALT）→ `LiveBootstrapError` fail-closed
+   （机器无出边，拒绝重复激活）。启动对账后按 reconcile 结果驱动机器出口：
+   MATCHED 非终态 → RECOVERY_ACTIVE/CANCEL_PENDING，MATCHED 终态 →
+   RECOVERY_TERMINAL，干净恢复 → RECOVERY_CLEAR。
 
 ### 验证产物（可复算）
 
@@ -55,14 +63,13 @@ verify_state_machines():
 
 ### Evidence
 
-- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **996 tests OK**
-  （较 980 新增 16：ExecutionMutex 6（含同进程争用/超时轮询/上下文管理器）、
-  SUBMIT_UNKNOWN 反查恢复 9（ACTIVE/CANCEL_PENDING/TERMINAL/NO_MATCH/
-  多匹配/身份不一致/查询失败/状态门/plain 模式拒绝）、LiveStack 锁串行化 1）。
+- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **998 tests OK**
+  （较 980 新增 18：ExecutionMutex 6、SUBMIT_UNKNOWN 反查恢复 9、LiveStack
+  锁串行化 1、journal 崩溃恢复重启 1、终态 journal 拒绝激活 1）。
 - `python -m compileall -q src tests scripts` → exit 0。
 - 新增：`src/tgrid/execution/execution_mutex.py`；修改：`executor.py`、
-  `live_bootstrap.py`、`statemachine.py`（EXECUTION_SOURCE_FILES +1）、
-  `execution/__init__.py`、`tgrid/__init__.py`、
+  `live_bootstrap.py`（崩溃恢复启动事件 + 恢复出口分类）、`statemachine.py`
+  （EXECUTION_SOURCE_FILES +1）、`execution/__init__.py`、`tgrid/__init__.py`、
   `tests/unit/test_execution_mutex.py`（新增）、`test_execution_statemachine.py`、
   `test_live_bootstrap.py`。
 - 诚实声明：状态机移植为**新能力**，未经 Audit Node B 复审，不取代 PASS_PRELIVE；
@@ -131,7 +138,7 @@ verify_state_machines():
 ## Evidence
 
 - 回归（Iteration 9，最新）：`python -m unittest discover -s tests -p "test_*.py"`
-  → **996 tests OK**；`python -m compileall -q src tests scripts` → exit 0。
+  → **998 tests OK**；`python -m compileall -q src tests scripts` → exit 0。
 - Iteration 8：**980 tests OK**；Iteration 7（RR6 关闭）：**957 tests OK**；
   capability 扫描：真实 `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处
   （白名单）、桥外 0 处**；`RESULT: PASS`。

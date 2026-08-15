@@ -32,9 +32,14 @@ Real-money Gate 6/7 remain BLOCKED until explicit user authorization.
    RECOVERED_ACTIVE/CANCEL_PENDING/TERMINAL；**0 匹配 → RECOVERED_NO_MATCH →
    SAFE_HALT 禁自动重发**；查询失败/多匹配/身份不一致/未知状态 →
    RECOVERY_AMBIGUOUS → SAFE_HALT + SAFE_MODE；
-5. `ExecutionEngine` 成对接入（machine+journal 必须同时提供；send/poll/timeout
+5. **journal 驱动崩溃恢复** — `LiveStack.activate()` 按加载机器状态选择启动事件：
+   全新 journal → BEGIN→PREFLIGHT_OK；崩溃/中断（PREFLIGHT..RECONCILE）→
+   **RESTART→RECOVERY**；终态 journal（DONE/SKIPPED/SAFE_HALT）→
+   `LiveBootstrapError` fail-closed。启动对账后按 reconcile 结果驱动机器出口
+   （RECOVERY_ACTIVE/CANCEL_PENDING/TERMINAL/CLEAR）；
+6. `ExecutionEngine` 成对接入（machine+journal 必须同时提供；send/poll/timeout
    驱动机器事件，转移先于外部副作用原子落盘）；
-6. `LiveStack`（`journal_path` 可选开启）— `activate()` 驱动
+7. `LiveStack`（`journal_path` 可选开启）— `activate()` 驱动
    BEGIN→PREFLIGHT_OK→RECOVERY_CLEAR/AMBIGUOUS，并在 BEGIN 前
    **fail-closed 校验 journal 绑定**（已绑定哈希失配 → `LiveBootstrapError`，
    绝不静默重绑；显式 `bind_machine_verification()` 为唯一恢复路径）。
@@ -42,8 +47,8 @@ Real-money Gate 6/7 remain BLOCKED until explicit user authorization.
 验证产物：39 可达抽象状态 / 115 转移 / 0 不可达 / 0 无终态路径 / 0 不变量违例；
 `transition_spec_sha256=7d9959dd...`、`execution_source_sha256=92118bb1...`
 （7 个执行源文件真实内容绑定）。
-回归 **996 tests OK**（+16：ExecutionMutex 6、remark 反查恢复 9、锁串行化 1）；
-compileall exit 0。
+回归 **998 tests OK**（+18：ExecutionMutex 6、remark 反查恢复 9、锁串行化 1、
+崩溃恢复重启 1、终态 journal 拒绝 1）；compileall exit 0。
 
 **诚实声明**：状态机移植为**新能力**，未经 Audit Node B 复审，不取代 PASS_PRELIVE
 （`e252847`）；首笔真实订单前建议纳入 Node B 复审。

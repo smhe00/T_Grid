@@ -1208,6 +1208,109 @@ class TestLiveStackStateMachine(unittest.TestCase):
             if os.path.exists(lock_path):
                 os.remove(lock_path)
 
+    def test_stack_journal_crash_recovery_restarts_machine(self):
+        """Reloaded mid-flight journal: RESTART -> RECOVERY -> RECOVERY_ACTIVE."""
+        import tempfile as _tf
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-crash.json")
+        queue_a = EventQueue(lambda e: None, maxsize=100)
+        queue_b = EventQueue(lambda e: None, maxsize=100)
+        try:
+            store_a = ExecutionStore(conn)
+            stack_a = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store_a,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue_a, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                config_live_enabled=True, journal_path=journal_path,
+            )
+            stack_a.activate(token="startup-token")
+            result = stack_a.engine.send_buy(
+                client_order_key="K1", symbol="510300.SH", qty=100,
+                limit_price=4.6, order_remark="TG_510300SH_B001", now="t0",
+                expected_available_cash=100000.0, reserved_cash=460.0,
+            )
+            self.assertEqual(result.status, OrderStatus.SUBMITTED)
+            self.assertEqual(stack_a.engine.machine.state.value, "order_active")
+            # "Crash": stack_a is abandoned mid-flight.  Restart with the SAME
+            # journal + store + trader (the broker still holds the order).
+            store_b = ExecutionStore(conn)
+            stack_b = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store_b,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue_b, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                config_live_enabled=True, journal_path=journal_path,
+            )
+            # Loaded machine was at ORDER_ACTIVE -> RESTART -> RECOVERY; the
+            # mandatory reconciliation finds the SUBMITTED broker order ->
+            # RECOVERY_ACTIVE -> ORDER_ACTIVE (journal-driven crash recovery).
+            stack_b.activate(token="startup-token")
+            self.assertEqual(stack_b.engine.machine.state.value, "order_active")
+        finally:
+            queue_a.stop()
+            queue_a.join(timeout=1.0)
+            queue_b.stop()
+            queue_b.join(timeout=1.0)
+            conn.close()
+            if os.path.exists(journal_path):
+                os.remove(journal_path)
+
+    def test_stack_activate_refuses_terminal_journal(self):
+        """A DONE/SAFE_HALT journal cannot be re-activated (fail closed)."""
+        import tempfile as _tf
+
+        from tgrid.execution.execution_journal import ExecutionJournal
+        from tgrid.execution.statemachine import (
+            TGridEvent,
+            advance,
+            initial_snapshot,
+            snapshot_to_payload,
+        )
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-done.json")
+        queue = EventQueue(lambda e: None, maxsize=100)
+        try:
+            # Drive a journal to DONE deterministically (one order cycle).
+            journal = ExecutionJournal(journal_path, strategy="TGRID",
+                                       trade_date="2026-08-15")
+            snapshot = initial_snapshot()
+            for event in (
+                TGridEvent.BEGIN,
+                TGridEvent.PREFLIGHT_OK,
+                TGridEvent.RECOVERY_CLEAR,
+                TGridEvent.TRIGGER,
+                TGridEvent.SNAPSHOT_OK,
+                TGridEvent.INTENT_PERSISTED,
+                TGridEvent.SUBMIT_ACCEPTED,
+                TGridEvent.ORDER_TERMINAL,
+                TGridEvent.RECONCILED,
+            ):
+                snapshot = advance(snapshot, event)
+                journal.transition(event, snapshot_to_payload(snapshot))
+            self.assertEqual(snapshot.state.value, "done")
+            store = ExecutionStore(conn)
+            stack = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                journal_path=journal_path,
+            )
+            # DONE has no outgoing transitions: re-activation fails closed.
+            with self.assertRaises(LiveBootstrapError):
+                stack.activate(token="startup-token")
+        finally:
+            queue.stop()
+            queue.join(timeout=1.0)
+            conn.close()
+            if os.path.exists(journal_path):
+                os.remove(journal_path)
+
 
 if __name__ == "__main__":
     unittest.main()

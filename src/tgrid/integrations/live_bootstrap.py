@@ -96,14 +96,35 @@ class LiveStack:
             self.event_queue.start()
         if session_date is not None:
             self.adapter.roll_day(session_date, session_date=session_date)
-        # State machine (reverse_repo port): BEGIN -> PREFLIGHT, then
-        # PREFLIGHT_OK once environment+account are verified by the adapter.
+        # State machine (reverse_repo port): a FRESH machine runs BEGIN ->
+        # PREFLIGHT; a reloaded mid-flight machine (crash recovery) is driven
+        # through RESTART -> RECOVERY instead — BEGIN is only legal from NEW.
         if self.engine.machine is not None:
-            from tgrid.execution.statemachine import TGridEvent
+            from tgrid.execution.statemachine import (
+                TGRID_TERMINAL_STATES,
+                TGridEvent,
+                TGridState,
+            )
 
             self._ensure_journal_verification()
-            self.engine._advance_machine(TGridEvent.BEGIN)
-            self.engine._advance_machine(TGridEvent.PREFLIGHT_OK)
+            state = self.engine.machine.state
+            if state is TGridState.NEW:
+                # First run of a fresh journal: begin preflight.
+                self.engine._advance_machine(TGridEvent.BEGIN)
+                self.engine._advance_machine(TGridEvent.PREFLIGHT_OK)
+            elif state in TGRID_TERMINAL_STATES:
+                # DONE / SKIPPED / SAFE_HALT journals cannot be re-activated
+                # (the machine has no outgoing transitions); fail closed.
+                raise LiveBootstrapError(
+                    "execution journal is in terminal machine state "
+                    f"{state.value}; manual review required before a new session"
+                )
+            else:
+                # Crash/interrupted session: RESTART re-enters RECOVERY so the
+                # mandatory reconciliation below resolves the machine state.
+                self.engine._advance_machine(TGridEvent.RESTART)
+                if self.engine.machine.state is TGridState.PREFLIGHT:
+                    self.engine._advance_machine(TGridEvent.PREFLIGHT_OK)
         # 1) Startup exposure reconstruction (mandatory readiness gate),
         #    joined to durable OrderIntent dates (NODEB-RR4-003).
         self.adapter.reconstruct_daily_exposure(
@@ -132,9 +153,46 @@ class LiveStack:
         if self.engine.machine is not None:
             from tgrid.execution.statemachine import TGridEvent
 
-            self.engine._advance_machine(TGridEvent.RECOVERY_CLEAR)
+            self._advance_recovery_outcome(results)
         # 3) Separate, non-persisted runtime confirmation.
         self.adapter.confirm_runtime(token)
+
+    def _advance_recovery_outcome(self, results) -> None:
+        """Drive the machine out of RECOVERY per the reconcile results.
+
+        reverse_repo recovery semantics: a reconciled non-terminal broker
+        order lands the machine in the matching order state
+        (RECOVERY_ACTIVE / RECOVERY_CANCEL_PENDING), a reconciled terminal
+        order lands in RECONCILE (RECOVERY_TERMINAL), and a clean recovery
+        (nothing unresolved) lands in WAIT_TRIGGER (RECOVERY_CLEAR).
+        Blocked/ambiguous outcomes were already raised by the caller.
+        """
+        from tgrid.execution.statemachine import TGridEvent
+
+        active = [
+            r for r in results
+            if getattr(r, "outcome", None) == "MATCHED"
+            and getattr(r, "broker_status", None) in ("SUBMITTED", "PARTIAL")
+        ]
+        cancel_pending = [
+            r for r in results
+            if getattr(r, "outcome", None) == "MATCHED"
+            and getattr(r, "broker_status", None) == "CANCEL_REQUESTED"
+        ]
+        terminal = [
+            r for r in results
+            if getattr(r, "outcome", None) == "MATCHED"
+            and getattr(r, "broker_status", None)
+            in ("FILLED", "CANCELED", "REJECTED")
+        ]
+        if active:
+            self.engine._advance_machine(TGridEvent.RECOVERY_ACTIVE)
+        elif cancel_pending:
+            self.engine._advance_machine(TGridEvent.RECOVERY_CANCEL_PENDING)
+        elif terminal:
+            self.engine._advance_machine(TGridEvent.RECOVERY_TERMINAL)
+        else:
+            self.engine._advance_machine(TGridEvent.RECOVERY_CLEAR)
 
     def bind_machine_verification(self) -> None:
         """Bind the journal to the current transition-spec + source hashes.
