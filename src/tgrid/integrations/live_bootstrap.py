@@ -99,11 +99,11 @@ class LiveStack:
         self.adapter.confirm_runtime(token)
 
     def reconcile_and_resume(self, *, token: str, session_date: str | None = None) -> None:
-        """Reconciliation-driven SAFE_MODE release (RR-003 / RR4-002).
+        """Reconciliation-driven SAFE_MODE release (RR-003 / RR4-002 / RR5-002).
 
-        Releases SAFE_MODE only through the engine's reconciliation-driven
-        transition — never by flipping a naked boolean.  Re-runs mandatory
-        recovery; on success, resumes new-order capability.
+        The ONLY production SAFE_MODE release path.  It executes authoritative
+        broker/local reconciliation itself, then invokes the engine's internal
+        state transition — no public caller-supplied proof API exists.
         """
         if session_date is not None:
             self.adapter.roll_day(session_date, session_date=session_date)
@@ -111,8 +111,57 @@ class LiveStack:
             intents=self.engine.store.list_intents()
         )
         results = reconcile_open_intents(self.engine.store, self.adapter)
-        self.engine.clear_safe_mode_after_reconciliation(results)
+        self.engine._clear_safe_mode_after_reconciliation(results)
         self.adapter.confirm_runtime(token)
+
+    def recover_after_disconnect(
+        self,
+        *,
+        token: str,
+        session_date: str | None = None,
+    ) -> None:
+        """LiveStack-orchestrated disconnect recovery (NODEB-RR5-003).
+
+        Low-level transport reconnection alone must NOT restore order
+        capability.  Production disconnect recovery runs, in order:
+
+        EventQueue RUNNING -> exact connect success -> bound securities
+        account type/OK-status verification -> subscribe/verification ->
+        exposure reconstruction -> authoritative broker/local reconciliation
+        -> explicit runtime reconfirmation -> only then clear the disconnect
+        latch.
+        """
+        bridge = self.bridge
+        # 1) Transport verification (queue RUNNING + exact connect success).
+        bridge.verify_transport()
+        # 2) Bound account type/status verification.
+        bridge._verify_bound_account_healthy()
+        # 3) Re-subscribe + exact result verification.
+        subscribe_fn = getattr(bridge._trader, "subscribe", None)
+        if not callable(subscribe_fn):
+            raise LiveBootstrapError(
+                "broker has no subscribe surface; disconnect recovery denied"
+            )
+        try:
+            subscribe_result = subscribe_fn(bridge._account)
+        except Exception as exc:  # noqa: BLE001 - broker boundary
+            raise LiveBootstrapError("re-subscribe failed") from exc
+        if type(subscribe_result) is not int or subscribe_result != 0:
+            raise LiveBootstrapError(
+                "re-subscribe did not return the exact success value"
+            )
+        # 4) Exposure reconstruction (mandatory readiness gate).
+        self.adapter.reconstruct_daily_exposure(
+            intents=self.engine.store.list_intents()
+        )
+        # 5) Authoritative broker/local reconciliation; unresolved intents
+        #    keep execution blocked.
+        results = reconcile_open_intents(self.engine.store, self.adapter)
+        self.engine._clear_safe_mode_after_reconciliation(results)
+        # 6) Explicit runtime reconfirmation.
+        self.adapter.confirm_runtime(token)
+        # 7) Only now clear the disconnect latch.
+        bridge._clear_disconnect_latch()
 
 
 def build_live_stack(

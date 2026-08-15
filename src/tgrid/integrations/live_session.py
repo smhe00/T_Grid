@@ -57,6 +57,73 @@ class LiveSessionAccountError(LiveSessionError):
     """Account/environment/path verification failed; order capability denied."""
 
 
+# Gate 5.5 session-binding config: the same strict fields as Gate 1 but the
+# environment is explicitly restricted to exactly {"simulation", "live"} —
+# Gate 1's simulation-only parser is left untouched for Gate 1 (RR5-001).
+_SESSION_FIELDS = frozenset(
+    {
+        "environment",
+        "runtime_config_path",
+        "account_binding_path",
+        "stock_code",
+        "exchange",
+    }
+)
+_ALLOWED_SESSION_ENVIRONMENTS = frozenset({"simulation", "live"})
+
+
+@dataclass(frozen=True)
+class LiveSessionBindingConfig:
+    environment: str
+    runtime_config_path: Path
+    account_binding_path: Path
+    stock_code: str
+    exchange: str
+
+
+def parse_live_session_binding(data: object) -> LiveSessionBindingConfig:
+    """Strict Gate-5.5 session-binding parser (RR5-001).
+
+    Accepts exactly ``simulation`` and ``live``; reuses the same strict JSON /
+    path validation style as Gate 1 but never the simulation-only parser.
+    """
+    from tgrid.integrations.qmt_gate1_runtime import (
+        QmtGate1RuntimeConfigError,
+        _read_json_object,
+        _require_nonempty_str,
+        _require_path,
+        _strict_fields,
+    )
+
+    if not isinstance(data, dict):
+        raise QmtGate1RuntimeConfigError(
+            "live session binding must be a JSON object"
+        )
+    _strict_fields(data, allowed=_SESSION_FIELDS, label="live session binding")
+    environment = _require_nonempty_str(data["environment"], label="environment")
+    if environment not in _ALLOWED_SESSION_ENVIRONMENTS:
+        raise LiveSessionError(
+            "environment must be exactly 'simulation' or 'live'"
+        )
+    return LiveSessionBindingConfig(
+        environment=environment,
+        runtime_config_path=_require_path(
+            data["runtime_config_path"], label="runtime_config_path"
+        ),
+        account_binding_path=_require_path(
+            data["account_binding_path"], label="account_binding_path"
+        ),
+        stock_code=_require_nonempty_str(data["stock_code"], label="stock_code"),
+        exchange=_require_nonempty_str(data["exchange"], label="exchange"),
+    )
+
+
+def load_live_session_binding(path: object) -> LiveSessionBindingConfig:
+    from tgrid.integrations.qmt_gate1_runtime import _read_json_object
+
+    return parse_live_session_binding(_read_json_object(path, label="live session binding"))
+
+
 def _require_exact_zero(value: object, *, label: str) -> None:
     """The reference lifecycle treats a nonzero/wrong-type result as failure."""
     if type(value) is not int or value != 0:
@@ -173,19 +240,20 @@ def build_live_session(
     if type(global_cfg.live_trading) is not bool:
         raise LiveSessionError("global.live_trading must be a plain bool")
 
-    # Separate QMT binding (not the simulation-only Gate-1 parser).
-    gate1: Gate1Config = load_gate1_config(gate1_config_path)
-    if gate1.environment != environment:
+    # Separate QMT binding via the Gate-5.5 session parser (RR5-001); Gate 1's
+    # simulation-only parser is never used here.
+    binding_cfg = load_live_session_binding(gate1_config_path)
+    if binding_cfg.environment != environment:
         raise LiveSessionError(
-            f"binding environment {gate1.environment!r} does not match "
+            f"binding environment {binding_cfg.environment!r} does not match "
             f"requested {environment!r}"
         )
     runtime = load_runtime_config(
-        gate1.runtime_config_path, environment=gate1.environment
+        binding_cfg.runtime_config_path, environment=binding_cfg.environment
     )
     binding = load_account_binding(
-        gate1.account_binding_path,
-        environment=gate1.environment,
+        binding_cfg.account_binding_path,
+        environment=binding_cfg.environment,
         qmt_path=runtime.qmt_path,
     )
 

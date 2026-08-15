@@ -145,18 +145,28 @@ class ExecutionEngine:
             raise ExecutionInputError("safe-mode reason must be a non-empty string")
         self._safe_mode_reason = reason
 
-    def clear_safe_mode_after_reconciliation(self, results: tuple) -> None:
-        """Reconciliation-driven SAFE_MODE release (NODEB-RR4-002).
+    def _clear_safe_mode_after_reconciliation(self, results: tuple) -> None:
+        """INTERNAL reconciliation-driven SAFE_MODE release (NODEB-RR5-002).
 
-        Clears SAFE_MODE ONLY after a successful authoritative broker/local
-        reconciliation: ``results`` must contain no unresolved outcome
-        (``UNMATCHED_BROKER_ORDER`` / ``INTENT_ONLY`` / broker status
-        ``UNKNOWN``).  A caller cannot substitute an unrestricted public flag
-        clear on the production path.
+        Private: production callers MUST go through the LiveStack-orchestrated
+        path (:meth:`tgrid.integrations.live_bootstrap.LiveStack.reconcile_and_resume`),
+        which itself executes authoritative broker/local reconciliation.  This
+        method trusts ONLY the outcome tuple produced by that reconciliation;
+        it is never a public caller-supplied proof API.
         """
         if type(results) is not tuple:
-            raise ExecutionInputError(
-                "reconciliation results must be a tuple"
+            raise ExecutionError("reconciliation results must be a tuple")
+        # NODEB-RR5-002: an empty result is acceptable ONLY when there is
+        # nothing to reconcile.  When non-terminal intents exist, an empty
+        # tuple proves the caller skipped reconciliation and must not clear.
+        open_intents = [
+            i for i in self._store.list_intents()
+            if i.status not in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN")
+        ]
+        if not results and open_intents:
+            raise ExecutionError(
+                "empty reconciliation results with open intents are not proof "
+                "of resolution; SAFE_MODE retained"
             )
         unresolved = [
             r for r in results
@@ -167,14 +177,6 @@ class ExecutionEngine:
             raise ExecutionError(
                 "reconciliation did not resolve all intents; SAFE_MODE retained"
             )
-        self._safe_mode_reason = None
-
-    def clear_safe_mode(self) -> None:
-        """Test-internal/private raw reset hook (NODEB-RR4-002).
-
-        NOT a production path: production SAFE_MODE release must go through
-        :meth:`clear_safe_mode_after_reconciliation`.
-        """
         self._safe_mode_reason = None
 
     def _engage_safe_mode(self, reason: str) -> None:

@@ -291,6 +291,7 @@ class XtQuantBrokerBridge(BrokerPort):
         *,
         strategy_name: str = "TGRID",
         event_sink: object | None = None,
+        account_status_ok: int = 1,
     ) -> None:
         if type(strategy_name) is not str or strategy_name == "":
             raise BrokerError("strategy_name must be a non-empty string")
@@ -298,6 +299,7 @@ class XtQuantBrokerBridge(BrokerPort):
         self._account = account
         self._strategy_name = strategy_name
         self._event_sink = event_sink
+        self._account_status_ok = int(account_status_ok)
         self._disconnected = False
         self._handler = XtQuantCallbackHandler(event_sink) if event_sink is not None else None
         if self._handler is not None:
@@ -331,19 +333,14 @@ class XtQuantBrokerBridge(BrokerPort):
                 return False
         return True
 
-    def reconnect(self) -> None:
-        """Authoritative disconnect recovery (NODEB-RR4-002).
+    def verify_transport(self) -> None:
+        """Transport-level verification only (NODEB-RR5-003).
 
-        A naked health flip must NOT make a disconnected production stack
-        order-capable.  Recovery requires, in order:
-
-        1. the EventQueue is RUNNING (a dead event channel cannot be healthy);
-        2. the trader reconnects and the connect result is the exact plain
-           success value ``0`` (wrong type/nonzero fails closed);
-        3. the bound account remains subscribed/healthy on the broker side
-           (strict ``query_account_status`` sees the account id).
-
-        Only after all three pass is the callback handler health restored.
+        Checks the EventQueue is RUNNING and the trader reconnects with the
+        exact plain-int success.  This is INSUFFICIENT to restore order
+        capability: the disconnect latch is cleared only by the LiveStack-
+        orchestrated recovery after account/type/status verification,
+        subscribe, exposure reconstruction and authoritative reconciliation.
         """
         queue_state = getattr(self._event_sink, "state", None)
         if queue_state is not None:
@@ -365,6 +362,9 @@ class XtQuantBrokerBridge(BrokerPort):
             raise BrokerDisconnectedError(
                 "broker reconnect did not return the exact success value"
             )
+
+    def _verify_bound_account_healthy(self) -> None:
+        """Check the bound securities account is OK (internal, RR5-003)."""
         status_fn = getattr(self._trader, "query_account_status", None)
         if not callable(status_fn):
             raise BrokerDisconnectedError(
@@ -379,14 +379,19 @@ class XtQuantBrokerBridge(BrokerPort):
             statuses = list(status_fn())
         except Exception as exc:  # noqa: BLE001 - broker boundary
             raise BrokerDisconnectedError("account-status verify failed") from exc
-        if account_id not in {
-            str(getattr(s, "account_id", "")).strip() for s in statuses
-        }:
-            raise BrokerDisconnectedError(
-                "bound account not present after reconnect; recovery denied"
-            )
-        # Authoritative recovery complete: clear the disconnect latch and
-        # restore handler health together.
+        for s in statuses:
+            if str(getattr(s, "account_id", "")).strip() == account_id:
+                if int(getattr(s, "status", -1)) != int(self._account_status_ok or 1):
+                    raise BrokerDisconnectedError(
+                        "bound account not OK after reconnect; recovery denied"
+                    )
+                return
+        raise BrokerDisconnectedError(
+            "bound account not present after reconnect; recovery denied"
+        )
+
+    def _clear_disconnect_latch(self) -> None:
+        """Internal: clear the disconnect latch (orchestrated recovery only)."""
         self._disconnected = False
         if self._handler is not None:
             self._handler._healthy = True

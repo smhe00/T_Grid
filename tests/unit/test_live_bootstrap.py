@@ -312,11 +312,11 @@ class TestQueueHealthBlocksOrders(unittest.TestCase):
             queue.stop()
             queue.join(timeout=1.0)
 
-    def test_disconnect_rejects_immediate_order_until_authoritative_recovery(self):
-        # NODEB-RR-005 / RR4-002: disconnect marks unhealthy immediately; a
-        # naked health flip must NOT restore order capability.  Only the
-        # authoritative reconnect (verified connect + account status + queue
-        # RUNNING) restores it.
+    def test_disconnect_rejects_immediate_order_until_orchestrated_recovery(self):
+        # NODEB-RR-005 / RR4-002 / RR5-003: disconnect marks unhealthy
+        # immediately; neither a naked health flip nor low-level transport
+        # reconnect restores order capability.  Only the LiveStack-orchestrated
+        # recovery does.
         trader = _FakeXtQuantTrader()
         queue = EventQueue(lambda e: None, maxsize=100)
         queue.start()
@@ -342,18 +342,37 @@ class TestQueueHealthBlocksOrders(unittest.TestCase):
             with self.assertRaises(LiveBrokerError):
                 adapter.place_order(symbol="510300.SH", side="BUY",
                                     qty=100, limit_price=4.6)
-            # Authoritative reconnect: verified connect + account status.
-            bridge.reconnect()
-            self.assertTrue(bridge.execution_healthy)
-            order_id = adapter.place_order(symbol="510300.SH", side="BUY",
-                                           qty=100, limit_price=4.6)
-            self.assertTrue(order_id.startswith("9"))
+            # Low-level transport verification alone must NOT restore health.
+            bridge.verify_transport()
+            self.assertFalse(bridge.execution_healthy)
+            with self.assertRaises(LiveBrokerError):
+                adapter.place_order(symbol="510300.SH", side="BUY",
+                                    qty=100, limit_price=4.6)
+            # Orchestrated recovery (LiveStack) restores order capability.
+            from tgrid.integrations.live_bootstrap import LiveStack
+            from tgrid.execution.store import ExecutionStore
+
+            conn = initialize(_temp_db_path())
+            try:
+                stack = LiveStack(
+                    engine=ExecutionEngine(ExecutionStore(conn), adapter),
+                    adapter=adapter, bridge=bridge,
+                    event_queue=queue, strategy_name="TGRID",
+                )
+                stack.recover_after_disconnect(token="startup-token")
+                self.assertTrue(bridge.execution_healthy)
+                order_id = adapter.place_order(symbol="510300.SH", side="BUY",
+                                               qty=100, limit_price=4.6)
+                self.assertTrue(order_id.startswith("9"))
+            finally:
+                conn.close()
         finally:
             queue.stop()
             queue.join(timeout=1.0)
 
     def test_reconnect_fails_closed_on_bad_connect_result(self):
-        # NODEB-RR4-002: nonzero/wrong-type connect result denies recovery.
+        # NODEB-RR4-002 / RR5-003: nonzero/wrong-type connect result denies
+        # transport verification, so orchestrated recovery cannot proceed.
         trader = _FakeXtQuantTrader()
         trader.connect_result = -1
         queue = EventQueue(lambda e: None, maxsize=100)
@@ -362,7 +381,7 @@ class TestQueueHealthBlocksOrders(unittest.TestCase):
             bridge = XtQuantBrokerBridge(trader, _FakeAccount(), event_sink=queue)
             trader.callback.on_disconnected()
             with self.assertRaises(Exception):
-                bridge.reconnect()
+                bridge.verify_transport()
             self.assertFalse(bridge.execution_healthy)
         finally:
             queue.stop()
@@ -753,6 +772,65 @@ class TestLiveSessionBinding(unittest.TestCase):
             stack._db_conn.close()
             os.remove(root.global_config.database)
 
+    def test_positive_live_environment_session_lifecycle(self):
+        # NODEB-RR5-001: the Gate-5.5 session parser supports environment
+        # exactly "live" (live_qmt_path + live binding entry) and the full
+        # fake lifecycle succeeds with global.live_trading=true.
+        import hashlib
+        from pathlib import Path
+
+        from tgrid.integrations.live_session import build_live_session
+
+        base, gate1, runtime = self._config_paths(environment="live")
+        real_qmt = os.path.join(base, "qmt")  # runtime.json points here
+        os.makedirs(real_qmt, exist_ok=True)
+        path_fp = hashlib.sha256(
+            os.path.normcase(str(Path(real_qmt).resolve())).encode("utf-8")
+        ).hexdigest()
+        account_fp = hashlib.sha256("miniqmt-account-v1:fake-account".encode("utf-8")).hexdigest()
+        binding = self._binding_path(environment="live",
+                                     account_fp=account_fp, path_fp=path_fp)
+        with open(gate1, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["account_binding_path"] = binding
+        with open(gate1, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        root = self._root_config(live_trading=True)
+        kwargs = self._full_factory_kwargs(gate1=gate1, root=root)
+        kwargs["environment"] = "live"
+        stack = build_live_session(**kwargs)
+        try:
+            stack.activate(token="startup-token")
+            result = stack.engine.send_buy(
+                client_order_key="K1", symbol="510300.SH", qty=100,
+                limit_price=4.6, order_remark="TG_510300SH_B001",
+                now="t0", expected_available_cash=100000.0,
+                reserved_cash=460.0,
+            )
+            self.assertEqual(result.status, OrderStatus.SUBMITTED)
+        finally:
+            stack.event_queue.stop()
+            stack.event_queue.join(timeout=1.0)
+            stack._db_conn.close()
+            os.remove(root.global_config.database)
+
+    def test_unsupported_environment_fails_closed(self):
+        # RR5-001: the session parser rejects any environment other than
+        # exactly simulation/live.
+        from tgrid.integrations.live_session import (
+            LiveSessionError,
+            parse_live_session_binding,
+        )
+
+        with self.assertRaises(LiveSessionError):
+            parse_live_session_binding({
+                "environment": "paper",
+                "runtime_config_path": "x",
+                "account_binding_path": "y",
+                "stock_code": "510300.SH",
+                "exchange": "SH",
+            })
+
 
 class TestBootstrap(unittest.TestCase):
     """I2-006: one production-shaped factory; no order before activate."""
@@ -913,25 +991,43 @@ class TestBootstrap(unittest.TestCase):
             conn.close()
 
     def test_safe_mode_cannot_be_cleared_without_reconciliation(self):
-        # NODEB-RR4-002: the reconciliation-driven clear rejects unresolved
-        # outcomes; the naked reset is a test-internal hook, not production.
+        # NODEB-RR4-002 / RR5-002: no PUBLIC SAFE_MODE clear exists; the
+        # internal transition rejects unresolved outcomes and cannot be fed
+        # an empty/fabricated proof.
         conn = initialize(_temp_db_path())
         try:
             store = ExecutionStore(conn)
             from tgrid.execution.simbroker import SimBroker
 
             engine = ExecutionEngine(store, SimBroker())
+            # An open intent exists, so SAFE_MODE applies to real work.
+            store.create_intent_with_reservation(
+                client_order_key="K1", symbol="0700.HK", side=BUY, qty=100,
+                limit_price=420.0, strategy_name="TGRID",
+                order_remark="TG_0700_B01", created_at="t0",
+                cash_amount=42000.0,
+            )
             engine.engage_safe_mode("test unresolved")
+            # No public clear_safe_mode / clear_safe_mode_after_reconciliation.
+            self.assertFalse(hasattr(engine, "clear_safe_mode"))
+            self.assertFalse(hasattr(engine, "clear_safe_mode_after_reconciliation"))
+            # An EMPTY tuple with open intents is not proof of reconciliation
+            # (RR5-002): the internal transition must reject it.
             with self.assertRaises(Exception):
-                engine.clear_safe_mode_after_reconciliation(
+                engine._clear_safe_mode_after_reconciliation(())
+            self.assertTrue(engine.safe_mode)
+            # Fabricated unresolved outcome keeps SAFE_MODE.
+            with self.assertRaises(Exception):
+                engine._clear_safe_mode_after_reconciliation(
                     (type("R", (), {
                         "outcome": "INTENT_ONLY", "broker_status": None,
                         "client_order_key": "K1",
                     })(),)
                 )
             self.assertTrue(engine.safe_mode)
-            # A resolved reconciliation tuple clears it.
-            engine.clear_safe_mode_after_reconciliation(
+            # A genuine resolved tuple from authoritative reconciliation
+            # clears it through the internal transition.
+            engine._clear_safe_mode_after_reconciliation(
                 (type("R", (), {
                     "outcome": "MATCHED", "broker_status": "SUBMITTED",
                     "client_order_key": "K1",
