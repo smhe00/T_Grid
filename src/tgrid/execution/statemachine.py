@@ -46,6 +46,7 @@ from typing import Generic, TypeVar
 EXECUTION_SOURCE_FILES = (
     "src/tgrid/execution/statemachine.py",
     "src/tgrid/execution/execution_journal.py",
+    "src/tgrid/execution/execution_mutex.py",
     "src/tgrid/execution/executor.py",
     "src/tgrid/execution/recovery.py",
     "src/tgrid/integrations/live_bootstrap.py",

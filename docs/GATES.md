@@ -18,8 +18,12 @@
 > 14 状态 + 9 项 SafetyFacts，`verify_state_machines()` = 39 可达抽象状态 /
 > 115 转移 / 0 违例；ExecutionJournal schema v2（原子写、历史≤500、哈希绑定）；
 > `LiveStack.activate()` 对已绑定 journal 做 **fail-closed 构建失配校验**（失配
-> 抛 `LiveBootstrapError`，显式 `bind_machine_verification()` 为唯一恢复路径）。
-> 回归 **980 tests OK**。
+> 抛 `LiveBootstrapError`，显式 `bind_machine_verification()` 为唯一恢复路径）；
+> **ExecutionMutex 跨进程执行互斥**（`execution_lock_path` 可选开启，同一交易日
+> 最多一个执行进程，争用 fail-closed）；**SUBMIT_UNKNOWN remark 反查恢复**
+> （`recover_unknown_submission`：唯一匹配→RECOVERED_*，0 匹配→SAFE_HALT
+> 禁自动重发，查询失败/多匹配/身份不一致→RECOVERY_AMBIGUOUS→SAFE_HALT+SAFE_MODE）。
+> 回归 **996 tests OK**。
 > `live_trading_allowed=false`；真实资金 Gate 6/7 仍 BLOCKED，须用户另行显式授权。
 
 | Gate | 内容 | 当前状态 | 说明 / 验收证据 |
@@ -38,7 +42,7 @@
 ## 当前测试证据（SELF_CERTIFIED）
 
 ```text
-python -m unittest discover -s tests -p "test_*.py"   # 980 tests OK
+python -m unittest discover -s tests -p "test_*.py"   # 996 tests OK
 python -m compileall -q src tests                      # exit 0
 src AST 扫描（assert / xtquant import / 桥外 order_stock/cancel_order_stock）: 0 命中
 capability_scan: 真实 order/cancel 调用点仅限 xtquant_bridge.py（桥内 2、桥外 0）

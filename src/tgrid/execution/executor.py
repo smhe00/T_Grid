@@ -482,6 +482,129 @@ class ExecutionEngine:
             message="order submitted",
         )
 
+    def recover_unknown_submission(
+        self,
+        client_order_key: str,
+        *,
+        now: str,
+        remark: str | None = None,
+    ) -> ExecutionResult:
+        """reverse_repo ``_recover_unknown_submission`` (SUBMIT_UNKNOWN recovery).
+
+        Called after :meth:`send_buy` raised with the machine in
+        ``SUBMIT_UNKNOWN`` (broker exception after the durable intent was
+        persisted).  The durable intent's remark is re-queried against ALL
+        broker orders (strict query — ``None`` never means empty success):
+
+        * exactly one matching order with matching symbol/side is classified
+          by broker status: ``SUBMITTED``/``PARTIAL`` -> ``RECOVERED_ACTIVE``,
+          ``CANCEL_REQUESTED`` -> ``RECOVERED_CANCEL_PENDING``, and
+          ``FILLED``/``CANCELED``/``REJECTED`` -> ``RECOVERED_TERMINAL``;
+        * zero matches -> ``RECOVERED_NO_MATCH`` -> SAFE_HALT — automatic
+          retry is FORBIDDEN even though no order was found (the send may
+          have reached the broker before the exception);
+        * query failure / multiple matches / identity mismatch / unknown
+          broker status -> ``RECOVERY_AMBIGUOUS`` -> SAFE_HALT + SAFE_MODE
+          (fail closed, never a silent downgrade).
+
+        Only valid in state-machine mode with the machine at SUBMIT_UNKNOWN.
+        """
+        if type(client_order_key) is not str or client_order_key == "":
+            raise ExecutionInputError(
+                "client_order_key must be a non-empty string"
+            )
+        if type(now) is not str or now == "":
+            raise ExecutionInputError("now must be a non-empty string")
+        if self._machine is None:
+            raise ExecutionError(
+                "unknown-submission recovery requires state-machine mode "
+                "(machine + journal)"
+            )
+        from tgrid.execution.statemachine import TGridState
+
+        if not self._machine_state_is(TGridState.SUBMIT_UNKNOWN):
+            raise ExecutionError(
+                "recovery only valid from SUBMIT_UNKNOWN; machine is at "
+                f"{self._machine.state.value}"
+            )
+        intent = self._store.get_intent(client_order_key)
+        if remark is None:
+            remark = intent.order_remark
+        if type(remark) is not str or remark == "":
+            raise ExecutionError(
+                "recovery needs a durable order remark to re-query by"
+            )
+
+        def _halt(reason: str) -> None:
+            self._advance_machine(
+                TGridEvent.RECOVERY_AMBIGUOUS,
+                details={"reason": reason},
+            )
+            self._engage_safe_mode(reason)
+
+        try:
+            orders = tuple(self._broker.query_orders())
+        except BrokerError as exc:
+            _halt("submission outcome and broker order list are ambiguous")
+            raise OrderReconciliationError(
+                "submission outcome and broker order list are ambiguous; "
+                "SAFE_MODE"
+            ) from exc
+
+        matches = [
+            order for order in orders
+            if getattr(order, "order_remark", None) == remark
+        ]
+        if len(matches) > 1:
+            _halt(f"multiple broker orders share remark {remark!r}")
+            raise OrderReconciliationError(
+                "multiple broker orders share the durable remark; SAFE_MODE"
+            )
+        if not matches:
+            # reverse_repo: RECOVERED_NO_MATCH -> SAFE_HALT; automatic retry
+            # is forbidden even though no broker order was found.
+            self._advance_machine(TGridEvent.RECOVERED_NO_MATCH)
+            raise OrderReconciliationError(
+                "no broker order matches the durable intent remark; automatic "
+                "retry is forbidden (SAFE_HALT)"
+            )
+        order = matches[0]
+        if order.symbol != intent.symbol or order.side != intent.side:
+            _halt("matching broker order identity (symbol/side) mismatch")
+            raise OrderReconciliationError(
+                "matching broker order identity mismatch; SAFE_MODE"
+            )
+
+        status = order.status
+        if status in ("SUBMITTED", "PARTIAL"):
+            event = TGridEvent.RECOVERED_ACTIVE
+        elif status == "CANCEL_REQUESTED":
+            event = TGridEvent.RECOVERED_CANCEL_PENDING
+        elif status in ("FILLED", "CANCELED", "REJECTED"):
+            event = TGridEvent.RECOVERED_TERMINAL
+        else:
+            _halt(f"matching order has unknown broker status {status!r}")
+            raise OrderReconciliationError(
+                f"matching order has unknown broker status {status!r}; "
+                "SAFE_MODE"
+            )
+        self._advance_machine(
+            event,
+            details={"broker_order_id": order.order_id, "status": status},
+        )
+        self._store.update_intent_status(
+            client_order_key, status=status, updated_at=now,
+            broker_order_id=order.order_id,
+        )
+        if status in ("FILLED", "CANCELED", "REJECTED"):
+            self._release(client_order_key, now=now)
+        return ExecutionResult(
+            client_order_key=client_order_key, symbol=intent.symbol,
+            side=intent.side, status=status,
+            broker_order_id=order.order_id, filled_qty=order.filled_qty,
+            message=f"recovered by remark: {event.value}",
+        )
+
     # -------------------------------------------------------------- fill/poll
 
     def poll_order(self, client_order_key: str, *, now: str) -> ExecutionResult:

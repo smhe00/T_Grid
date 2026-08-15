@@ -26,6 +26,11 @@ from tgrid.execution.execution_journal import (
     JournalSchemaError,
     JournalVerification,
 )
+from tgrid.execution.port import (
+    BrokerDisconnectedError,
+    BrokerError,
+)
+from tgrid.execution.simbroker import SimBroker
 from tgrid.execution.statemachine import (
     InvariantViolation,
     InvalidTransition,
@@ -394,6 +399,208 @@ class TestEngineStateMachineIntegration(unittest.TestCase):
         finally:
             conn.close()
             os.remove(path)
+
+
+class TestUnknownSubmissionRecovery(unittest.TestCase):
+    """reverse_repo _recover_unknown_submission port: SUBMIT_UNKNOWN by remark."""
+
+    def _engine(self, broker=None):
+        from tgrid.execution.executor import ExecutionEngine
+        from tgrid.execution.execution_journal import ExecutionJournal
+        from tgrid.execution.simbroker import SimBroker
+        from tgrid.execution.store import ExecutionStore
+        from tgrid.execution.statemachine import initial_snapshot
+        from tgrid.persistence import initialize
+
+        conn = initialize(_temp_path())
+        store = ExecutionStore(conn)
+        broker = broker or SimBroker()
+        journal = ExecutionJournal(_temp_path(), strategy="TGRID",
+                                   trade_date="2026-08-15")
+        engine = ExecutionEngine(store, broker, machine=initial_snapshot(),
+                                 journal=journal)
+        return conn, store, broker, engine, journal
+
+    def _run_to_ready(self, engine):
+        from tgrid.execution.statemachine import TGridEvent
+
+        for ev in (TGridEvent.BEGIN, TGridEvent.PREFLIGHT_OK,
+                   TGridEvent.RECOVERY_CLEAR, TGridEvent.TRIGGER,
+                   TGridEvent.SNAPSHOT_OK):
+            engine._advance_machine(ev)
+
+    def _failed_send(self, engine):
+        from tgrid.execution.executor import OrderSendFailedError
+
+        with self.assertRaises(OrderSendFailedError):
+            engine.send_buy(
+                client_order_key="K1", symbol="0700.HK", qty=100,
+                limit_price=420.0, order_remark="TG_0700_B01", now="t0",
+                expected_available_cash=500000.0, reserved_cash=42000.0,
+            )
+        self.assertEqual(engine.machine.state.value, "submission_outcome_unknown")
+
+    def test_recovered_active_by_remark(self):
+        broker = _FailAfterPlaceBroker()
+        conn, store, broker, engine, journal = self._engine(broker)
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            result = engine.recover_unknown_submission("K1", now="t1")
+            self.assertEqual(result.status, "SUBMITTED")
+            self.assertEqual(engine.machine.state.value, "order_active")
+            self.assertTrue(engine.machine.facts.unresolved_order)
+            intent = store.get_intent("K1")
+            self.assertEqual(intent.status, "SUBMITTED")
+            self.assertEqual(intent.broker_order_id, result.broker_order_id)
+            self.assertTrue(result.broker_order_id.startswith("SIM"))
+            # Journal persisted the recovery transition.
+            self.assertEqual(journal.machine["state"], "order_active")
+        finally:
+            conn.close()
+
+    def test_recovered_cancel_pending_by_remark(self):
+        broker = _FailAfterPlaceBroker(status_override="CANCEL_REQUESTED")
+        conn, store, broker, engine, journal = self._engine(broker)
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            result = engine.recover_unknown_submission("K1", now="t1")
+            self.assertEqual(result.status, "CANCEL_REQUESTED")
+            self.assertEqual(engine.machine.state.value, "cancel_pending")
+        finally:
+            conn.close()
+
+    def test_recovered_terminal_rejected_by_remark(self):
+        broker = _FailAfterPlaceBroker(status_override="REJECTED")
+        conn, store, broker, engine, journal = self._engine(broker)
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            result = engine.recover_unknown_submission("K1", now="t1")
+            self.assertEqual(result.status, "REJECTED")
+            self.assertEqual(engine.machine.state.value, "reconcile_terminal_order")
+            intent = store.get_intent("K1")
+            self.assertEqual(intent.status, "REJECTED")
+            # Terminal recovery released the reservation (REJECTED path).
+            self.assertEqual(
+                tuple(store.list_active_reservations()), ()
+            )
+        finally:
+            conn.close()
+
+    def test_recovered_no_match_halts_no_retry(self):
+        from tgrid.execution.executor import OrderReconciliationError
+        from tgrid.execution.simbroker import SimBroker
+
+        broker = SimBroker()
+        broker.connected = False  # send raises before any broker order exists
+        conn, store, broker, engine, journal = self._engine(broker)
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            with self.assertRaises(OrderReconciliationError):
+                engine.recover_unknown_submission("K1", now="t1")
+            # RECOVERED_NO_MATCH -> SAFE_HALT: automatic retry forbidden.
+            self.assertEqual(engine.machine.state.value, "safe_halt")
+        finally:
+            conn.close()
+
+    def test_multiple_remark_matches_fail_closed(self):
+        from tgrid.execution.executor import OrderReconciliationError
+
+        broker = _FailAfterPlaceBroker(duplicate_remark=True)
+        conn, store, broker, engine, journal = self._engine(broker)
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            with self.assertRaises(OrderReconciliationError):
+                engine.recover_unknown_submission("K1", now="t1")
+            self.assertEqual(engine.machine.state.value, "safe_halt")
+            self.assertTrue(engine.safe_mode)
+        finally:
+            conn.close()
+
+    def test_identity_mismatch_fails_closed(self):
+        from tgrid.execution.executor import OrderReconciliationError
+
+        broker = _FailAfterPlaceBroker(symbol_override="600000.SH")
+        conn, store, broker, engine, journal = self._engine(broker)
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            with self.assertRaises(OrderReconciliationError):
+                engine.recover_unknown_submission("K1", now="t1")
+            self.assertEqual(engine.machine.state.value, "safe_halt")
+            self.assertTrue(engine.safe_mode)
+        finally:
+            conn.close()
+
+    def test_query_failure_fails_closed(self):
+        from tgrid.execution.executor import OrderReconciliationError
+
+        broker = _FailAfterPlaceBroker()
+        broker.query_orders = lambda *, symbol=None: (_ for _ in ()).throw(
+            BrokerError("simulated all-orders query failure")
+        )
+        conn, store, broker, engine, journal = self._engine(broker)
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            with self.assertRaises(OrderReconciliationError):
+                engine.recover_unknown_submission("K1", now="t1")
+            self.assertEqual(engine.machine.state.value, "safe_halt")
+            self.assertTrue(engine.safe_mode)
+        finally:
+            conn.close()
+
+    def test_recovery_requires_submit_unknown_state(self):
+        from tgrid.execution.executor import ExecutionError
+
+        conn, store, broker, engine, journal = self._engine()
+        try:
+            self._run_to_ready(engine)
+            with self.assertRaises(ExecutionError):
+                engine.recover_unknown_submission("K1", now="t1")
+        finally:
+            conn.close()
+
+    def test_recovery_requires_state_machine_mode(self):
+        from tgrid.execution.executor import ExecutionEngine, ExecutionError
+        from tgrid.execution.simbroker import SimBroker
+        from tgrid.execution.store import ExecutionStore
+        from tgrid.persistence import initialize
+
+        conn = initialize(_temp_path())
+        store = ExecutionStore(conn)
+        engine = ExecutionEngine(store, SimBroker())  # plain mode
+        try:
+            with self.assertRaises(ExecutionError):
+                engine.recover_unknown_submission("K1", now="t1")
+        finally:
+            conn.close()
+
+
+class _FailAfterPlaceBroker(SimBroker):
+    """SimBroker that records the order, then raises (post-send ambiguity)."""
+
+    def __init__(self, *, status_override=None, symbol_override=None,
+                 duplicate_remark=False):
+        super().__init__()
+        self.status_override = status_override
+        self.symbol_override = symbol_override
+        self.duplicate_remark = duplicate_remark
+
+    def place_order(self, **kwargs):
+        order_id = super().place_order(**kwargs)
+        order = self.get_order(order_id)
+        if self.symbol_override is not None:
+            order.symbol = self.symbol_override
+        if self.duplicate_remark:
+            super().place_order(**dict(kwargs))
+        if self.status_override is not None:
+            order.status = self.status_override
+        raise BrokerDisconnectedError("simulated post-send failure")
 
 
 if __name__ == "__main__":

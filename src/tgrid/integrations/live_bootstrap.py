@@ -32,6 +32,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tgrid.events import EventQueue
+from tgrid.execution.execution_mutex import (
+    ConcurrentExecutionError,
+    ExecutionMutex,
+)
 from tgrid.execution.executor import ExecutionEngine
 from tgrid.execution.recovery import reconcile_open_intents
 from tgrid.execution.store import ExecutionStore
@@ -55,6 +59,8 @@ class LiveStack:
     bridge: XtQuantBrokerBridge
     event_queue: EventQueue
     strategy_name: str
+    execution_lock: ExecutionMutex | None = None
+    _lock_held: bool = False
 
     def activate(
         self,
@@ -69,7 +75,23 @@ class LiveStack:
         duplicate/ambiguous matches, ``UNMATCHED_BROKER_ORDER`` and unresolved
         ``INTENT_ONLY`` outcomes fail closed.  Runtime confirmation happens
         only after recovery completes.
+
+        When the stack was built with ``execution_lock_path``, the
+        cross-process execution lock (reverse_repo ``ExecutionMutex``) is
+        acquired FIRST — before any state is touched — so at most one process
+        runs this trade date; contention raises :class:`LiveBootstrapError`.
+        The lock is held for the session and released via
+        :meth:`release_execution_lock` (or by the OS on process exit).
         """
+        if self.execution_lock is not None and not self._lock_held:
+            try:
+                self.execution_lock.acquire()
+                self._lock_held = True
+            except ConcurrentExecutionError as exc:
+                raise LiveBootstrapError(
+                    "another process holds the execution lock for this "
+                    "trade date; refusing to start a second session"
+                ) from exc
         if self.event_queue.state.value != "RUNNING":
             self.event_queue.start()
         if session_date is not None:
@@ -175,6 +197,18 @@ class LiveStack:
         """Drive the engine state machine (no-op in plain mode)."""
         self.engine._advance_machine(event)
 
+    def release_execution_lock(self) -> None:
+        """Release the session execution lock (idempotent).
+
+        Safe to call more than once; a stack built without
+        ``execution_lock_path`` is a no-op.  The OS also releases the lock
+        automatically when the owning process exits.
+        """
+        if self.execution_lock is None or not self._lock_held:
+            return
+        self.execution_lock.release()
+        self._lock_held = False
+
     def reconcile_and_resume(self, *, token: str, session_date: str | None = None) -> None:
         """Reconciliation-driven SAFE_MODE release (RR-003 / RR4-002 / RR5-002).
 
@@ -256,6 +290,7 @@ def build_live_stack(
     security_account_type: int | None = None,
     account_status_ok: int | None = None,
     journal_path: str | None = None,
+    execution_lock_path: str | None = None,
 ) -> LiveStack:
     """Assemble the live stack in the audited order (fake/real trader both ok).
 
@@ -272,6 +307,11 @@ def build_live_stack(
     when provided, an :class:`ExecutionJournal` is loaded (strategy +
     trade-date bound, strict schema) and the engine is driven through the
     reverse_repo-ported machine, persisting every transition atomically.
+
+    ``execution_lock_path`` (optional) enables the reverse_repo
+    :class:`ExecutionMutex` cross-process lock: :meth:`LiveStack.activate`
+    acquires it before touching any state so at most one process runs the
+    trade date; contention fails closed with :class:`LiveBootstrapError`.
     """
     bridge = XtQuantBrokerBridge(
         trader, account, strategy_name=strategy_name, event_sink=event_queue,
@@ -308,7 +348,17 @@ def build_live_stack(
         order_timeout_seconds=order_timeout_seconds,
         machine=machine, journal=journal,
     )
+    lock = None
+    if execution_lock_path:
+        from tgrid.execution.execution_mutex import ExecutionMutex
+
+        if type(execution_lock_path) is not str or execution_lock_path == "":
+            raise LiveBootstrapError(
+                "execution_lock_path must be a non-empty string"
+            )
+        lock = ExecutionMutex(execution_lock_path)
     return LiveStack(
         engine=engine, adapter=adapter, bridge=bridge,
         event_queue=event_queue, strategy_name=strategy_name,
+        execution_lock=lock,
     )

@@ -22,16 +22,28 @@ Real-money Gate 6/7 remain BLOCKED until explicit user authorization.
 2. `src/tgrid/execution/execution_journal.py` — ExecutionJournal（schema v2、
    strategy+trade_date 三元校验、temp+fsync+os.replace 原子写、历史≤500、
    `journal_matches_verification` 绑定 transition_spec + execution_source 哈希）；
-3. `ExecutionEngine` 成对接入（machine+journal 必须同时提供；send/poll/timeout
+3. `src/tgrid/execution/execution_mutex.py` — ExecutionMutex 跨进程执行互斥
+   （msvcrt/flock、超时轮询、pid 标记、进程退出 OS 自动释放）；
+   `build_live_stack(execution_lock_path=...)` 可选开启，
+   `LiveStack.activate()` 先于任何状态变更获取锁（争用 fail-closed），
+   `release_execution_lock()` 幂等释放；
+4. `ExecutionEngine.recover_unknown_submission()` — SUBMIT_UNKNOWN 后按
+   **持久化 intent remark 反查全部 broker 订单**：唯一匹配 + 身份一致 →
+   RECOVERED_ACTIVE/CANCEL_PENDING/TERMINAL；**0 匹配 → RECOVERED_NO_MATCH →
+   SAFE_HALT 禁自动重发**；查询失败/多匹配/身份不一致/未知状态 →
+   RECOVERY_AMBIGUOUS → SAFE_HALT + SAFE_MODE；
+5. `ExecutionEngine` 成对接入（machine+journal 必须同时提供；send/poll/timeout
    驱动机器事件，转移先于外部副作用原子落盘）；
-4. `LiveStack`（`journal_path` 可选开启）— `activate()` 驱动
+6. `LiveStack`（`journal_path` 可选开启）— `activate()` 驱动
    BEGIN→PREFLIGHT_OK→RECOVERY_CLEAR/AMBIGUOUS，并在 BEGIN 前
    **fail-closed 校验 journal 绑定**（已绑定哈希失配 → `LiveBootstrapError`，
    绝不静默重绑；显式 `bind_machine_verification()` 为唯一恢复路径）。
 
 验证产物：39 可达抽象状态 / 115 转移 / 0 不可达 / 0 无终态路径 / 0 不变量违例；
-`transition_spec_sha256=7d9959dd...`、`execution_source_sha256=c0d84be8...`（真实内容绑定）。
-回归 **980 tests OK**；compileall exit 0。
+`transition_spec_sha256=7d9959dd...`、`execution_source_sha256=92118bb1...`
+（7 个执行源文件真实内容绑定）。
+回归 **996 tests OK**（+16：ExecutionMutex 6、remark 反查恢复 9、锁串行化 1）；
+compileall exit 0。
 
 **诚实声明**：状态机移植为**新能力**，未经 Audit Node B 复审，不取代 PASS_PRELIVE
 （`e252847`）；首笔真实订单前建议纳入 Node B 复审。

@@ -1165,6 +1165,49 @@ class TestLiveStackStateMachine(unittest.TestCase):
             if os.path.exists(journal_path):
                 os.remove(journal_path)
 
+    def test_stack_execution_lock_serializes_sessions(self):
+        import tempfile as _tf
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        lock_path = os.path.join(_tf.mkdtemp(), "tgrid-exec.lock")
+        queue_a = EventQueue(lambda e: None, maxsize=100)
+        queue_b = EventQueue(lambda e: None, maxsize=100)
+        try:
+            store_a = ExecutionStore(conn)
+            stack_a = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store_a,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue_a, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                execution_lock_path=lock_path,
+            )
+            stack_a.activate(token="startup-token")
+            # A second session on the same lock must fail closed.
+            store_b = ExecutionStore(conn)
+            stack_b = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store_b,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue_b, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                execution_lock_path=lock_path,
+            )
+            with self.assertRaises(LiveBootstrapError):
+                stack_b.activate(token="startup-token")
+            # Release is idempotent; after release the second session starts.
+            stack_a.release_execution_lock()
+            stack_a.release_execution_lock()
+            stack_b.activate(token="startup-token")
+            stack_b.release_execution_lock()
+        finally:
+            queue_a.stop()
+            queue_a.join(timeout=1.0)
+            queue_b.stop()
+            queue_b.join(timeout=1.0)
+            conn.close()
+            if os.path.exists(lock_path):
+                os.remove(lock_path)
+
 
 if __name__ == "__main__":
     unittest.main()

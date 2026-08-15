@@ -2,10 +2,10 @@
 
 ## Status
 
-`AUDIT_READY_PRELIVE (ITERATION 8)` — Node B Iteration-6 复审（`9b664d8`，
+`AUDIT_READY_PRELIVE (ITERATION 9)` — Node B Iteration-6 复审（`9b664d8`，
 `work/gates/GATE_5_5/NODE_B_REVIEW_ITER6_20260815.md`）判定 `CHANGES_REQUIRED`；
 **NODEB-RR6-001..003 已全部修复（SELF_CERTIFIED）**，Audit Node B 已
-**FINAL PASS_PRELIVE**（`e252847`，2026-08-15）。Iteration 8（本次）为
+**FINAL PASS_PRELIVE**（`e252847`，2026-08-15）。Iteration 8–9 为
 **reverse_repo 状态机 + 形式验证器移植（用户授权的新能力，SELF_CERTIFIED）**，
 不改变、不取代 PASS_PRELIVE 结论。**本任务未调用任何真实 order/cancel；
 `live_trading_allowed=false` 保持。**
@@ -15,6 +15,58 @@
 
 参考实现（QMT 行为基线）：`https://github.com/smhe00/reverse_repo`
 pinned commit `c9ecc701d9b1c47d6a8d03539b482368741204a3`。
+
+## Iteration 9 — ExecutionMutex + SUBMIT_UNKNOWN remark 反查恢复（SELF_CERTIFIED）
+
+完成 reverse_repo 移植剩余两项能力：
+
+1. **`ExecutionMutex` 跨进程执行互斥**（`src/tgrid/execution/execution_mutex.py`，
+   reverse_repo `repo_execution_core.ExecutionMutex` 原样移植）：文件锁
+   （Windows `msvcrt.locking` LK_NBLCK / POSIX `fcntl.flock` LOCK_EX|LOCK_NB）、
+   超时轮询（默认 try-once）、锁文件写入 pid+时间戳、进程退出由 OS 自动释放。
+   `build_live_stack(execution_lock_path=...)` 可选开启；
+   `LiveStack.activate()` **先于任何状态变更获取锁**，争用 → `LiveBootstrapError`
+   fail-closed（同一交易日最多一个执行进程）；`release_execution_lock()` 幂等释放。
+2. **`ExecutionEngine.recover_unknown_submission()`**（reverse_repo
+   `_recover_unknown_submission` 移植）：`send_buy` 异常落入 SUBMIT_UNKNOWN 后，
+   按**持久化 intent 的 order_remark 反查全部 broker 订单**（strict query，
+   None ≠ 空成功）：
+   - 唯一匹配且 symbol/side 一致 → 按 broker 状态分类
+     `RECOVERED_ACTIVE`（SUBMITTED/PARTIAL）/ `RECOVERED_CANCEL_PENDING`
+     （CANCEL_REQUESTED）/ `RECOVERED_TERMINAL`（FILLED/CANCELED/REJECTED，
+     终态释放 reservation）；
+   - **0 匹配 → `RECOVERED_NO_MATCH` → SAFE_HALT，禁止自动重发**（异常前
+     订单可能已到达 broker）；
+   - 查询失败 / 多匹配 / 身份不一致 / 未知状态 → `RECOVERY_AMBIGUOUS` →
+     SAFE_HALT + SAFE_MODE（fail-closed，绝不静默降级）。
+
+### 验证产物（可复算）
+
+```text
+verify_state_machines():
+  reachable_abstract_states : 39   (不变 — 机器语义未被本轮改动)
+  reachable_transitions     : 115
+  unreachable_states        : 0 / unreachable_transitions: 0
+  states_without_terminal_path : 0 / invariant_violations: 0
+  transition_spec_sha256    : 7d9959dd323745e2...  (不变)
+  execution_source_sha256   : 92118bb141733140...  (绑定 7 个执行源文件真实内容)
+  execution_source_commit   : None (运行树无 .git；内容哈希为持久完整性锚)
+```
+
+### Evidence
+
+- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **996 tests OK**
+  （较 980 新增 16：ExecutionMutex 6（含同进程争用/超时轮询/上下文管理器）、
+  SUBMIT_UNKNOWN 反查恢复 9（ACTIVE/CANCEL_PENDING/TERMINAL/NO_MATCH/
+  多匹配/身份不一致/查询失败/状态门/plain 模式拒绝）、LiveStack 锁串行化 1）。
+- `python -m compileall -q src tests scripts` → exit 0。
+- 新增：`src/tgrid/execution/execution_mutex.py`；修改：`executor.py`、
+  `live_bootstrap.py`、`statemachine.py`（EXECUTION_SOURCE_FILES +1）、
+  `execution/__init__.py`、`tgrid/__init__.py`、
+  `tests/unit/test_execution_mutex.py`（新增）、`test_execution_statemachine.py`、
+  `test_live_bootstrap.py`。
+- 诚实声明：状态机移植为**新能力**，未经 Audit Node B 复审，不取代 PASS_PRELIVE；
+  真实资金 Gate 6/7 仍 BLOCKED，须 Node B 复审 + 用户显式授权。
 
 ## Iteration 8 — reverse_repo 状态机 + 形式验证器移植（SELF_CERTIFIED）
 
@@ -78,15 +130,17 @@ verify_state_machines():
 
 ## Evidence
 
-- 回归（Iteration 8，最新）：`python -m unittest discover -s tests -p "test_*.py"`
-  → **980 tests OK**；`python -m compileall -q src tests scripts` → exit 0。
-- Iteration 7（RR6 关闭）：**957 tests OK**；capability 扫描：真实
-  `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处（白名单）、桥外 0 处**；
-  `RESULT: PASS`。
+- 回归（Iteration 9，最新）：`python -m unittest discover -s tests -p "test_*.py"`
+  → **996 tests OK**；`python -m compileall -q src tests scripts` → exit 0。
+- Iteration 8：**980 tests OK**；Iteration 7（RR6 关闭）：**957 tests OK**；
+  capability 扫描：真实 `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处
+  （白名单）、桥外 0 处**；`RESULT: PASS`。
 - 测试文件：`test_xtquant_bridge.py`（account-health FI）、`test_live_bootstrap.py`
-  （SAFE_MODE 伪造结果 FI、LiveStack 状态机 + fail-closed journal 绑定）、
-  `test_execution_statemachine.py`（形式验证器/快照/journal/engine 集成）、
-  `test_execution_live_chain.py`、`test_execution.py`。
+  （SAFE_MODE 伪造结果 FI、LiveStack 状态机 + fail-closed journal 绑定 +
+  执行锁串行化）、`test_execution_mutex.py`（ExecutionMutex 跨进程互斥）、
+  `test_execution_statemachine.py`（形式验证器/快照/journal/engine 集成 +
+  SUBMIT_UNKNOWN remark 反查恢复）、`test_execution_live_chain.py`、
+  `test_execution.py`。
 - 既有 AST 扫描（assert / xtquant import / 桥外 order call）保持 PASS。
 
 ## Boundary
@@ -98,6 +152,6 @@ verify_state_machines():
 
 ## Recommendation
 
-`AUDIT_READY_PRELIVE`（Iteration 8）——Audit Node B FINAL PASS_PRELIVE
+`AUDIT_READY_PRELIVE`（Iteration 9）——Audit Node B FINAL PASS_PRELIVE
 （`e252847`）已接受；reverse_repo 状态机移植为**新能力**，建议在首笔真实订单前
 纳入 Node B 复审；首笔真实订单须 Node B PASS + 用户显式授权。

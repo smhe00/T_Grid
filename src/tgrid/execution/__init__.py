@@ -46,6 +46,10 @@ from tgrid.execution.executor import (
     ReservationConflictError,
 )
 from tgrid.execution.simdriver import SimulationDriver, SimulationDriverError
+from tgrid.execution.execution_mutex import (
+    ConcurrentExecutionError,
+    ExecutionMutex,
+)
 from tgrid.execution.statemachine import (
     InvariantViolation,
     InvalidTransition,
@@ -110,6 +114,8 @@ __all__ = [
     "ReservationConflictError",
     "SimulationDriver",
     "SimulationDriverError",
+    "ExecutionMutex",
+    "ConcurrentExecutionError",
     "TGridState",
     "TGridEvent",
     "SafetyFacts",
