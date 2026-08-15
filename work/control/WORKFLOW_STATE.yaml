@@ -4,30 +4,32 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 28
-handoff_id: "REVERSE_REPO-STATEMACHINE-PORT-20260815-028"
-authorized_next: ["GATE6_SIMULATION_VERIFICATION"]
+handoff_seq: 29
+handoff_id: "NODEB-STATEMACHINE-PORT-FIX-20260815-029"
+authorized_next:
+  - "NODEB-STATEMACHINE-PORT-FIX"
 design_version: "1.1"
 gate: 5.5
-task_id: "GATE6-SIMULATION-VERIFICATION"
-state: "AUDIT_READY_PRELIVE"
+task_id: "NODEB-STATEMACHINE-PORT-FIX"
+state: "CHANGES_REQUIRED"
 owner: "dsh"
-iteration: 9
-last_actor: "dsh"
-last_update: "2026-08-15T22:42:00+08:00"
+iteration: 10
+last_actor: "independent_auditor"
+last_update: "2026-08-15T22:48:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5_5/NODE_B_FINAL_PASS_PRELIVE_20260815.md"
-git_base_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
-implementation_commit: "f1e918ed474c9c107b03ab7ddcd3ad101783cce7"
-handoff_parent_commit: "a774105da1abb6202db783db1f72ad9999f77178"
-handoff_metadata_parent: "a774105da1abb6202db783db1f72ad9999f77178"
+audit_file: "work/gates/GATE_5_5/NODE_B_STATE_MACHINE_PORT_REVIEW_ITER9_20260815.md"
+fix_request_file: "work/gates/GATE_5_5/FIX_REQUEST_STATE_MACHINE_ITER10_20260815.md"
+audit_base_commit: "bf261835f70cbd56fa75b1ea2dc86447d22dcadb"
+reviewed_implementation_commit: "f1e918ed474c9c107b03ab7ddcd3ad101783cce7"
+baseline_pass_prelive_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
+previous_independent_audit_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
 reference_repository: "https://github.com/smhe00/reverse_repo"
 reference_commit: "c9ecc701d9b1c47d6a8d03539b482368741204a3"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Node B FINAL PASS_PRELIVE (e252847) accepted on 2026-08-15; Gate 5.5 pre-live capability independently accepted. User explicitly authorized Gate 6 to run on the QMT SIMULATION trading client (already started). Gate 6 simulation verification executed 2026-08-15T21:29 (scripts/gate6_sim_live.py): production live-session(simulation) built (connect/discover/subscribe OK, bridge constants SECURITY_ACCOUNT=2/ACCOUNT_STATUS_OK=0), mandatory recovery + runtime confirmation passed, ONE tiny BUY (510300.SH qty=100 @4.726, caps 200qty/5000cash) sent via real order_stock (native int broker id 1098907651), polled to REJECTED (sim client rejected outside trading hours on Saturday), broker reconcile REJECTED/0 filled, exposure 472.6 booked pre-send. Negative-path verification executed 2026-08-15T21:53 (scripts/gate6_sim_negative.py) on the real sim session: allowlist / qty cap / cash cap / kill switch (cancel still available) / queue-stopped health all fail-closed. 2026-08-15T22:03 runner gained reverse_repo preflight (trading-day via get_trading_dates + execution window 09:30-11:28/13:00-15:28); full order chain verified 2026-08-15T22:05 (engine->adapter->bridge->sim order_stock returned SUBMITTED, native int broker id 1098907653); preflight split evidence 08-14 (trading-day true / window false). Evidence work/reports/gate6-sim/*.json (sanitized). FULL FILL and CANCEL paths still require a trading-hours rerun (next trading day 09:30+). ITERATION 9 (2026-08-15T22:36): completed the reverse_repo port with the two remaining capabilities: (a) ExecutionMutex cross-process execution lock (src/tgrid/execution/execution_mutex.py; msvcrt.locking/flock, timeout polling, pid marker, OS auto-release; build_live_stack(execution_lock_path=...) opt-in; LiveStack.activate acquires BEFORE touching any state, contention -> LiveBootstrapError fail-closed, release_execution_lock() idempotent; at most one executor process per trade date); (b) ExecutionEngine.recover_unknown_submission() (reverse_repo _recover_unknown_submission): after send_buy exception -> SUBMIT_UNKNOWN, re-query ALL broker orders by the durable intent remark (strict query, None!=empty): unique match + symbol/side identity -> RECOVERED_ACTIVE (SUBMITTED/PARTIAL) / RECOVERED_CANCEL_PENDING (CANCEL_REQUESTED) / RECOVERED_TERMINAL (FILLED/CANCELED/REJECTED, releases reservation); ZERO matches -> RECOVERED_NO_MATCH -> SAFE_HALT, automatic retry FORBIDDEN; query failure / multiple matches / identity mismatch / unknown status -> RECOVERY_AMBIGUOUS -> SAFE_HALT + SAFE_MODE; (c) journal-driven crash recovery: LiveStack.activate selects startup events by the LOADED machine state -- fresh journal (NEW) -> BEGIN->PREFLIGHT_OK; crash/interrupted (PREFLIGHT..RECONCILE) -> RESTART->RECOVERY; terminal journal (DONE/SKIPPED/SAFE_HALT) -> LiveBootstrapError fail-closed; after startup reconciliation the machine exit is classified from reconcile results (RECOVERY_ACTIVE/CANCEL_PENDING/TERMINAL/CLEAR). Verifier unchanged (spec 7d9959dd..., 39/115/0/0/0); execution_source_sha256 now 92118bb1... (7 bound source files incl. execution_mutex.py). Regression 998 tests OK (was 980; +18: mutex 6, remark recovery 9, lock serialization 1, crash-restart 1, terminal-journal refusal 1); compileall 0. Honest: state-machine port is a NEW capability (SELF_CERTIFIED, not yet Node B reviewed) and does not supersede PASS_PRELIVE; recommend Node B review before first real order. live_trading_allowed=false; Gate 6/7 (real money) remain BLOCKED pending explicit user authorization."
+next_independent_audit: "AUDIT_NODE_B_STATE_MACHINE_PORT_AFTER_ITERATION10"
+pre_live_independent_audit: "BASELINE_PASS_PRELIVE_EXTENSION_CHANGES_REQUIRED"
+notes: "User-authorized reverse_repo state-machine + explicit-state verifier direction is accepted. Baseline Gate 5.5 PASS_PRELIVE at e252847 remains accepted, but current main contains a new execution extension that is CHANGES_REQUIRED before first real-money execution. Iteration 10 is limited to SM9-001 production wiring (state machine/journal/mutex mandatory on build_live_session), SM9-002 mutex ownership covering journal lifecycle and disabling execution after release, SM9-003 implementation-to-model refinement (trusted snapshot facts, state-aware cancel/poll/rejection, recovery multiplicity), SM9-004 durable intent remark as sole unknown-submission recovery authority, and SM9-005 fail-closed/complete protected source binding. Existing Gate 6 QMT simulation evidence is retained as baseline-channel evidence but did not exercise the new state-machine path. No real-money or additional QMT simulation order/cancel is authorized during the fix; live_trading_allowed=false."
