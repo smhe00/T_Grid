@@ -1,131 +1,112 @@
-# Current Task — Gate 5.5 Live Broker Adapter (Pre-Live Only)
+# Current Task — Audit Node B Iteration 2 Pre-Live Fixes
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — single programming Agent, implementation + self-review allowed.
+`DSH (DeepSeek Harness)` — single implementation/self-review agent.
 
-Self-review must be labelled `SELF_CERTIFIED`; it is not an independent pre-live authorization.
+Self-review must remain `SELF_CERTIFIED`; it is not authorization for a real broker order.
 
 ## Status
 
-`AUDIT_READY_PRELIVE`（implementation complete, SELF_CERTIFIED, awaiting Audit Node B）
+`CHANGES_REQUIRED` — Audit Node B Iteration 1 did not pass.
 
-## Completion Record (SELF_CERTIFIED — 2026-08-15)
+Gate 5 remains independently PASS. Gate 6 / Gate 7 remain BLOCKED. `live_trading_allowed=false` remains mandatory.
 
-Gate 5.5 LiveBrokerAdapter implemented (pre-live only; no real order/cancel
-invoked). `src/tgrid/integrations/live_broker_adapter.py`: LiveBrokerAdapter +
-LiveBrokerPolicy with double-enable, allowlist, per-order qty/cash limits,
-daily cash exposure, kill switch, callback isolation, exact-type validation,
-cancel→re-query semantics. NODEB-P0-001 fixed: legacy reconciliation core_qty
-is preserved by the loader and exact-equality-checked before discard; mismatch
-fails closed (loader-to-runner integration tests).
+## Review source
 
-Evidence: 865 tests OK; compileall 0; capability scan 0 direct real
-order/cancel call sites; `work/gates/GATE_5_5/CLAUDE_REPORT.md`.
-
-Gate 5 passed independent Audit Node A on 2026-08-15. Gate 6 / Gate 7 remain blocked. `live_trading_allowed=false` remains mandatory.
-
-## Source of Authorization
-
-Read and comply with:
+Implement only the findings in:
 
 ```text
-work/gates/GATE_5/NODE_A_FINAL_REVIEW_20260815.md
+work/gates/GATE_5_5/NODE_B_REVIEW_20260815.md
 ```
 
 Audit target:
 
 ```text
-df1cbb53471d8f765c89c4bc644323d5839d0dd6
+9319465e5b2aa38a2a713dca3e25b93c69d4412f
 ```
 
-Accepted Gate-5 implementation commit:
+Gate-5.5 implementation commit under review:
 
 ```text
-5a2e2fd32e21328badd1ceb2c92b973436c4c95a
+249aa061842eac114d224b384164541619628edc
 ```
 
-## Objective
+## Accepted work — retain
 
-Implement Gate 5.5: the real broker execution adapter and its pre-live safety boundary, while **never invoking a real order or real cancel** during this task.
+- Gate 5 / Node A PASS remains valid.
+- NODEB-P0-001 legacy Core mismatch guard is accepted.
+- live flags default false in the adapter scaffold.
+- explicit allowlist and basic per-order qty/cash policy structure.
+- no real order/cancel was invoked while producing Gate-5.5 evidence.
 
-Target architecture:
+## Required fixes
 
-```text
-ExecutionEngine
-    -> LiveBrokerAdapter
-    -> XtQuantTrader
-```
+1. **Connect the actual pre-live execution architecture**
+   - refactor away the `ExecutionEngine -> SimBroker only` type restriction;
+   - define a shared broker execution port/DTO contract;
+   - isolate simulation-only `tick_order/get_order/script` behavior from production execution;
+   - implement one concrete XtQuant bridge mapping TGrid order/cancel/query operations to the real XtQuant API;
+   - keep all real invocations unexecuted during this task.
 
-The adapter may contain the broker capability needed for later live execution, but this task ends before the first real invocation.
+2. **Prove Reservation/Idempotency/Recovery end to end**
+   - integration-test `ExecutionEngine -> LiveBrokerAdapter -> fake XtQuant bridge`;
+   - intent + reservation before send;
+   - duplicate key no duplicate broker send;
+   - pre-send crash, post-send/pre-persist crash, unmatched broker order and ambiguous query all fail closed/reconcile deterministically;
+   - partial fill and cancel->requery semantics must run through this integrated path.
 
-## Mandatory Requirements
+3. **Fix emergency kill-switch semantics**
+   - block new order/amend/reprice;
+   - allow query/recovery;
+   - allow cancellation of existing managed open orders under kill switch;
+   - preferably add cancel-all-managed + re-query/reconcile.
 
-1. `live_trading` defaults false and cannot be enabled implicitly.
-2. A second explicit runtime confirmation is required in addition to configuration before broker execution is permitted.
-3. Explicit symbol allowlist.
-4. Hard per-order quantity limit.
-5. Hard per-order and/or per-day cash exposure limit.
-6. Kill switch / emergency disable path.
-7. Broker callbacks may only enqueue events; callbacks must not directly mutate T-Lots, position state, reservations, DB strategy state, or issue new orders.
-8. Reuse Gate-4 idempotent OrderIntent + Reservation-before-send semantics.
-9. Partial fills must be modeled explicitly.
-10. Timeout path must be `cancel request -> broker re-query -> reconcile`; cancellation acknowledgement must never be interpreted as proof of zero fill.
-11. Order/trade reconciliation and restart/crash recovery must be deterministic and fail closed.
-12. Exact-type validation must occur before arithmetic or broker calls.
-13. No force push / history rewrite.
-14. Do not commit account identifiers, balances, holdings, ports, userdata paths, secrets or local runtime configs.
+4. **Make callback isolation structural**
+   - remove generic arbitrary callback execution as the broker callback boundary;
+   - concrete broker callbacks convert payload -> data-only event -> `event_queue.put(event)` only;
+   - no strategy/store/DB/order-capable reference in callback objects.
 
-## Mandatory Carry-Forward Fix — NODEB-P0-001
+5. **Make daily exposure hard across restart**
+   - no public unrestricted same-day reset;
+   - bind exposure to validated trading day;
+   - reconstruct current-day exposure on restart from durable local/broker state before enabling new orders;
+   - define deterministic exposure semantics under cancel/reject/partial fill.
 
-Fix the legacy reconciliation Core mismatch guard before Node B review.
+6. **Close numeric-limit bypass**
+   - reject NaN/+Inf/-Inf for policy cash limits and order prices before arithmetic/broker calls.
 
-Current issue: `_load_reconciliation_state()` discards an optional legacy `core_qty` before `_check_core_authority()` can inspect it. Therefore a legacy file containing a Core different from `SymbolConfig.core_qty` is silently ignored instead of failing closed.
+7. **Harden production double-enable**
+   - config enable from trusted validated runtime config, default false;
+   - separate non-persistent runtime confirmation required after each restart;
+   - callbacks/strategy event handlers cannot self-enable execution.
 
-Required resolution:
+8. **Capability scan semantics**
+   - after a concrete XtQuant bridge exists, scan should allowlist only the exact audited real order/cancel call sites in that bridge;
+   - any additional direct call elsewhere => fail.
 
-- either reject `core_qty` as an unexpected reconciliation-state field; or
-- preserve it, require exact equality with `SymbolConfig.core_qty`, then discard it.
+## Required self-certified verification
 
-Add a loader-to-runner test proving a mismatched legacy Core fails closed before any broker execution capability can be invoked.
+- full unittest regression and compileall;
+- capability scan with exact allowlisted concrete XtQuant call sites;
+- integrated pre-live execution tests using a fake/raw-XtQuant surface only;
+- kill-switch allows cancel/re-query while blocking new orders;
+- malicious/arbitrary callback path cannot mutate engine/store/order state directly;
+- restart cannot reset daily exposure;
+- NaN/Inf fail-closed tests;
+- runtime confirmation resets false on restart;
+- NODEB-P0-001 retained;
+- no real order/cancel invocation;
+- no sensitive local runtime artifacts committed.
 
-## Forbidden During Gate 5.5
+## Forbidden
 
 - no real order invocation;
 - no real cancel invocation;
-- no enabling `live_trading_allowed` in canonical state;
 - no Gate 6 tiny-capital run;
-- no production/live soak claim;
-- no bypass of Node B.
+- no `live_trading_allowed=true` in canonical state;
+- no bypass of Audit Node B.
 
-## Required Self-Certified Evidence
+## Stop / handoff
 
-- full unit regression;
-- compileall;
-- capability scan identifying every real broker order/cancel call site introduced by Gate 5.5;
-- tests for double enable/confirmation;
-- allowlist and hard-limit tests;
-- callback isolation tests;
-- idempotency/reservation tests against the live adapter boundary using mocks/fakes only;
-- partial fill / cancel / re-query / uncertain-state tests;
-- restart/recovery tests;
-- NODEB-P0-001 integration test;
-- proof that no real order/cancel was invoked while producing the evidence.
-
-## Stop / Handoff — Audit Node B
-
-When implementation is complete:
-
-1. push normally to GitHub `main`;
-2. set canonical state to `AUDIT_READY_PRELIVE`;
-3. record exact implementation commit(s), test counts and capability call sites;
-4. authorize only `AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`;
-5. STOP.
-
-The first real order is prohibited until:
-
-```text
-Audit Node B = PASS
-AND
-explicit user authorization = YES
-```
+When complete, push to `main`, set `state=AUDIT_READY_PRELIVE`, record exact implementation/evidence SHA(s), authorize only `AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`, and STOP.
