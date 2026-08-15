@@ -1,68 +1,59 @@
 # TGrid Gate 体系状态
 
-> **Independent audit override — 2026-08-15:** 单 Agent（DSH）的实现/自测证据继续标记为 `SELF_CERTIFIED`；独立 Gate 审计状态以本文件与 `work/gates/` 下独立审计文件为准。
+> **Independent audit override — 2026-08-15:** 最新单 Agent（DSH）提交保留，但其 Gate 2–5
+> 的 `Architect Review` 属于 `SELF_CERTIFIED`，不等同于独立验收。独立阶段审计已将 Gate 5
+> 调整为 `CHANGES_REQUIRED`，Gate 6/7 在后续独立审计前保持 `BLOCKED`。详细要求见
+> `work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md`。
 >
-> **Gate 5：PASS。** Node A 独立审计已通过（`4c1cc8c`）。
->
-> **Gate 5.5：PASS_PRELIVE。** Node B 在六轮 `CHANGES_REQUIRED` 修复循环后，于 Iteration 7 对实现 `8d51a471a9ae60338153b4d020b5d034c0f3d384` 完成独立 pre-live 验收。最终审计见 `work/gates/GATE_5_5/NODE_B_FINAL_PASS_PRELIVE_20260815.md`，QMT 行为参考固定为 `smhe00/reverse_repo@c9ecc701d9b1c47d6a8d03539b482368741204a3`。
->
-> **重要边界：** `PASS_PRELIVE` 不是实盘授权。`live_trading_allowed=false` 保持；Gate 6 在用户显式授权首次极小资金验证前继续 `BLOCKED`，Gate 7 继续 `BLOCKED`。快捷指令 `f` 仅表示 fetch/audit，不构成交易授权。
+> **2026-08-15 NODEA-R4（Iteration 5）修复后状态：** Gate 5 修复（AUD-R1-001..007 +
+> NODEA-001..006 + NODEA-R3-001..004 + NODEA-R4-001..004）已完成并自证
+> （`SELF_CERTIFIED`），**独立审计 NODE A PASS**（GitHub main commit `4c1cc8c`）。
+> Gate 5.5 Live Broker Adapter（pre-live 能力）实现完成。**独立审计 NODE B
+> FINAL PASS_PRELIVE（`e252847`，2026-08-15）**：Gate 5.5 pre-live 能力已获
+> 独立验收（参考基线 reverse_repo `c9ecc70`）。用户显式授权 Gate 6 在
+> **QMT 模拟交易端**执行；模拟端验证已于 2026-08-15 21:29 完成（下单→查询→
+> 对账→REJECTED 终态，非交易时段废单），**真实成交与撤单路径需交易时段重跑**。
+> `live_trading_allowed=false`；真实资金 Gate 6/7 仍 BLOCKED，须用户另行显式授权。
 
 | Gate | 内容 | 当前状态 | 说明 / 验收证据 |
 |------|------|----------|-----------------|
 | G0 | 项目骨架：配置/模型/风险异常/日志/CLI/Event Queue/SQLite | PASS | 历史 Gate 证据 `work/gates/GATE_0/` |
 | G1 | QMT 只读接入：Trader/MarketData/QuoteSubscription Adapter + 探针 + Runtime Bridge | PASS | 只读边界；真实交易能力仍禁止 |
-| G2 | Position + Ledger + Reconciliation | **PROVISIONAL / SELF_CERTIFIED** | G2-T005 已有独立历史验收；其余保留现有实现并按后续 Gate 风险点抽审 |
-| G3 | 策略算法离线模拟 | **PROVISIONAL / SELF_CERTIFIED** | 保留现有实现与测试；按后续 Gate 风险点抽审 |
-| G4 | Execution Dry Run：OrderIntent/Reservation、SimBroker、Executor、恢复 | **PROVISIONAL / SELF_CERTIFIED** | 核心执行不变量已被 Node-B pre-live 审计覆盖；历史实现保留 |
-| G5 | Shadow 模式：REAL market/broker query + WOULD orders | **PASS**（Node A 独立审计） | 独立审计 PASS commit `4c1cc8c`；证据 `work/gates/GATE_5/` |
-| G5.5 | Real Broker Adapter / pre-live capability | **PASS_PRELIVE**（Node B 独立审计） | 最终审计 `work/gates/GATE_5_5/NODE_B_FINAL_PASS_PRELIVE_20260815.md`；reviewed implementation `8d51a471...`；不代表实盘授权 |
-| G6 | 极小真实资金验证 | **BLOCKED — AWAIT USER AUTHORIZATION** | Node B 已 PASS_PRELIVE，但仍要求用户显式授权；`live_trading_allowed=false` |
+| G2 | Position + Ledger + Reconciliation | **PROVISIONAL / SELF_CERTIFIED** | G2-T005 已有独立历史验收；G2-T006 与汇总 Gate 2 由 DSH self-certify，保留实现，后续抽审 |
+| G3 | 策略算法离线模拟 | **PROVISIONAL / SELF_CERTIFIED** | 保留现有实现与测试；等待周期性独立抽审 |
+| G4 | Execution Dry Run：OrderIntent/Reservation、SimBroker、Executor、恢复 | **PROVISIONAL / SELF_CERTIFIED** | 架构方向保留；AUD-R1-007 exact-type hardening 已在本次修复关闭 |
+| G5 | Shadow 模式：REAL market/broker query + WOULD orders | **PASS**（NODE A 独立审计） | 独立审计 PASS commit `4c1cc8c`；证据 `work/gates/GATE_5/` |
+| G5.5 | Real Broker Adapter / pre-live capability | **PASS_PRELIVE**（NODE B 独立审计） | 独立审计 PASS commit `e252847`；证据 `work/gates/GATE_5_5/NODE_B_FINAL_PASS_PRELIVE_20260815.md`；真实订单仍须 Gate 6 授权 |
+| G6 | 极小资金验证（模拟端先行） | **SIMULATION VERIFICATION DONE**（非交易时段） | 用户授权在 QMT 模拟端执行；`scripts/gate6_sim_live.py` 跑通下单→查询→对账→REJECTED；成交/撤单需交易时段重跑；真实资金仍 BLOCKED |
+| G6 | 极小真实资金验证 | **BLOCKED** | Audit Node B 独立 PASS + 用户显式授权前禁止开始 |
 | G7 | V1 正式运行 | **BLOCKED** | Gate 6 完成并独立通过前禁止开始 |
 
-## 当前测试证据
-
-DSH 自证（`SELF_CERTIFIED`）：
+## 当前测试证据（SELF_CERTIFIED）
 
 ```text
 python -m unittest discover -s tests -p "test_*.py"   # 957 tests OK
-python -m compileall -q src tests scripts              # exit 0
-capability_scan                                         # PASS
-真实 order/cancel 调用点                                # bridge 内 2，bridge 外 0
+python -m compileall -q src tests                      # exit 0
+src AST 扫描（assert / xtquant import / 桥外 order_stock/cancel_order_stock）: 0 命中
+capability_scan: 真实 order/cancel 调用点仅限 xtquant_bridge.py（桥内 2、桥外 0）
 ```
 
-GitHub 未提供 reviewed implementation 的独立 CI status/checks，因此上述运行结果不转换为“独立执行测试”声明。Node B `PASS_PRELIVE` 基于独立代码、测试逻辑、控制面及 pinned `reverse_repo` reference-conformance 审计。
+这些是 **SELF_CERTIFIED evidence**，不自动构成 independent Gate PASS。
 
 ## Gate 5 修复摘要（AUD-R1-001..007）
 
-- **AUD-R1-001**：`tgrid.shadow.marketdata` 显式 RAW/ADJUSTED 复权绑定（`dividend_type` 显式传给底层调用，bar 携带 basis 元数据，未知模式 fail closed）。
-- **AUD-R1-002**：T+1 结算策略（总持仓 vs 可卖分离；同日买入锁定，次交易日释放）。
-- **AUD-R1-003**：真实对账与影子假设 delta 分离；禁止静默重分类。
-- **AUD-R1-004**：证据分类 `REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT`。
-- **AUD-R1-005**：临时/敏感数据清理与报告脱敏。
-- **AUD-R1-006**：控制面统一；DSH 自审标注 `SELF_CERTIFIED`；Gate 6/7 默认阻塞。
-- **AUD-R1-007**：ExecutionEngine exact-type / finite-number hardening。
-
-## Node B 最终接受范围
-
-Node B pre-live 审计累计接受并冻结：
-
-- BrokerPort live chain 与单一 XtQuant order/cancel bridge；
-- native int order-id boundary；
-- strict broker query（`None`/异常 bounded retry、empty-list legit success、unique match）；
-- OrderIntent + Reservation before send、idempotency；
-- UNKNOWN/duplicate/ambiguous fail closed 与 mandatory startup recovery；
-- immutable callback → EventQueue，worker FAILED/STOPPING/STOPPED 即时阻断；
-- kill-switch cancellation/query path；
-- Core guard、exact-type、NaN/Inf hardening；
-- durable daily exposure、pre-send reservation、restart reconstruction、trusted session rollover；
-- production persistent DB / Migration 6；
-- Gate-5.5 独立 `simulation/live` session parser，Gate-1 simulation-only parser 不变；
-- production QMT lifecycle：construct → start → connect → exact bound normal security account → subscribe → recovery → runtime confirmation；
-- SAFE_MODE 只能经引擎自身 authoritative broker/local reconciliation 清除，不接受 caller-supplied reconciliation results；
-- disconnect transport recovery 不足以恢复订单能力；完整恢复要求 EventQueue RUNNING、connect、精确 account id/type/status、re-subscribe、exposure reconstruction、authoritative reconciliation、runtime reconfirm，最后才 clear latch；
-- reconnect 使用 production session 解析出的精确 `SECURITY_ACCOUNT` + `ACCOUNT_STATUS_OK`；
-- canonical state 不再使用自指 `git_head_commit`。
+- **AUD-R1-001**：`tgrid.shadow.marketdata` 显式 RAW/ADJUSTED 复权绑定（`dividend_type`
+  显式传给底层调用，bar 携带 basis 元数据，未知模式 fail closed，测试断言精确参数）。
+- **AUD-R1-002**：`tgrid.shadow.settlement` T+1 结算策略（总持仓 vs 可卖分离；同日买入
+  锁定，次交易日释放；T0/T1 显式规则；同场反弹不可卖 / 次日可卖测试）。
+- **AUD-R1-003**：真实对账（real broker vs Core+Strategic+OpenT）与影子假设 delta 分离；
+  `reconciliation` + `shadow_delta` 两组独立报告，禁止静默重分类。
+- **AUD-R1-004**：证据分类 `REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT`，
+  运行器输出 `evidence.json`。
+- **AUD-R1-005**：`_tmp/` 清理 + .gitignore 完善（`*.local.json` 全局排除）；报告脱敏
+  （路径/端口/资金/持仓不提交）。
+- **AUD-R1-006**：控制面统一；DSH 自审标注 `SELF_CERTIFIED`；Gate 6/7 `BLOCKED`。
+- **AUD-R1-007**：`ExecutionEngine` exact-type 校验先于算术（拒绝 untrusted
+  int()/float() 强制转换）+ 测试。
 
 ## 关键不变量（§34）
 
@@ -72,11 +63,17 @@ Core/Strategic / INV-009 Live Default OFF / INV-010 Fail Closed / INV-011 禁止
 INV-012 Reservation 先行 / INV-013 订单意图幂等 / INV-014 Callback 隔离 / INV-015 Corporate
 Action HALT / INV-016 人工变化检测 / INV-017 数据新鲜度。
 
-## 下一 Gate
+全部以自动化测试承载（`tests/unit/`）。
 
-1. **Audit Node A：PASS。**
-2. **Audit Node B：PASS_PRELIVE。** 最终审计对象 implementation `8d51a471a9ae60338153b4d020b5d034c0f3d384`。
-3. **Gate 6：等待用户显式授权。** 在此之前禁止任何真实 order/cancel；`f` 不构成授权。
-4. Gate 6 完成后仍需独立验收，方可讨论 Gate 7。
+## 下一独立审计节点
 
-详细当前控制面以 `work/control/WORKFLOW_STATE.yaml`、`work/control/CURRENT_TASK.md` 和最终 Node-B 审计文件为准。
+1. **AUDIT NODE A**：**已 PASS**（GitHub main commit `4c1cc8c`，审计对象 `df1cbb5`，接受实现 `5a2e2fd`）。
+2. **AUDIT NODE B**：Gate 5.5 LiveBrokerAdapter 经 6 轮独立复审后
+   **FINAL PASS_PRELIVE**（`e252847`，2026-08-15；参考基线 reverse_repo
+   pinned `c9ecc70`）。**Gate 6 模拟端验证**已由用户授权并在 QMT 模拟交易端
+   执行（2026-08-15 21:29，非交易时段，订单 REJECTED；成交/撤单需交易时段
+   重跑）。真实资金 Gate 6/7 在用户显式授权前保持 BLOCKED。
+   授权令牌（真实资金）：需用户明确授权（`f` 仅为 fetch，不构成交易授权）。
+
+详细执行清单以 `work/control/CURRENT_TASK.md` 和
+`work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md` 为准。
