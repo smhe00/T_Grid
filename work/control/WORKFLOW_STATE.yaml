@@ -4,29 +4,30 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 32
-handoff_id: "QMT-EXECUTION-CORE-0.2.1-AUDIT-PASS-20260816-032"
-authorized_next: []
+handoff_seq: 33
+handoff_id: "TGRID-QEC-MIGRATION-ITER13-20260816-033"
+authorized_next:
+  - "TGRID-QEC-MIGRATION-PHASE1"
 design_version: "1.1"
 gate: 5.5
-task_id: "QMT-EXECUTION-CORE-0.2.1-AUDIT"
-state: "PASS_FOR_MIGRATION_AWAIT_USER"
-owner: "architect"
-iteration: 12
-last_actor: "independent_auditor"
-last_update: "2026-08-16T07:49:00+08:00"
+task_id: "TGRID-QEC-MIGRATION-PHASE1"
+state: "IN_PROGRESS"
+owner: "dsh"
+iteration: 13
+last_actor: "architect"
+last_update: "2026-08-16T07:52:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_0_2_1_20260816.md"
+audit_file: "work/gates/QMT_EXECUTION_CORE/TGRID_MIGRATION_REQUEST_ITER13_20260816.md"
 git_base_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
 implementation_commit: "2e222e16731bd8ce232ffba78c697245472c2094"
-handoff_parent_commit: "8e1e8519d8e0067472e59910d4fde810af29e55d"
+handoff_parent_commit: "da4e346b8cb8fc41607d6a4bdf40037c81824fdf"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "2e222e16731bd8ce232ffba78c697245472c2094"
 live_trading_allowed: false
-user_escalation_required: true
-user_escalation_reason: "TGrid migration remains explicitly paused by the user. qmt-execution-core 0.2.1 independently passes for migration, but migration must not resume until the user explicitly says to resume/start the migration."
-next_independent_audit: "AUDIT_TGRID_QMT_EXECUTION_CORE_INTEGRATION_AFTER_MIGRATION"
+user_escalation_required: false
+user_escalation_reason: ""
+next_independent_audit: "AUDIT_TGRID_QMT_EXECUTION_CORE_INTEGRATION"
 pre_live_independent_audit: "REQUIRED_AFTER_INTEGRATED_QMT_SIMULATION"
-notes: "Independent audit accepted qmt-execution-core 0.2.1 commit 2e222e16731bd8ce232ffba78c697245472c2094 as PASS_FOR_MIGRATION. DSH first found a deterministic Windows P1 in 0.2.0 ExecutionMutex (subsequent owner LK_UNLCK PermissionError), then fixed it in 0.2.1 by seek(0)+pure msvcrt.locking/flock and removing the pre-lock zero-byte workaround. DSH evidence: Windows full suite 61 passed, compileall PASS, verifier 50 reachable abstract states / 208 transitions / 0 unreachable / 0 no-terminal-path / 0 invariant violations, installed wheel verify PASS, same/cross-process mutex repro PASS, real MiniQMT simulation read-only smoke PASS with zero order/cancel calls. GitHub Actions push CI for exact 2e222e1 PASS. Independent source inspection confirms state-aware cancel/recovery mapping and explicit CANCELLING+FILLED->FILLED path. Dedicated fill-during-cancel race test remains P2 and is mandatory before first real-money authorization, but does not block code migration. Migration remains PAUSED/AWAIT_USER by explicit user instruction. live_trading_allowed=false; f/fetch is not authorization to migrate or trade."
+notes: "User explicitly resumed TGrid migration to qmt-execution-core on 2026-08-16. Public-core baseline 0.2.1/2e222e1 independently PASS_FOR_MIGRATION. Iteration 13 is staged: first close the generic project-side durable-ledger seam so TGrid SQLite OrderIntent+Reservation+daily exposure commit before any broker submit; do not place side effects in ExecutionGuard and do not fork MiniQmtRuntime in TGrid. Public-core changes are allowed only when generic/broker-neutral, must bump/version-pin exact commit and re-run its full verification. Then add the TGrid adapter, prove fake/shadow old-vs-new equivalence, cut execution authority to the public core, and only then remove duplicated generic execution infrastructure. TGrid-specific Core/T-Lot/ledger/risk remains local. Python baseline must move from >=3.9 to >=3.11; no absolute local dependency path may be committed. Dedicated fill-during-cancel race test is required during migration. No real or simulation QMT order/cancel is authorized in this task. live_trading_allowed=false."
