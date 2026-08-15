@@ -4,27 +4,30 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 20
-handoff_id: "NODEB-IT2-REMEDIATION-DONE-20260815-020"
-authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
+handoff_seq: 21
+handoff_id: "NODEB-IT3-PRELIVE-FIX-20260815-021"
+authorized_next:
+  - "NODEB-PRELIVE-FIX"
 design_version: "1.1"
 gate: 5.5
-task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
-state: "AUDIT_READY_PRELIVE"
+task_id: "NODEB-PRELIVE-FIX"
+state: "CHANGES_REQUIRED"
 owner: "dsh"
-iteration: 2
-last_actor: "dsh"
-last_update: "2026-08-15T13:20:00+08:00"
+iteration: 3
+last_actor: "independent_auditor"
+last_update: "2026-08-15T14:03:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_20260815.md"
-git_base_commit: "0f8e0a1907c296cce32e213b455604cf835df084"
-git_head_commit: "b4d121c00f4c06a71ba5cb134661eac1a686c3cb"
-implementation_commit: "b4d121c00f4c06a71ba5cb134661eac1a686c3cb"
+audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER2_20260815.md"
+git_base_commit: "9ef60c75bd72db94f1cfda919965531c4557cb18"
+git_head_commit: "9ef60c75bd72db94f1cfda919965531c4557cb18"
+audit_target_commit: "9ef60c75bd72db94f1cfda919965531c4557cb18"
+reviewed_implementation_commit: "b4d121c00f4c06a71ba5cb134661eac1a686c3cb"
+accepted_gate5_implementation_commit: "5a2e2fd32e21328badd1ceb2c92b973436c4c95a"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
+next_independent_audit: "AUDIT_NODE_B_AFTER_ITERATION_3_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Node B audit 0f8e0a19 = CHANGES_REQUIRED (NODEB-001..007). Iteration 2 remediation complete (SELF_CERTIFIED): BrokerPort shared port + typed DTOs; ExecutionEngine port-only (no SimBroker/tick_order/get_order); SimulationDriver owns deterministic scripts; XtQuantBrokerBridge is the ONLY order_stock/cancel_order_stock call site (capability scan allowlist 2-in/0-out); full chain integration tests engine->adapter->bridge(fake); kill switch blocks new orders but cancel/cancel-all/requery stay; generic register_callback removed, bridge-owned handler only event_queue.put(immutable event); DailyExposureLedger trade_date-bound durable exposure with startup reconstruction and monotonic-only roll_day; NaN/Inf rejected via math.isfinite; bootstrap contract (config enable via trusted apply_config_enable, token-gated confirm_runtime, restart resets runtime-confirmed). 906 tests OK; compileall 0; capability scan PASS. No real order/cancel invoked. State AUDIT_READY_PRELIVE, awaiting independent Audit Node B re-review; Gate 6/7 BLOCKED; live_trading_allowed=false."
+notes: "Audit Node B Iteration 2 verdict CHANGES_REQUIRED. Gate 5 remains PASS. Accepted/frozen: BrokerPort architecture, ExecutionEngine live-port integration, bridge-only real call sites, full fake execution chain, Reservation+OrderIntent-before-send, idempotency, corrected kill-switch cancel behavior, legacy Core guard, adapter NaN/Inf checks, generic callback removal, and no real order/cancel invocation. Remaining pre-live blockers: XtQuant native order_id int contract at cancel boundary; UNKNOWN/ambiguous broker state not fail-closed; XtQuant callback sink does not connect to actual TGrid EventQueue and critical disconnect/order/cancel errors are dropped; daily exposure still has optional durable store, no mandatory reconstruction-ready gate, send-before-ledger crash window, terminal-order reconstruction gap, and weak roll_day validation; ExecutionEngine non-finite cash/capacity can mutate durable state before adapter; production bootstrap remains fragmented rather than one audited safe-order construction path. Gate 6/7 BLOCKED; live_trading_allowed=false."
