@@ -116,12 +116,14 @@ def _load_factor_registry(factor_map_path: str, code: str, trading_days) -> Dail
 def _load_reconciliation_state(state_path: str, code: str) -> dict:
     """Load trusted local decomposition for real reconciliation (NODEA-R3-003).
 
-    Returns ``{"strategic_extra": int, "open_t_position": int}``.  The state
-    provides ONLY independently known StrategicExtra and persisted/open real
-    T quantity.  ``SymbolConfig.core_qty`` is the sole Core authority
-    (NODEA-R4-002): if the state still carries a ``core_qty`` field it must
-    exactly equal the symbol's configured Core, otherwise fail closed — it is
-    never used as a second Core source.
+    Returns ``{"strategic_extra": int, "open_t_position": int}`` plus an
+    optional ``"legacy_core_qty"`` field preserved ONLY so the caller can run
+    the exact-equality guard (NODEB-P0-001).  The state provides only
+    independently known StrategicExtra and persisted/open real T quantity;
+    ``SymbolConfig.core_qty`` is the sole Core authority (NODEA-R4-002).  An
+    optional legacy ``core_qty`` is NOT discarded before the mismatch check —
+    the loader preserves it for :func:`_check_core_authority`, which requires
+    exact equality with the configured Core and then discards it.
 
     A missing file fails closed; each component must be present (an unknown
     component is NOT treated as zero).
@@ -144,26 +146,33 @@ def _load_reconciliation_state(state_path: str, code: str) -> dict:
                 f"[fail-closed] reconciliation state for {code!r} is missing "
                 f"non-negative int {field!r}"
             )
-    return {
+    result = {
         "strategic_extra": entry["strategic_extra"],
         "open_t_position": entry["open_t_position"],
     }
+    # NODEB-P0-001: a legacy core_qty is preserved so the exact-equality guard
+    # can run BEFORE any broker execution capability is invoked; it is never
+    # used as a Core source.
+    if "core_qty" in entry:
+        result["legacy_core_qty"] = entry["core_qty"]
+    return result
 
 
 def _check_core_authority(reconciliation_state: dict, symbol_cfg, code: str) -> None:
-    """Single-Core-authority guard (NODEA-R4-002).
+    """Single-Core-authority guard (NODEA-R4-002 / NODEB-P0-001).
 
     ``symbol_cfg.core_qty`` is the sole Core source.  If the reconciliation
-    state still carries a ``core_qty`` it must exactly equal the configured
-    value; a mismatch fails closed before any strategy execution.  The state
-    value is never used to construct the engine.
+    state carries a legacy ``core_qty`` (preserved by the loader) it must
+    exactly equal the configured value; a mismatch fails closed before any
+    broker execution.  The state value is never used to construct the engine
+    and is discarded after the check.
     """
-    if "core_qty" not in reconciliation_state:
+    legacy = reconciliation_state.get("legacy_core_qty")
+    if legacy is None:
         return  # preferred schema: no Core in reconciliation state
-    state_core = reconciliation_state["core_qty"]
-    if type(state_core) is not int or state_core != symbol_cfg.core_qty:
+    if type(legacy) is not int or legacy != symbol_cfg.core_qty:
         raise SystemExit(
-            f"[fail-closed] reconciliation-state core_qty {state_core!r} does "
+            f"[fail-closed] reconciliation-state legacy core_qty {legacy!r} does "
             f"not equal SymbolConfig.core_qty {symbol_cfg.core_qty!r}; "
             "SymbolConfig.core_qty is the sole Core authority"
         )

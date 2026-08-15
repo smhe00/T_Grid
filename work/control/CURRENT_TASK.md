@@ -8,7 +8,20 @@ Self-review must be labelled `SELF_CERTIFIED`; it is not an independent pre-live
 
 ## Status
 
-`AUTHORIZED_FOR_IMPLEMENTATION_ONLY`
+`AUDIT_READY_PRELIVE`（implementation complete, SELF_CERTIFIED, awaiting Audit Node B）
+
+## Completion Record (SELF_CERTIFIED — 2026-08-15)
+
+Gate 5.5 LiveBrokerAdapter implemented (pre-live only; no real order/cancel
+invoked). `src/tgrid/integrations/live_broker_adapter.py`: LiveBrokerAdapter +
+LiveBrokerPolicy with double-enable, allowlist, per-order qty/cash limits,
+daily cash exposure, kill switch, callback isolation, exact-type validation,
+cancel→re-query semantics. NODEB-P0-001 fixed: legacy reconciliation core_qty
+is preserved by the loader and exact-equality-checked before discard; mismatch
+fails closed (loader-to-runner integration tests).
+
+Evidence: 865 tests OK; compileall 0; capability scan 0 direct real
+order/cancel call sites; `work/gates/GATE_5_5/CLAUDE_REPORT.md`.
 
 Gate 5 passed independent Audit Node A on 2026-08-15. Gate 6 / Gate 7 remain blocked. `live_trading_allowed=false` remains mandatory.
 

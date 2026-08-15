@@ -171,7 +171,8 @@ class TestNodeAR4002SingleCoreAuthority(unittest.TestCase):
 
     def test_runner_core_authority_check(self):
         # The runner's _check_core_authority must fail closed when the state
-        # carries a core_qty that differs from SymbolConfig.core_qty.
+        # carries a legacy core_qty (preserved by the loader as
+        # legacy_core_qty, NODEB-P0-001) that differs from SymbolConfig.core_qty.
         import importlib.util
 
         spec = importlib.util.spec_from_file_location(
@@ -183,15 +184,17 @@ class TestNodeAR4002SingleCoreAuthority(unittest.TestCase):
         except SystemExit:
             pass
         symbol_cfg = _symbol(core_qty=600)
-        # Matching core is accepted and discarded.
+        # Matching legacy core is accepted and discarded.
         module._check_core_authority(
-            {"strategic_extra": 100, "open_t_position": 0, "core_qty": 600},
+            {"strategic_extra": 100, "open_t_position": 0,
+             "legacy_core_qty": 600},
             symbol_cfg, "510300.SH",
         )
-        # Mismatched core fails closed.
+        # Mismatched legacy core fails closed.
         with self.assertRaises(SystemExit):
             module._check_core_authority(
-                {"strategic_extra": 100, "open_t_position": 0, "core_qty": 700},
+                {"strategic_extra": 100, "open_t_position": 0,
+                 "legacy_core_qty": 700},
                 symbol_cfg, "510300.SH",
             )
 
@@ -211,6 +214,80 @@ class TestNodeAR4002SingleCoreAuthority(unittest.TestCase):
             {"strategic_extra": 100, "open_t_position": 0},
             _symbol(core_qty=600), "510300.SH",
         )
+
+
+class TestNodeBP0001LegacyCoreGuard(unittest.TestCase):
+    """NODEB-P0-001: loader preserves legacy core_qty so the mismatch guard
+    actually runs; a mismatched legacy Core fails closed before any broker
+    execution capability can be invoked."""
+
+    @staticmethod
+    def _module():
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "gate5_shadow_live", "scripts/gate5_shadow_live.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        try:
+            spec.loader.exec_module(module)
+        except SystemExit:
+            pass
+        return module
+
+    def _write_state(self, tmp, payload):
+        import json
+        import os
+
+        path = os.path.join(tmp, "recon.json")
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        return path
+
+    def test_loader_preserves_legacy_core_for_guard(self):
+        import tempfile
+
+        module = self._module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_state(
+                tmp, {"510300.SH": {"strategic_extra": 100,
+                                    "open_t_position": 0, "core_qty": 600}}
+            )
+            state = module._load_reconciliation_state(path, "510300.SH")
+            # The legacy core must be preserved (not discarded) so the guard
+            # can inspect it (NODEB-P0-001).
+            self.assertEqual(state["legacy_core_qty"], 600)
+            # Matching legacy core passes the guard.
+            module._check_core_authority(state, _symbol(core_qty=600), "510300.SH")
+
+    def test_mismatched_legacy_core_fails_closed_through_loader(self):
+        import tempfile
+
+        module = self._module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_state(
+                tmp, {"510300.SH": {"strategic_extra": 100,
+                                    "open_t_position": 0, "core_qty": 700}}
+            )
+            state = module._load_reconciliation_state(path, "510300.SH")
+            self.assertEqual(state["legacy_core_qty"], 700)
+            # Config core is 600; legacy 700 -> fail closed.
+            with self.assertRaises(SystemExit):
+                module._check_core_authority(
+                    state, _symbol(core_qty=600), "510300.SH"
+                )
+
+    def test_preferred_schema_no_core_ok(self):
+        import tempfile
+
+        module = self._module()
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self._write_state(
+                tmp, {"510300.SH": {"strategic_extra": 100, "open_t_position": 0}}
+            )
+            state = module._load_reconciliation_state(path, "510300.SH")
+            self.assertNotIn("legacy_core_qty", state)
+            module._check_core_authority(state, _symbol(core_qty=600), "510300.SH")
 
 
 if __name__ == "__main__":
