@@ -1,94 +1,78 @@
-# Current Task — State Machine Production Refinement — Iteration 10
+# Current Task — Validate qmt-execution-core 0.2.0
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — implementation + self-review. Self-review evidence
-must remain labelled `SELF_CERTIFIED`.
+`DSH (DeepSeek Harness)` — validation + self-review only. All evidence must remain labelled `SELF_CERTIFIED` until independent architect review.
 
 ## Status
 
-`REVIEW_READY` — Iteration 10 fixes complete (SELF_CERTIFIED), handed off for
-**AUDIT_NODE_B_STATE_MACHINE_PORT** independent review per the Iteration-9
-fix request (`FIX_REQUEST_STATE_MACHINE_ITER10_20260815.md`).
-
-Baseline Gate 5.5 remains accepted:
+`IN_PROGRESS` — TGrid migration is PAUSED. The only authorized task is to validate the standalone execution library at:
 
 ```text
-baseline PASS_PRELIVE: e252847ecab2c5cb122af23091cd41680f901ccd
+D:\gitee\miniQMT\qmt-execution-core
 ```
 
-The state-machine extension is NOT cleared for first real-money execution until
-its independent review passes. `live_trading_allowed=false`; no real-money or
-QMT-simulation order/cancel was invoked during this fix.
-
-## Audit target / fix request
+against:
 
 ```text
-main: 54038292d6f83f3df61da64bbde6f85a23df600d
-review: work/gates/GATE_5_5/NODE_B_STATE_MACHINE_PORT_REVIEW_ITER9_20260815.md
-fix:    work/gates/GATE_5_5/FIX_REQUEST_STATE_MACHINE_ITER10_20260815.md
+repo:    https://github.com/smhe00/qmt-execution-core
+commit:  a1500e724bcfed13efbac65d9fbdce2b2513c817
+version: 0.2.0
 ```
 
-## Iteration 10 closure (SELF_CERTIFIED)
+The previous TGrid Iteration-10 state-machine audit is superseded as an immediate task because that duplicate execution infrastructure may be replaced by the common core. The historical Gate 5.5 PASS_PRELIVE baseline `e252847` remains regression evidence and is not revoked.
 
-1. **SM9-001 — production wiring**: `build_live_session()` derives the
-   execution journal (`<db_dir>/tgrid-execution-<trade_date>.json`) and
-   cross-process mutex (`<db_dir>/tgrid-execution.lock`) from the validated
-   database location and passes them unconditionally into `build_live_stack`;
-   a missing journal/mutex on the production stack raises `LiveSessionError`
-   (no silent opt-out). Production-shaped fake tests cover both
-   `environment="simulation"` and `"live"`.
-2. **SM9-002 — lock/journal lifetime**: `ExecutionJournal` is LAZY (no
-   read/write at construction); `LiveStack.activate()` acquires the mutex
-   BEFORE journal load/create and machine attachment
-   (`_attach_execution_authority`), so a losing process never touches the
-   shared journal (FI: journal bytes unchanged). `release_execution_lock()`
-   engages `engine.block_permanently()` — an irreversible block that
-   reconciliation cannot clear (FI: post-release orders rejected, even after
-   reconcile).
-3. **SM9-003 — implementation-to-model refinement**:
-   - (A) `send_*` no longer synthesizes TRIGGER/SNAPSHOT_OK; new
-     `LiveStack.prepare_snapshot(evidence=...)` emits them with the evidence
-     STRUCTURALLY bound in the journal transition (`details.evidence`);
-   - (B) poll/cancel events are state-aware: CANCEL_PENDING → pending
-     outcomes map to CANCEL_STILL_PENDING and terminal to CANCEL_TERMINAL;
-     ORDER_ACTIVE (incl. spontaneous cancel) → ORDER_TERMINAL;
-   - (C) recovery multiplicity: multiple/mixed unresolved matched orders →
-     RECOVERY_AMBIGUOUS → SAFE_HALT + SAFE_MODE (fail closed);
-   - (D) definitive rejection (new port-level `BrokerRejectedError`; the
-     adapter's `LiveBrokerError` family and `BrokerOrderRejectedError` now
-     inherit it) → SUBMIT_REJECTED → SAFE_HALT + intent REJECTED + reservation
-     release; ambiguous exceptions → SUBMIT_EXCEPTION → SUBMIT_UNKNOWN.
-4. **SM9-004 — durable remark authority**: `recover_unknown_submission()`
-   has NO caller remark override; the persisted `intent.order_remark` is the
-   sole recovery identity (FI: supplying a remark raises TypeError).
-5. **SM9-005 — verification source integrity**: `execution_source_sha256()`
-   raises `ExecutionSourceIntegrityError` on any missing protected file;
-   the manifest now binds **14 safety-critical sources** (execution authority,
-   production wiring/session/account, broker state mapping, daily exposure +
-   exposure persistence); manifest integrity FI covers omission.
+## Validation contract
 
-## Evidence
+Read and execute:
 
-- Regression: `python -m unittest discover -s tests -p "test_*.py"`
-  → **1009 tests OK** (was 998; +11 for SM9-001..005 FIs).
-- `python -m compileall -q src tests scripts` → exit 0.
-- Verifier: `verify_state_machines()` = 39 reachable abstract states /
-  115 transitions / 0 unreachable / 0 violations;
-  `transition_spec_sha256=7d9959dd...` (unchanged),
-  `execution_source_sha256=0f5d3ca6...` (14 bound files).
-- Capability scan: real `order_stock`/`cancel_order_stock` call sites remain
-  bridge-only (2 whitelisted, 0 elsewhere); AST scans PASS.
-- No real order/cancel invoked; `live_trading_allowed=false`.
+```text
+work/gates/QMT_EXECUTION_CORE/VALIDATION_REQUEST_20260816.md
+```
 
-## Required handoff (after fixes)
+## Hard prohibitions
+
+```text
+NO TGrid migration/refactor
+NO qmt-execution-core production-code changes
+NO real-money order/cancel
+NO QMT simulation order/cancel
+NO order_stock/order_stock_async
+NO cancel_order_stock/cancel_order_stock_async
+NO live trading enablement
+```
+
+Real MiniQMT may be used only for safe read-only connection/query smoke testing.
+
+## Required output
+
+```text
+work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md
+```
+
+Report either:
+
+```text
+SELF_CERTIFIED PASS
+```
+
+or:
+
+```text
+CHANGES_REQUIRED
+```
+
+with exact defects and evidence. Do not repair findings in this task.
+
+## Required handoff
+
+When validation is complete:
 
 ```text
 state = REVIEW_READY
 owner = architect
-iteration = 10
-authorized_next = [AUDIT_NODE_B_STATE_MACHINE_PORT]
+authorized_next = [AUDIT_QMT_EXECUTION_CORE_0_2_0]
 live_trading_allowed = false
 ```
 
-Do not claim PASS before independent review.
+Do not start TGrid migration until the architect independently reviews this validation.
