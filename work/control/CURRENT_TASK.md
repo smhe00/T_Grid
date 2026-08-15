@@ -2,144 +2,105 @@
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — single programming Agent, implementation + self-review allowed.
-
-Self-review must be labelled `SELF_CERTIFIED`; it is not an independent pre-live authorization.
+`DSH (DeepSeek Harness)` — implementation + self-review allowed; self-review must remain `SELF_CERTIFIED`.
 
 ## Status
 
-`AUDIT_READY_PRELIVE (ITERATION 6)`（NODEB-RR5-001..004 remediation complete, SELF_CERTIFIED, awaiting Audit Node B re-review）
+`AUTHORIZED_FOR_FIXES_ONLY (ITERATION 7)`
 
-## Completion Record — Iteration 6 (SELF_CERTIFIED — 2026-08-15)
-
-Node B Iteration-5 audit (`4310247`) returned `CHANGES_REQUIRED`; all 4 findings closed:
-
-- **NODEB-RR5-001 (P0)**: separate strict Gate-5.5 session-binding parser
-  (`parse_live_session_binding`) supporting exactly simulation + live,
-  reusing runtime-path/account-fingerprint validation; Gate-1
-  simulation-only parser untouched; positive fake live-environment lifecycle
-  test (live_qmt_path + live binding entry + exact connect/subscribe) and
-  unsupported-env fail-closed.
-- **NODEB-RR5-002 (P0)**: public `clear_safe_mode()` and
-  `clear_safe_mode_after_reconciliation(results)` removed from the public
-  API; the only production SAFE_MODE release is `LiveStack.reconcile_and_resume()`
-  which itself runs `reconcile_open_intents()` then the internal
-  `_clear_safe_mode_after_reconciliation` (empty-with-open-intents and
-  fabricated results rejected).
-- **NODEB-RR5-003 (P0)**: low-level `bridge.verify_transport()` is transport
-  only and does NOT clear the disconnect latch; order capability is restored
-  only by `LiveStack.recover_after_disconnect()` orchestration (queue RUNNING
-  -> exact connect -> bound account type/OK verify -> subscribe verify ->
-  exposure reconstruct -> authoritative reconciliation -> runtime reconfirm
-  -> clear latch); FI proves direct transport verify cannot order.
-- **NODEB-RR5-004 (P1)**: canonical metadata now records
-  `implementation_commit` + `handoff_parent_commit` distinctly with exact
-  GitHub SHAs (no self-referential git_head_commit claim).
-
-Evidence: **952 tests OK** (was 950); compileall 0; capability scan PASS
-(2 allowlisted bridge call sites, 0 outside); no real order/cancel invoked.
-Report: `work/gates/GATE_5_5/CLAUDE_REPORT.md`.
-
-Gate 5 passed independent Audit Node A on 2026-08-15. Gate 6 / Gate 7 remain blocked. `live_trading_allowed=false` remains mandatory.
+Gate 5 remains independent PASS. Gate 5.5 remains `CHANGES_REQUIRED`. Gate 6/7 remain `BLOCKED`. `live_trading_allowed=false` remains mandatory.
 
 ## Source of Authorization
 
-Read and comply with:
+Independent review:
 
 ```text
-work/gates/GATE_5/NODE_A_FINAL_REVIEW_20260815.md
+work/gates/GATE_5_5/NODE_B_REVIEW_ITER6_20260815.md
 ```
 
-Audit target:
+Reviewed target:
 
 ```text
-df1cbb53471d8f765c89c4bc644323d5839d0dd6
+main: faa2e67cffc8bf43d9a20b2475b8e0c183e16890
+implementation: ecf77eb5bb96a45794c1dcc2598bc39f7b4aea2b
+reference: smhe00/reverse_repo@c9ecc701d9b1c47d6a8d03539b482368741204a3
 ```
 
-Accepted Gate-5 implementation commit:
+## Iteration 7 — ONLY Authorized Fixes
 
-```text
-5a2e2fd32e21328badd1ceb2c92b973436c4c95a
-```
+### NODEB-RR6-001 — P0: remove fabricated-result SAFE_MODE authority
 
-## Objective
+Current `_clear_safe_mode_after_reconciliation(results)` remains reachable through public `LiveStack.engine` and accepts fabricated resolved result objects.
 
-Implement Gate 5.5: the real broker execution adapter and its pre-live safety boundary, while **never invoking a real order or real cancel** during this task.
+Required:
 
-Target architecture:
+- no engine API reachable from production may accept caller-supplied reconciliation result objects as proof for clearing SAFE_MODE;
+- production release must itself perform authoritative broker/local reconciliation, or consume an internal capability not forgeable by ordinary callers;
+- `LiveStack.reconcile_and_resume()` remains the production transition;
+- add FI proving fabricated `MATCHED/SUBMITTED` objects cannot clear SAFE_MODE;
+- UNKNOWN/unresolved state keeps SAFE_MODE and reservations.
 
-```text
-ExecutionEngine
-    -> LiveBrokerAdapter
-    -> XtQuantTrader
-```
+### NODEB-RR6-002 — P0: reconnect must bind exact account type + status constants
 
-The adapter may contain the broker capability needed for later live execution, but this task ends before the first real invocation.
+Current reconnect health verification checks account id + status only and relies on bridge default `account_status_ok=1`. The production session already resolves real XtQuant `SECURITY_ACCOUNT` and `ACCOUNT_STATUS_OK` constants but does not pass them into the bridge.
 
-## Mandatory Requirements
+Required:
 
-1. `live_trading` defaults false and cannot be enabled implicitly.
-2. A second explicit runtime confirmation is required in addition to configuration before broker execution is permitted.
-3. Explicit symbol allowlist.
-4. Hard per-order quantity limit.
-5. Hard per-order and/or per-day cash exposure limit.
-6. Kill switch / emergency disable path.
-7. Broker callbacks may only enqueue events; callbacks must not directly mutate T-Lots, position state, reservations, DB strategy state, or issue new orders.
-8. Reuse Gate-4 idempotent OrderIntent + Reservation-before-send semantics.
-9. Partial fills must be modeled explicitly.
-10. Timeout path must be `cancel request -> broker re-query -> reconcile`; cancellation acknowledgement must never be interpreted as proof of zero fill.
-11. Order/trade reconciliation and restart/crash recovery must be deterministic and fail closed.
-12. Exact-type validation must occur before arithmetic or broker calls.
-13. No force push / history rewrite.
-14. Do not commit account identifiers, balances, holdings, ports, userdata paths, secrets or local runtime configs.
+- propagate exact production `security_account_type` and `account_status_ok` values into the bridge/recovery boundary;
+- require exact account id + account type + status match;
+- add FI: correct id/wrong type fails; correct id/type/bad status fails; injected non-default constants succeed;
+- keep low-level transport reconnect insufficient for execution recovery;
+- keep order recovery sequence: queue RUNNING -> connect -> account type/status verify -> subscribe -> exposure reconstruct -> authoritative reconciliation -> runtime reconfirm -> latch clear.
 
-## Mandatory Carry-Forward Fix — NODEB-P0-001
+### NODEB-RR6-003 — P1: remove misleading canonical head field
 
-Fix the legacy reconciliation Core mismatch guard before Node B review.
+Current shared main is metadata child `faa2e67...`, while state labels implementation `ecf77eb5...` as `git_head_commit`.
 
-Current issue: `_load_reconciliation_state()` discards an optional legacy `core_qty` before `_check_core_authority()` can inspect it. Therefore a legacy file containing a Core different from `SymbolConfig.core_qty` is silently ignored instead of failing closed.
+Required:
 
-Required resolution:
+- remove `git_head_commit` if exact current-head self-reference cannot be represented safely; or replace it with non-self-referential fields whose semantics are explicit;
+- keep exact `implementation_commit` and handoff parent/base SHA fields;
+- do not claim implementation SHA is current branch head after metadata commit.
 
-- either reject `core_qty` as an unexpected reconciliation-state field; or
-- preserve it, require exact equality with `SymbolConfig.core_qty`, then discard it.
+## Frozen — DO NOT Rework Without Direct Regression
 
-Add a loader-to-runner test proving a mismatched legacy Core fails closed before any broker execution capability can be invoked.
+The following are accepted and frozen:
 
-## Forbidden During Gate 5.5
+- true Gate-5.5 `simulation`/`live` session parser and positive live-environment fake lifecycle;
+- Gate-1 simulation-only parser;
+- BrokerPort / LiveBrokerAdapter / XtQuant bridge architecture;
+- native int order-id conversion;
+- strict-query `None`/exception fail-closed behavior;
+- Reservation + OrderIntent-before-send + idempotency;
+- UNKNOWN/duplicate recovery fail-closed;
+- real EventQueue callback isolation/lifecycle health;
+- kill switch and finite-number hardening;
+- durable OrderIntent-date daily-exposure reconstruction;
+- Migration 6 / persistent production database lifecycle;
+- legacy Core authority guard;
+- Gate 5 Node A PASS behavior.
+
+## Forbidden
 
 - no real order invocation;
 - no real cancel invocation;
-- no enabling `live_trading_allowed` in canonical state;
-- no Gate 6 tiny-capital run;
-- no production/live soak claim;
-- no bypass of Node B.
+- no Gate 6 run;
+- no enabling `live_trading_allowed`;
+- no production/live-soak claim;
+- no force push/history rewrite;
+- no broad refactor outside RR6-001..003.
 
-## Required Self-Certified Evidence
+## Stop / Handoff
 
-- full unit regression;
-- compileall;
-- capability scan identifying every real broker order/cancel call site introduced by Gate 5.5;
-- tests for double enable/confirmation;
-- allowlist and hard-limit tests;
-- callback isolation tests;
-- idempotency/reservation tests against the live adapter boundary using mocks/fakes only;
-- partial fill / cancel / re-query / uncertain-state tests;
-- restart/recovery tests;
-- NODEB-P0-001 integration test;
-- proof that no real order/cancel was invoked while producing the evidence.
+After fixes and self-certified regression evidence:
 
-## Stop / Handoff — Audit Node B
-
-When implementation is complete:
-
-1. push normally to GitHub `main`;
-2. set canonical state to `AUDIT_READY_PRELIVE`;
-3. record exact implementation commit(s), test counts and capability call sites;
+1. push normally to `main`;
+2. set state to `AUDIT_READY_PRELIVE`;
+3. record exact implementation commit and non-self-referential handoff metadata;
 4. authorize only `AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`;
 5. STOP.
 
-The first real order is prohibited until:
+First real order remains prohibited until:
 
 ```text
 Audit Node B = PASS
