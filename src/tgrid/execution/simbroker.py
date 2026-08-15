@@ -6,6 +6,12 @@ timeout, cancel failure, disconnect — is driven by an explicit, per-order
 :class:`SimOrder` ``script`` the test (or the dry-run harness) controls, so the
 whole §39 failure matrix is reproducible without real markets.
 
+``SimBroker`` implements the shared :class:`~tgrid.execution.port.BrokerPort`
+(NODEB-001): the core execution layer consumes only the port methods, and
+orders/trades cross the boundary as :class:`BrokerOrder` / :class:`BrokerTrade`
+DTOs.  The simulation-only hooks (``get_order`` / ``tick_order`` / ``script``)
+stay here and are used exclusively by :class:`~tgrid.execution.simdriver.SimulationDriver`.
+
 The broker keeps its own order/trade book so crash recovery (design §23) can be
 tested: orders/trades survive independently of the local execution store.
 """
@@ -14,23 +20,25 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from tgrid.risk.exceptions import TGridError
+from tgrid.execution.port import (
+    BrokerCancelFailedError,
+    BrokerDisconnectedError,
+    BrokerError,
+    BrokerOrder,
+    BrokerOrderRejectedError,
+    BrokerPort,
+    BrokerTrade,
+)
 
-
-class BrokerError(TGridError):
-    """Base class for simulated broker failures."""
-
-
-class BrokerDisconnectedError(BrokerError):
-    """The simulated broker is disconnected (network failure, design §23)."""
-
-
-class BrokerOrderRejectedError(BrokerError):
-    """The simulated broker rejected the order at send time."""
-
-
-class BrokerCancelFailedError(BrokerError):
-    """The simulated broker failed to cancel the order (design §25)."""
+__all__ = [
+    "BrokerError",
+    "BrokerDisconnectedError",
+    "BrokerOrderRejectedError",
+    "BrokerCancelFailedError",
+    "SimFill",
+    "SimOrder",
+    "SimBroker",
+]
 
 
 @dataclass(frozen=True)
@@ -72,7 +80,7 @@ class SimOrder:
     trades: list = field(default_factory=list)
 
 
-class SimBroker:
+class SimBroker(BrokerPort):
     """Offline simulated broker with an in-memory order/trade book.
 
     ``connected`` toggles disconnect behaviour: any operation while
@@ -80,6 +88,10 @@ class SimBroker:
     the broker order id immediately (deterministic); fills/rejects are applied
     on the next :meth:`query_orders` / :meth:`query_trades` / :meth:`tick`
     call, consuming the script one step at a time.
+
+    Port reads return typed :class:`BrokerOrder` / :class:`BrokerTrade` DTOs;
+    ``get_order`` / ``tick_order`` are simulation-only hooks used by
+    :class:`~tgrid.execution.simdriver.SimulationDriver`.
     """
 
     def __init__(self) -> None:
@@ -136,6 +148,7 @@ class SimBroker:
         return order_id
 
     def get_order(self, order_id: str) -> SimOrder:
+        """Simulation-only hook: return the mutable SimOrder for script work."""
         if order_id not in self._orders:
             raise BrokerError("unknown order id")
         return self._orders[order_id]
@@ -195,19 +208,42 @@ class SimBroker:
             raise BrokerCancelFailedError("simulated cancel failure")
         order.status = "CANCELED"
 
-    def query_order(self, order_id: str) -> SimOrder:
+    # ------------------------------------------------------- port read side
+
+    def query_order(self, order_id: str) -> BrokerOrder:
         """Read the current broker-side order state (design §24/§25)."""
         self._require_connected()
-        return self.get_order(order_id)
+        order = self.get_order(order_id)
+        return BrokerOrder(
+            order_id=order.order_id, symbol=order.symbol, side=order.side,
+            qty=order.qty, limit_price=order.limit_price, status=order.status,
+            filled_qty=order.filled_qty, client_order_key=order.client_order_key,
+            order_remark=order.order_remark,
+        )
 
     def query_trades(self, order_id: str) -> tuple:
         """Return the trades (fills) recorded for ``order_id``."""
         self._require_connected()
         order = self.get_order(order_id)
-        return tuple(order.trades)
+        return tuple(
+            BrokerTrade(
+                trade_id=t.trade_id, order_id=t.order_id, qty=t.qty,
+                price=t.price, time=t.time,
+            )
+            for t in order.trades
+        )
 
     def query_orders(self, *, symbol: str | None = None) -> tuple:
         self._require_connected()
-        if symbol is None:
-            return tuple(self._orders.values())
-        return tuple(o for o in self._orders.values() if o.symbol == symbol)
+        orders = self._orders.values()
+        if symbol is not None:
+            orders = (o for o in orders if o.symbol == symbol)
+        return tuple(
+            BrokerOrder(
+                order_id=o.order_id, symbol=o.symbol, side=o.side,
+                qty=o.qty, limit_price=o.limit_price, status=o.status,
+                filled_qty=o.filled_qty, client_order_key=o.client_order_key,
+                order_remark=o.order_remark,
+            )
+            for o in orders
+        )

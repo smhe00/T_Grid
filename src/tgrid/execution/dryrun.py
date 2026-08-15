@@ -1,10 +1,11 @@
 """Dry-run harness tying strategy decisions to the execution engine (Gate 4).
 
 :class:`DryRunHarness` connects the offline :class:`AccumulateStrategy` to the
-:class:`ExecutionEngine` + :class:`SimBroker` and computes realized T PnL when a
-T-Lot closes (design §39: 行情→信号→订单→成交→T-Lot→卖出→PnL).  It is the
-reference wiring the Gate 5 shadow mode will reuse; it never touches QMT and
-never places a real order.
+:class:`ExecutionEngine` + :class:`SimBroker` (through the simulation-only
+:class:`~tgrid.execution.simdriver.SimulationDriver`, NODEB-001) and computes
+realized T PnL when a T-Lot closes (design §39: 行情→信号→订单→成交→T-Lot→卖出→PnL).
+It is the reference wiring the Gate 5 shadow mode will reuse; it never touches
+QMT and never places a real order.
 
 The harness owns per-symbol open lots (mirroring the strategy's view) and, on a
 confirmed SELL fill, computes gross realized PnL from the actual fill price and
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 from tgrid.execution.executor import ExecutionEngine
 from tgrid.execution.models import BUY, SELL, OrderStatus
 from tgrid.execution.simbroker import SimBroker
+from tgrid.execution.simdriver import SimulationDriver, SimulationDriverError
 from tgrid.strategy.bars import Bar
 from tgrid.strategy.engine import AccumulateStrategy, BarDecision, DecisionKind
 
@@ -80,6 +82,10 @@ class DryRunHarness:
         self._strategy = strategy
         self._executor = executor
         self._broker = broker
+        try:
+            self._driver = SimulationDriver(executor, broker)
+        except SimulationDriverError as exc:
+            raise DryRunError(str(exc)) from exc
         self._fee_rate = float(fee_rate)
         self._symbol = symbol
         self._seq = 0
@@ -128,7 +134,7 @@ class DryRunHarness:
 
         if decision.kind == DecisionKind.BUY_T:
             key = self._next_key("B")
-            result = self._executor.send_buy(
+            result = self._driver.send_buy(
                 client_order_key=key,
                 symbol=decision.symbol,
                 qty=decision.qty,
@@ -158,7 +164,7 @@ class DryRunHarness:
 
         if decision.kind == DecisionKind.SELL_T:
             key = self._next_key("S")
-            result = self._executor.send_sell(
+            result = self._driver.send_sell(
                 client_order_key=key,
                 symbol=decision.symbol,
                 qty=decision.qty,

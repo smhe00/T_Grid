@@ -21,8 +21,13 @@ from tgrid.models import ACCUMULATE_MODE, GlobalConfig, RootConfig, SymbolConfig
 from tgrid.execution import (
     BUY,
     SELL,
+    BrokerCancelFailedError,
     BrokerDisconnectedError,
+    BrokerError,
+    BrokerOrder,
     BrokerOrderRejectedError,
+    BrokerPort,
+    BrokerTrade,
     CancelFailedError,
     DryRunHarness,
     DryRunResult,
@@ -36,6 +41,7 @@ from tgrid.execution import (
     PnLRecord,
     ReservationConflictError,
     SimBroker,
+    SimulationDriver,
     reconcile_open_intents,
 )
 from tgrid.persistence import (
@@ -49,7 +55,6 @@ from tgrid.position import (
     snapshot_from_symbol_config,
 )
 from tgrid.integrations.live_broker_adapter import (
-    CallbackMutationForbiddenError,
     CashExposureLimitError,
     KillSwitchEngagedError,
     LiveBrokerAdapter,
@@ -57,7 +62,20 @@ from tgrid.integrations.live_broker_adapter import (
     LiveTradingDisabledError,
     LiveTradingNotConfirmedError,
     OrderQtyLimitError,
+    RuntimeConfirmationTokenError,
     SymbolNotAllowedError,
+)
+from tgrid.integrations.daily_exposure import (
+    DailyExposureError,
+    DailyExposureLedger,
+    ExposureDateError,
+    ExposureValueError,
+)
+from tgrid.integrations.xtquant_bridge import (
+    BrokerOrderEvent,
+    BrokerTradeEvent,
+    XtQuantBrokerBridge,
+    XtQuantCallbackHandler,
 )
 from tgrid.reporting import (
     SCHEMA_VERSION,
@@ -247,8 +265,14 @@ __all__ = [
     "BUY",
     "SELL",
     "SimBroker",
+    "BrokerPort",
+    "BrokerOrder",
+    "BrokerTrade",
+    "BrokerError",
     "BrokerDisconnectedError",
     "BrokerOrderRejectedError",
+    "BrokerCancelFailedError",
+    "SimulationDriver",
     "DryRunHarness",
     "DryRunResult",
     "PnLRecord",
@@ -275,9 +299,17 @@ __all__ = [
     "LiveBrokerPolicy",
     "LiveTradingDisabledError",
     "LiveTradingNotConfirmedError",
+    "RuntimeConfirmationTokenError",
     "SymbolNotAllowedError",
     "OrderQtyLimitError",
     "CashExposureLimitError",
     "KillSwitchEngagedError",
-    "CallbackMutationForbiddenError",
+    "DailyExposureLedger",
+    "DailyExposureError",
+    "ExposureDateError",
+    "ExposureValueError",
+    "XtQuantBrokerBridge",
+    "XtQuantCallbackHandler",
+    "BrokerOrderEvent",
+    "BrokerTradeEvent",
 ]

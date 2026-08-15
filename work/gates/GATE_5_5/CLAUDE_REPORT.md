@@ -2,62 +2,55 @@
 
 ## Status
 
-`REVIEW_READY (PRELIVE)` — 实现完成（SELF_CERTIFIED），等待 Audit Node B 独立复审。
+`AUDIT_READY_PRELIVE (ITERATION 2)` — Node B 审计（`0f8e0a19`，
+`work/gates/GATE_5_5/NODE_B_REVIEW_20260815.md`）判定 `CHANGES_REQUIRED`；
+**NODEB-001..007 已全部修复（SELF_CERTIFIED）**，等待 Audit Node B 复审。
 **本任务未调用任何真实 order/cancel；`live_trading_allowed=false` 保持。**
 
-授权来源：`work/gates/GATE_5/NODE_A_FINAL_REVIEW_20260815.md`（Gate 5.5
-AUTHORIZED_FOR_IMPLEMENTATION_ONLY）。
+授权来源：Gate 5 Node A PASS（`4c1cc8c`）+ Node B 授权仅限修复 NODEB-001..007。
 
-## Scope
+## Scope（Iteration 2）
 
-`src/tgrid/integrations/live_broker_adapter.py`：`LiveBrokerAdapter` + `LiveBrokerPolicy`，
-封装注入的 order/cancel/query 面（生产为真实 XtQuantTrader 包装、测试为 fake），
-带强制 pre-live 安全边界。
+| 文件 | 内容 |
+|------|------|
+| `src/tgrid/execution/port.py` | 共享 broker 执行端口 `BrokerPort` + 类型化 DTO（`BrokerOrder`/`BrokerTrade`）+ 共享错误层级（NODEB-001 #1/#4） |
+| `src/tgrid/execution/executor.py` | `ExecutionEngine` 只依赖 `BrokerPort`，不再要求 `SimBroker`、不再调用 `tick_order/get_order`（NODEB-001 #2） |
+| `src/tgrid/execution/simdriver.py` | `SimulationDriver`：确定性脚本仅在 simulation-only 路径（NODEB-001 #2） |
+| `src/tgrid/execution/simbroker.py` | `SimBroker(BrokerPort)`：读侧返回类型化 DTO；`get_order/tick_order` 保留为 simulation hook |
+| `src/tgrid/integrations/xtquant_bridge.py` | **唯一**具体 XtQuant 桥：`order_stock`/`cancel_order_stock` 唯一调用点 + 状态/边常量映射 + 桥自有 callback handler（NODEB-001 #3/#4） |
+| `src/tgrid/integrations/live_broker_adapter.py` | kill switch 不再阻塞取消（NODEB-003）；移除通用 `register_callback`（NODEB-004）；持久化日敞口（NODEB-005）；NaN/Inf 拒绝（NODEB-006）；bootstrap 契约（NODEB-007） |
+| `src/tgrid/integrations/daily_exposure.py` | `DailyExposureLedger`：trade_date 绑定、持久化、启动重建、单调 roll_day |
+| `scripts/capability_scan.py` | 白名单 = 桥文件；桥外任何真实调用 → FAIL（NODEB-001 #5） |
 
-## Mandatory Requirements Coverage（14 项）
+## NODEB-001..007 Closure（SELF_CERTIFIED）
 
-| # | 要求 | 实现 |
+| # | 级别 | 修复 |
 |---|------|------|
-| 1 | live_trading 默认 false，不可隐式开启 | `live_enabled=False` 默认 |
-| 2 | 二次显式运行时确认 | `confirm_runtime()` 独立于 `enable_live_trading()`；二者皆需 true |
-| 3 | 显式 symbol 白名单 | `LiveBrokerPolicy.allowlist` |
-| 4 | 每单数量硬上限 | `max_order_qty` |
-| 5 | 每单/每日现金敞口硬上限 | `max_cash_per_order` / `max_cash_per_day` + 日计数器 |
-| 6 | Kill switch | `engage_kill_switch()` 阻止一切新单 |
-| 7 | callback 只能入队 | `register_callback` 包装；callback 无 broker/状态访问面 |
-| 8 | 复用 Gate-4 幂等 OrderIntent+Reservation | 适配器与 ExecutionEngine 契约一致；幂等由 Gate-4 层持有 |
-| 9 | 部分成交显式建模 | `query_trades`/`query_order` 暴露 filled_qty |
-| 10 | 超时 cancel→re-query→reconcile；cancel 不意味零成交 | `cancel_order` 后必须 `query_order`（测试验证部分成交仍可观察） |
-| 11 | 订单/成交对账与崩溃恢复确定且 fail-closed | 适配器层查询语义确定；恢复由 Gate-4 recovery 复用 |
-| 12 | exact-type 先于算术/券商调用 | `place_order` 入口 exact-type 校验后再调用 broker（AUD-R1-007 纪律） |
-| 13 | 无 force push / 历史重写 | 遵循 |
-| 14 | 不提交账号/余额/持仓/端口/路径/密钥/本地运行时配置 | 遵循 |
-
-## Mandatory Carry-Forward — NODEB-P0-001 ✅
-
-修复 `_load_reconciliation_state`：legacy `core_qty` 现在被 loader **保留**为
-`legacy_core_qty`，`_check_core_authority` 做精确相等校验后才丢弃；不匹配 →
-`SystemExit` fail-closed。loader-to-runner 集成测试证明 legacy core=700 vs
-配置 600 fail closed（`test_node_a_iter5.py::TestNodeBP0001LegacyCoreGuard`）。
+| NODEB-001 | P0 | `BrokerPort` 单一窄端口；`ExecutionEngine` 只依赖端口 + DTO；`SimulationDriver` 独占确定性脚本；`XtQuantBrokerBridge` 为仓库唯一 `order_stock`/`cancel_order_stock` 调用点（capability scan 白名单验证：桥内 2 处、桥外 0 处）；XtQuant 对象映射为 TGrid DTO；测试用 fake 后端 |
+| NODEB-002 | P0 | `test_execution_live_chain.py`：`ExecutionEngine -> LiveBrokerAdapter -> XtQuantBrokerBridge(FakeTrader)` 全链路集成 —— intent+reservation 先于 send、client_order_key 幂等不二次 send、crash-before-send 不盲重发（INTENT_ONLY）、crash-after-accept 启动对账 MATCHED 恢复、部分成交保持剩余 reservation、timeout=cancel→re-query→reconcile、未匹配标记单→SAFE_MODE、查询失败/状态歧义→fail-closed |
+| NODEB-003 | P0 | `cancel_order`/`cancel_all_managed_open_orders`/`query_*` 不依赖 `_require_ready_to_trade`；kill switch 仅阻止新单；测试证明 kill_switch=True 时新单被拒但取消+re-query 可用 |
+| NODEB-004 | P0 | 移除 `register_callback` 通用任意回调边界；`XtQuantCallbackHandler` 桥自有，把 XtQuant payload 转成不可变数据事件，仅 `event_sink.put(event)`；handler 不持有 engine/store/adapter 引用（测试断言无属性 + frozen 事件） |
+| NODEB-005 | P0 | `DailyExposureLedger` 绑定 `trade_date` + 持久 store；启动 `reconstruct_daily_exposure()` 从 managed broker 订单保守重建；`roll_day` 仅接受单调交易日推进；无公共无条件清零；计数规则=提交 BUY 名义（cancel/reject/partial/restart 下确定性保守）；restart + same-day-reset fault-injection 测试 |
+| NODEB-006 | P0 | `LiveBrokerPolicy` 与 `place_order` 用 `math.isfinite` 拒绝 NaN/±Inf（exact-type 之后、任何算术/broker 调用之前）；NaN/Inf 测试覆盖 policy 值与 limit_price |
+| NODEB-007 | P1 | `live_enabled`/`runtime_confirmed` 不再是构造字段（init=False）；`apply_config_enable(flag)` 只接受 trusted bool；`confirm_runtime(token)` 需精确匹配启动 token；重启（新实例）恒为 runtime_confirmed=false；callback 结构性无法触碰 enable/confirm |
 
 ## Evidence
 
-- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **865 tests OK**。
-- `python -m compileall -q src tests` → exit 0。
-- capability 扫描（`scripts/capability_scan.py`）：src 49 文件，直接
-  `order_stock` / `cancel_order_stock` 调用点 **0**；4 个 adapter 级入口
-  （executor.place_order/cancel_order → SimBroker 路径；
-  live_broker_adapter.place_order/cancel_order → 注入 broker）。
-- 测试：`tests/unit/test_live_broker_adapter.py`（16 项：双确认、白名单、硬上限、
-  日敞口、kill switch、callback 隔离、exact-type、cancel-re-query、capability 扫描）。
+- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **906 tests OK**（较 865 新增 41：live chain 集成、bridge 映射、callback 隔离、exposure 持久化、kill-switch 取消、NaN/Inf、bootstrap 契约）。
+- `python -m compileall -q src tests scripts` → exit 0。
+- capability 扫描：`src` 53 文件；真实 `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处（白名单）、桥外 0 处**；`RESULT: PASS`。
+- 测试文件：`test_execution_live_chain.py`（新）、`test_xtquant_bridge.py`（新）、
+  `test_live_broker_adapter.py`（重写）、`test_execution.py`（SimulationDriver 路由）。
+- 既有 AST 扫描（assert / xtquant import / 桥外 order call）全部保持 PASS（4 个测试文件白名单同步）。
 
 ## Boundary
 
-- 本任务**绝不 invoke** 真实 order/cancel；所有 broker 调用经注入对象。
+- 本任务**绝不 invoke** 真实 order/cancel；所有 broker 调用经注入 fake/bridge。
 - 未实现/未授权：真实资金运行、Gate 6、live-soak。
 - `live_trading_allowed=false`；Gate 6/7 BLOCKED。
+- 授权令牌：`AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`。
 
 ## Recommendation
 
-`AUDIT_READY_PRELIVE`（等待 Audit Node B 独立复审；首笔真实订单须
-Node B PASS + 用户显式授权）。
+`AUDIT_READY_PRELIVE`（Iteration 2）——等待 Audit Node B 复审 NODEB-001..007；
+首笔真实订单须 Node B PASS + 用户显式授权。

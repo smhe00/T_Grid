@@ -1,11 +1,13 @@
-"""TGrid execution domain (Gate 4, offline dry run).
+"""TGrid execution domain (Gate 4, offline dry run + NODEB-001 port).
 
 The Gate 4 execution layer turns strategy decisions into durable OrderIntents
 (idempotency, design §18.2), books and releases position/cash reservations
-(design §18.3), drives a simulated broker through fills/partials/rejects/
-timeouts/cancel failures (design §24–§26), and reconciles the broker orders +
-trades + local intents on startup (design §21–§23).  No real QMT order is ever
-placed; ``live_trading_allowed=false``.
+(design §18.3), drives a broker through fills/partials/rejects/timeouts/cancel
+failures (design §24–§26), and reconciles the broker orders + trades + local
+intents on startup (design §21–§23).  All broker access goes through the narrow
+:class:`BrokerPort` (NODEB-001); the deterministic §39 simulation scripts are
+owned by :class:`SimulationDriver` and never by the engine.  No real QMT order
+is ever placed; ``live_trading_allowed=false``.
 """
 
 from tgrid.execution.models import (
@@ -19,9 +21,16 @@ from tgrid.execution.models import (
     Reservation,
     ReservationError,
 )
-from tgrid.execution.simbroker import (
+from tgrid.execution.port import (
+    BrokerCancelFailedError,
     BrokerDisconnectedError,
+    BrokerError,
+    BrokerOrder,
     BrokerOrderRejectedError,
+    BrokerPort,
+    BrokerTrade,
+)
+from tgrid.execution.simbroker import (
     SimBroker,
     SimFill,
     SimOrder,
@@ -36,9 +45,9 @@ from tgrid.execution.executor import (
     CancelFailedError,
     ReservationConflictError,
 )
+from tgrid.execution.simdriver import SimulationDriver, SimulationDriverError
 from tgrid.execution.recovery import (
     BrokerOrderStatus,
-    BrokerTrade,
     reconcile_open_intents,
 )
 from tgrid.execution.dryrun import (
@@ -58,11 +67,16 @@ __all__ = [
     "OrderIntentError",
     "Reservation",
     "ReservationError",
+    "BrokerPort",
+    "BrokerOrder",
+    "BrokerTrade",
+    "BrokerError",
+    "BrokerDisconnectedError",
+    "BrokerOrderRejectedError",
+    "BrokerCancelFailedError",
     "SimBroker",
     "SimOrder",
     "SimFill",
-    "BrokerDisconnectedError",
-    "BrokerOrderRejectedError",
     "ExecutionEngine",
     "ExecutionError",
     "ExecutionInputError",
@@ -71,8 +85,9 @@ __all__ = [
     "OrderTimeoutError",
     "CancelFailedError",
     "ReservationConflictError",
+    "SimulationDriver",
+    "SimulationDriverError",
     "BrokerOrderStatus",
-    "BrokerTrade",
     "reconcile_open_intents",
     "DryRunHarness",
     "DryRunResult",

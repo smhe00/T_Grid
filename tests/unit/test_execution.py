@@ -22,6 +22,7 @@ from tgrid.execution import (
     OrderStatus,
     ReservationConflictError,
     SimBroker,
+    SimulationDriver,
 )
 from tgrid.execution.models import BUY, SELL
 from tgrid.execution.recovery import reconcile_open_intents
@@ -49,6 +50,10 @@ def _store_and_broker():
     broker = SimBroker()
     engine = ExecutionEngine(store, broker, order_timeout_seconds=120)
     return conn, store, broker, engine
+
+
+def _driver(engine, broker):
+    return SimulationDriver(engine, broker)
 
 
 class TestExecutionStore(unittest.TestCase):
@@ -247,9 +252,10 @@ class TestExecutor(unittest.TestCase):
 
     def test_reject_at_send(self):
         conn, store, broker, engine = _store_and_broker()
+        driver = _driver(engine, broker)
         try:
-            # Broker rejects immediately via script step in _send.
-            result = engine.send_buy(
+            # Broker rejects immediately via script step (simulation driver).
+            result = driver.send_buy(
                 client_order_key="K1", symbol="0700.HK", qty=100,
                 limit_price=420.0, order_remark="TG_0700_B01", now="t0",
                 expected_available_cash=500000.0, reserved_cash=42000.0,
@@ -278,20 +284,21 @@ class TestExecutor(unittest.TestCase):
 
     def test_poll_partial_then_full(self):
         conn, store, broker, engine = _store_and_broker()
+        driver = _driver(engine, broker)
         try:
-            result = engine.send_buy(
+            result = driver.send_buy(
                 client_order_key="K1", symbol="0700.HK", qty=100,
                 limit_price=420.0, order_remark="TG_0700_B01", now="t0",
                 expected_available_cash=500000.0, reserved_cash=42000.0,
             )
             order_id = result.broker_order_id
             broker.get_order(order_id).script = (("FILL", 60, 420.0),)
-            r1 = engine.poll_order("K1", now="t1")
+            r1 = driver.poll_order("K1", now="t1")
             self.assertEqual(r1.status, OrderStatus.PARTIAL)
             self.assertEqual(r1.filled_qty, 60)
             self.assertEqual(store.reserved_cash("0700.HK"), 42000.0)
             broker.get_order(order_id).script = (("FILL", 40, 420.0),)
-            r2 = engine.poll_order("K1", now="t2")
+            r2 = driver.poll_order("K1", now="t2")
             self.assertEqual(r2.status, OrderStatus.FILLED)
             self.assertEqual(r2.filled_qty, 100)
             self.assertEqual(store.reserved_cash("0700.HK"), 0.0)
@@ -331,16 +338,17 @@ class TestExecutor(unittest.TestCase):
 
     def test_duplicate_callback_is_noop(self):
         conn, store, broker, engine = _store_and_broker()
+        driver = _driver(engine, broker)
         try:
-            result = engine.send_buy(
+            result = driver.send_buy(
                 client_order_key="K1", symbol="0700.HK", qty=100,
                 limit_price=420.0, order_remark="TG_0700_B01", now="t0",
                 expected_available_cash=500000.0, reserved_cash=42000.0,
             )
             broker.get_order(result.broker_order_id).script = (("FILL", 100, 420.0),)
-            engine.poll_order("K1", now="t1")
+            driver.poll_order("K1", now="t1")
             # Duplicate fill callback: poll again, terminal -> no state change.
-            r = engine.poll_order("K1", now="t2")
+            r = driver.poll_order("K1", now="t2")
             self.assertEqual(r.status, OrderStatus.FILLED)
             self.assertEqual(len(store.list_intents()), 1)
             self.assertEqual(store.reserved_cash("0700.HK"), 0.0)
@@ -417,8 +425,9 @@ class TestRecovery(unittest.TestCase):
 
     def test_terminal_intents_skipped(self):
         conn, store, broker, engine = _store_and_broker()
+        driver = _driver(engine, broker)
         try:
-            result = engine.send_buy(
+            result = driver.send_buy(
                 client_order_key="K1", symbol="0700.HK", qty=100,
                 limit_price=420.0, order_remark="TG_0700_B01", now="t0",
                 expected_available_cash=500000.0, reserved_cash=42000.0,
@@ -440,7 +449,8 @@ class TestRestart(unittest.TestCase):
         store1 = ExecutionStore(conn1)
         broker = SimBroker()
         engine1 = ExecutionEngine(store1, broker)
-        result = engine1.send_buy(
+        driver1 = _driver(engine1, broker)
+        result = driver1.send_buy(
             client_order_key="K1", symbol="0700.HK", qty=100,
             limit_price=420.0, order_remark="TG_0700_B01", now="t0",
             expected_available_cash=500000.0, reserved_cash=42000.0,
@@ -452,10 +462,11 @@ class TestRestart(unittest.TestCase):
         conn2 = initialize(path)
         store2 = ExecutionStore(conn2)
         engine2 = ExecutionEngine(store2, broker)
+        driver2 = _driver(engine2, broker)
         try:
             results = reconcile_open_intents(store2, broker)
             self.assertEqual(results[0].outcome, "MATCHED")
-            final = engine2.poll_order("K1", now="t1")
+            final = driver2.poll_order("K1", now="t1")
             self.assertEqual(final.status, OrderStatus.FILLED)
             self.assertEqual(final.filled_qty, 100)
             self.assertEqual(store2.reserved_cash("0700.HK"), 0.0)

@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tgrid.execution.models import OrderIntent, OrderStatus
+from tgrid.execution.port import BrokerOrder, BrokerTrade
 from tgrid.execution.store import ExecutionStore
 from tgrid.risk.exceptions import TGridError
 
@@ -31,16 +32,6 @@ BrokerOrderStatus = OrderStatus  # reuse the single status set
 
 class OrderReconciliationError(TGridError):
     """Broker/local state cannot be reconciled; fail closed to SAFE_MODE."""
-
-
-@dataclass(frozen=True)
-class BrokerTrade:
-    """Data-only broker trade (fill) record used for recovery."""
-
-    trade_id: str
-    order_id: str
-    qty: int
-    price: float
 
 
 @dataclass(frozen=True)
@@ -66,7 +57,8 @@ def reconcile_open_intents(
 ) -> tuple:
     """Reconcile non-terminal local intents against the broker order book.
 
-    ``store`` is an :class:`ExecutionStore`, ``broker`` a :class:`SimBroker`.
+    ``store`` is an :class:`ExecutionStore`, ``broker`` any broker port
+    (SimBroker or LiveBrokerAdapter/bridge) exposing ``query_orders()``.
     Returns a tuple of :class:`IntentReconciliation` (one per open intent).
     Matching is by ``client_order_key`` first, then by ``order_remark``
     (design §18 tag); an intent whose broker order cannot be found is reported

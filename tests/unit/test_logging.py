@@ -609,8 +609,12 @@ class TestForbiddenApiScan(unittest.TestCase):
                     )
 
     def test_no_order_or_cancel_calls(self):
+        # NODEB-001: the ONE concrete XtQuantBrokerBridge is the single
+        # allowlisted exception; every other file must stay clean.
+        allowlisted = Path("src/tgrid/integrations/xtquant_bridge.py")
         for path in self._package_files():
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            is_bridge = path.as_posix().endswith(allowlisted.as_posix())
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     func = node.func
@@ -619,10 +623,11 @@ class TestForbiddenApiScan(unittest.TestCase):
                         if isinstance(func, ast.Attribute)
                         else (func.id if isinstance(func, ast.Name) else None)
                     )
-                    self.assertNotIn(
-                        name, {"order_stock", "cancel_order_stock"},
-                        f"forbidden call {name} in {path}",
-                    )
+                    if name in {"order_stock", "cancel_order_stock"} and not is_bridge:
+                        self.fail(
+                            f"forbidden call {name} in {path} "
+                            "(only xtquant_bridge.py may call the real surface)"
+                        )
 
 
 if __name__ == "__main__":

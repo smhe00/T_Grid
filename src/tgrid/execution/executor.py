@@ -2,8 +2,15 @@
 
 :class:`ExecutionEngine` connects a strategy decision to a durable
 :class:`OrderIntent`, books the matching reservation atomically (design §18.3),
-sends to the injected :class:`SimBroker`, then processes fills/rejects/
-timeouts/cancels through the design §24/§25 rules.
+sends to the injected broker through the shared
+:class:`~tgrid.execution.port.BrokerPort` (NODEB-001), then processes
+fills/rejects/timeouts/cancels through the design §24/§25 rules.
+
+The engine is broker-type agnostic: it consumes only the narrow port surface
+(``place_order`` / ``cancel_order`` / ``query_order`` / ``query_trades`` /
+``query_orders``) and typed :class:`BrokerOrder` / :class:`BrokerTrade` DTOs.
+Deterministic simulation scripts (``tick_order`` etc.) live exclusively in
+:class:`~tgrid.execution.simdriver.SimulationDriver`, never here.
 
 Order of operations (INV-013 / §18.2):
 
@@ -23,12 +30,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tgrid.execution.models import BUY, SELL, OrderIntent, OrderStatus
-from tgrid.execution.simbroker import (
+from tgrid.execution.port import (
     BrokerCancelFailedError,
     BrokerDisconnectedError,
     BrokerError,
-    BrokerOrderRejectedError,
-    SimBroker,
+    BrokerPort,
 )
 from tgrid.execution.store import (
     ExecutionStore,
@@ -81,9 +87,10 @@ class ExecutionResult:
 
 
 class ExecutionEngine:
-    """Drives strategy decisions through the simulated broker.
+    """Drives strategy decisions through the shared broker port.
 
-    ``store`` (ExecutionStore) and ``broker`` (SimBroker) are injected; the
+    ``store`` (ExecutionStore) and ``broker`` (any :class:`BrokerPort` —
+    SimBroker for the dry run, LiveBrokerAdapter for pre-live) are injected; the
     engine holds no QMT or account surface.  ``order_timeout_seconds`` and
     ``max_reprice_attempts`` implement design §25.
     """
@@ -99,8 +106,10 @@ class ExecutionEngine:
     ) -> None:
         if not isinstance(store, ExecutionStore):
             raise ExecutionInputError("store must be an ExecutionStore")
-        if not isinstance(broker, SimBroker):
-            raise ExecutionInputError("broker must be a SimBroker")
+        if not isinstance(broker, BrokerPort):
+            raise ExecutionInputError(
+                "broker must implement BrokerPort (SimBroker or LiveBrokerAdapter)"
+            )
         if type(strategy_name) is not str or strategy_name == "":
             raise ExecutionInputError("strategy_name must be a non-empty string")
         if type(order_timeout_seconds) is not int or order_timeout_seconds <= 0:
@@ -141,7 +150,6 @@ class ExecutionEngine:
         limit_price: float,
         order_remark: str,
         now: str,
-        script: tuple = (),
         expected_available_cash: float,
         reserved_cash: float,
     ) -> ExecutionResult:
@@ -154,7 +162,6 @@ class ExecutionEngine:
             limit_price=limit_price,
             order_remark=order_remark,
             now=now,
-            script=script,
             cash_amount=reserved_cash,
             expected_available_cash=expected_available_cash,
         )
@@ -168,7 +175,6 @@ class ExecutionEngine:
         limit_price: float,
         order_remark: str,
         now: str,
-        script: tuple = (),
         expected_available_qty: int,
     ) -> ExecutionResult:
         """Send a SELL: atomic qty reservation+intent, then broker."""
@@ -180,7 +186,6 @@ class ExecutionEngine:
             limit_price=limit_price,
             order_remark=order_remark,
             now=now,
-            script=script,
             cash_amount=None,
             expected_available_cash=expected_available_qty,
         )
@@ -195,7 +200,6 @@ class ExecutionEngine:
         limit_price: float,
         order_remark: str,
         now: str,
-        script: tuple,
         cash_amount: float | None,
         expected_available_cash: float,
     ) -> ExecutionResult:
@@ -213,8 +217,6 @@ class ExecutionEngine:
             raise ExecutionInputError("qty must be a positive plain int")
         if type(limit_price) not in (int, float) or isinstance(limit_price, bool) or limit_price <= 0:
             raise ExecutionInputError("limit_price must be a positive number")
-        if script is None or not hasattr(script, "__iter__"):
-            raise ExecutionInputError("script must be an iterable of steps")
         # AUD-R1-007: exact-type validation BEFORE any arithmetic/conversion.
         # ``expected_available_cash`` carries the caller-declared capacity; an
         # untrusted object must never pass through int()/float() first.  BUY
@@ -287,7 +289,7 @@ class ExecutionEngine:
                     "reserved sell qty would exceed the available T quantity"
                 )
 
-        # 2. Send to broker.
+        # 2. Send to broker through the port.
         try:
             broker_order_id = self._broker.place_order(
                 symbol=symbol, side=side, qty=qty, limit_price=limit_price,
@@ -309,58 +311,12 @@ class ExecutionEngine:
                 "broker order sent but intent update failed; manual reconcile required"
             ) from exc
 
-        # Attach the deterministic script to the broker order (design §39:
-        # reject/partial/full/timeout are reproducible), then apply it.
-        broker_order = self._broker.get_order(broker_order_id)
-        broker_order.script = tuple(script)
-
-        # Apply the deterministic fill/reject script on the broker order, then
-        # fold the resulting broker status back into the intent (design §24:
-        # fills may complete immediately in the dry run).
-        for step in script:
-            if step[0] == "REJECT":
-                self._broker.get_order(broker_order_id).status = "REJECTED"
-                self._store.update_intent_status(
-                    client_order_key, status=OrderStatus.REJECTED, updated_at=now,
-                )
-                self._release(client_order_key, now=now)
-                return ExecutionResult(
-                    client_order_key=client_order_key, symbol=symbol, side=side,
-                    status=OrderStatus.REJECTED,
-                    broker_order_id=broker_order_id, filled_qty=0,
-                    message="broker rejected the order",
-                )
-            self._broker.tick_order(broker_order_id)
-
-        order = self._broker.query_order(broker_order_id)
-        final_status = OrderStatus.SUBMITTED
-        if order.status == "FILLED":
-            final_status = OrderStatus.FILLED
-        elif order.status == "PARTIAL":
-            final_status = OrderStatus.PARTIAL
-        elif order.status == "REJECTED":
-            final_status = OrderStatus.REJECTED
-        if final_status != OrderStatus.SUBMITTED:
-            self._store.update_intent_status(
-                client_order_key, status=final_status, updated_at=now,
-            )
-        if final_status in (OrderStatus.FILLED, OrderStatus.REJECTED):
-            self._release(client_order_key, now=now)
-        fill_price = self._last_fill_price(broker_order_id)
         return ExecutionResult(
             client_order_key=client_order_key, symbol=symbol, side=side,
-            status=final_status,
-            broker_order_id=broker_order_id, filled_qty=order.filled_qty,
-            message="order submitted" if final_status == OrderStatus.SUBMITTED else f"order {final_status.lower()}",
-            fill_price=fill_price,
+            status=OrderStatus.SUBMITTED,
+            broker_order_id=broker_order_id, filled_qty=0,
+            message="order submitted",
         )
-
-    def _last_fill_price(self, broker_order_id: str) -> float | None:
-        """Return the most recent fill price, or None if no fill occurred."""
-        trades = self._broker.query_trades(broker_order_id)
-        if not trades:
-            return None
-        return float(trades[-1].price)
 
     # -------------------------------------------------------------- fill/poll
 
@@ -369,7 +325,8 @@ class ExecutionEngine:
 
         Design §25: after any cancel attempt you must re-query, never assume.
         Partial fills are applied against the recorded intent qty; when the
-        order reaches FILLED the reservation is released.
+        order reaches FILLED the reservation is released.  No simulation hook
+        is used here — broker state is read through the port only.
         """
         intent = self._store.get_intent(client_order_key)
         if intent.status in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN"):
@@ -385,13 +342,11 @@ class ExecutionEngine:
                 "intent has no broker_order_id; reconcile before polling"
             )
         try:
-            # Advance one deterministic script step before reading state, so a
-            # fill/reject scheduled for this poll is actually applied (the
-            # broker never fills asynchronously in the dry run).
-            self._broker.tick_order(intent.broker_order_id)
             order = self._broker.query_order(intent.broker_order_id)
         except BrokerDisconnectedError as exc:
             raise OrderReconciliationError("broker disconnected during poll") from exc
+        except BrokerError as exc:
+            raise OrderReconciliationError("broker query failed during poll") from exc
 
         if order.status == "REJECTED":
             self._store.update_intent_status(
@@ -432,7 +387,18 @@ class ExecutionEngine:
             broker_order_id=intent.broker_order_id,
             filled_qty=order.filled_qty,
             message="polled",
+            fill_price=self._last_fill_price(intent.broker_order_id),
         )
+
+    def _last_fill_price(self, broker_order_id: str) -> float | None:
+        """Return the most recent fill price, or None if no fill occurred."""
+        try:
+            trades = self._broker.query_trades(broker_order_id)
+        except BrokerError:
+            return None
+        if not trades:
+            return None
+        return float(trades[-1].price)
 
     def timeout_order(self, client_order_key: str, *, now: str) -> ExecutionResult:
         """Design §25: cancel -> re-query -> reconcile; never assume unfilled."""

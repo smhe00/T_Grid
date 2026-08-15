@@ -1,13 +1,15 @@
 """TGrid XtQuant integration boundary (G1-T006 read-only; G5.5 pre-live).
 
 Gate 1 exposes only ``run_gate1_readonly_acceptance``.  Gate 5.5 adds the
-pre-live :class:`LiveBrokerAdapter` safety boundary: it wraps an INJECTED
-order/cancel surface and never invokes a real XtQuant order/cancel itself.
-Nothing here enables ``live_trading_allowed``.
+pre-live :class:`LiveBrokerAdapter` safety boundary (wraps an INJECTED broker
+port and never invokes a real XtQuant order/cancel itself) plus the ONE
+concrete :class:`XtQuantBrokerBridge` whose audited ``order_stock`` /
+``cancel_order_stock`` call sites are the only permitted real-broker
+invocations in the repository (NODEB-001).  Nothing here enables
+``live_trading_allowed``.
 """
 
 from tgrid.integrations.live_broker_adapter import (
-    CallbackMutationForbiddenError,
     CashExposureLimitError,
     KillSwitchEngagedError,
     LiveBrokerAdapter,
@@ -16,7 +18,20 @@ from tgrid.integrations.live_broker_adapter import (
     LiveTradingDisabledError,
     LiveTradingNotConfirmedError,
     OrderQtyLimitError,
+    RuntimeConfirmationTokenError,
     SymbolNotAllowedError,
+)
+from tgrid.integrations.daily_exposure import (
+    DailyExposureError,
+    DailyExposureLedger,
+    ExposureDateError,
+    ExposureValueError,
+)
+from tgrid.integrations.xtquant_bridge import (
+    BrokerOrderEvent,
+    BrokerTradeEvent,
+    XtQuantBrokerBridge,
+    XtQuantCallbackHandler,
 )
 from tgrid.integrations.qmt_gate1_runtime import (
     QmtGate1RuntimeAccountError,
@@ -37,9 +52,17 @@ __all__ = [
     "LiveBrokerError",
     "LiveTradingDisabledError",
     "LiveTradingNotConfirmedError",
+    "RuntimeConfirmationTokenError",
     "SymbolNotAllowedError",
     "OrderQtyLimitError",
     "CashExposureLimitError",
     "KillSwitchEngagedError",
-    "CallbackMutationForbiddenError",
+    "DailyExposureLedger",
+    "DailyExposureError",
+    "ExposureDateError",
+    "ExposureValueError",
+    "XtQuantBrokerBridge",
+    "XtQuantCallbackHandler",
+    "BrokerOrderEvent",
+    "BrokerTradeEvent",
 ]

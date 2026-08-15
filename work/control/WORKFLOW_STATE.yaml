@@ -5,29 +5,26 @@ remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
 handoff_seq: 20
-handoff_id: "NODEB-PRELIVE-FIX-20260815-020"
-authorized_next:
-  - "NODEB-PRELIVE-FIX"
+handoff_id: "NODEB-IT2-REMEDIATION-DONE-20260815-020"
+authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
 design_version: "1.1"
 gate: 5.5
-task_id: "NODEB-PRELIVE-FIX"
-state: "CHANGES_REQUIRED"
+task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
+state: "AUDIT_READY_PRELIVE"
 owner: "dsh"
 iteration: 2
-last_actor: "independent_auditor"
-last_update: "2026-08-15T12:45:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-15T13:10:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_20260815.md"
-git_base_commit: "9319465e5b2aa38a2a713dca3e25b93c69d4412f"
-git_head_commit: "9319465e5b2aa38a2a713dca3e25b93c69d4412f"
-audit_target_commit: "9319465e5b2aa38a2a713dca3e25b93c69d4412f"
-reviewed_implementation_commit: "249aa061842eac114d224b384164541619628edc"
-accepted_gate5_implementation_commit: "5a2e2fd32e21328badd1ceb2c92b973436c4c95a"
+git_base_commit: "0f8e0a1907c296cce32e213b455604cf835df084"
+git_head_commit: "PENDING_PUSH"
+implementation_commit: "PENDING_PUSH"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_AFTER_ITERATION_2_FIXES"
+next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Audit Node B Iteration 1 verdict CHANGES_REQUIRED. Gate 5 remains PASS. Accepted: NODEB-P0-001 legacy Core guard; no real order/cancel invoked. Blocking pre-live findings: execution chain is not connected (ExecutionEngine still SimBroker-only and no concrete XtQuant execution bridge); Gate-4 reservation/idempotency/partial-fill/recovery are not integrated with LiveBrokerAdapter; kill switch incorrectly blocks cancel; callback isolation is not structural; daily cash exposure is volatile/resettable and bypassed by restart; NaN/Inf numeric limits are not fail-closed; production double-enable/bootstrap needs trusted config + non-persistent runtime confirmation. Gate 6/7 remain BLOCKED; live_trading_allowed=false; no real order/cancel invocation authorized."
+notes: "Node B audit 0f8e0a19 = CHANGES_REQUIRED (NODEB-001..007). Iteration 2 remediation complete (SELF_CERTIFIED): BrokerPort shared port + typed DTOs; ExecutionEngine port-only (no SimBroker/tick_order/get_order); SimulationDriver owns deterministic scripts; XtQuantBrokerBridge is the ONLY order_stock/cancel_order_stock call site (capability scan allowlist 2-in/0-out); full chain integration tests engine->adapter->bridge(fake); kill switch blocks new orders but cancel/cancel-all/requery stay; generic register_callback removed, bridge-owned handler only event_queue.put(immutable event); DailyExposureLedger trade_date-bound durable exposure with startup reconstruction and monotonic-only roll_day; NaN/Inf rejected via math.isfinite; bootstrap contract (config enable via trusted apply_config_enable, token-gated confirm_runtime, restart resets runtime-confirmed). 906 tests OK; compileall 0; capability scan PASS. No real order/cancel invoked. State AUDIT_READY_PRELIVE, awaiting independent Audit Node B re-review; Gate 6/7 BLOCKED; live_trading_allowed=false."
