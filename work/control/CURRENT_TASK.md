@@ -1,78 +1,72 @@
-# Current Task — Validate qmt-execution-core 0.2.0
+# Current Task — qmt-execution-core 0.2.0 Validation (2026-08-16)
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — validation + self-review only. All evidence must remain labelled `SELF_CERTIFIED` until independent architect review.
+`DSH (DeepSeek Harness)` — validation only. Self-review evidence is labelled
+`SELF_CERTIFIED`.
 
 ## Status
 
-`IN_PROGRESS` — TGrid migration is PAUSED. The only authorized task is to validate the standalone execution library at:
+`REVIEW_READY` — validation report delivered
+(`work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md`),
+**verdict SELF_CERTIFIED CHANGES_REQUIRED**, handed off for
+**AUDIT_QMT_EXECUTION_CORE_0_2_0** independent review.
+
+TGrid migration remains **PAUSED** until the architect reviews this
+validation. `live_trading_allowed=false`. No real or simulation QMT
+order/cancel was invoked. Neither production codebase was modified.
+
+## Audit target
 
 ```text
-D:\gitee\miniQMT\qmt-execution-core
+repository: https://github.com/smhe00/qmt-execution-core
+branch:     main
+commit:     a1500e724bcfed13efbac65d9fbdce2b2513c817
+version:    0.2.0
+local:      D:\gitee\miniQMT\qmt-execution-core
+request:    work/gates/QMT_EXECUTION_CORE/VALIDATION_REQUEST_20260816.md
+report:     work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md
 ```
 
-against:
+## Validation summary (SELF_CERTIFIED)
 
-```text
-repo:    https://github.com/smhe00/qmt-execution-core
-commit:  a1500e724bcfed13efbac65d9fbdce2b2513c817
-version: 0.2.0
-```
+- **V1 identity PASS**: local HEAD exactly `a1500e7...`, tree clean;
+  pyproject 0.2.0; **0 `tgrid` imports** (src + tests); xtquant only lazy
+  inside `miniqmt/runtime.py::_real_xtquant_dependencies()`; Python 3.12.10 /
+  Windows.
+- **V2 source tree**: `pytest` = **56 passed / 3 failed**, `compileall` = 0,
+  `qmt-execution-core verify` = PASS (50 reachable states / 208 transitions /
+  0 unreachable / 0 violations; spec `62e04e05...`, source `67dd05dd...`).
+- **V3 wheel**: built `qmt_execution_core-0.2.0-py3-none-any.whl`, installed in
+  a clean Python 3.12 venv, `verify` from outside the checkout gives identical
+  hashes; missing protected source fails closed (isolated fixture only).
+- **V4 static audit**: all sampled controls (V4-A..V4-I) PASS — see report.
+- **V5 refinement coverage**: 21/24 committed-test paths; gaps:
+  cancel-rejected+re-query, restart-cancel-pending, fill-during-cancel (partial).
+- **V6 real MiniQMT read-only smoke PASS**: simulation client (running),
+  connect/discover/subscribe/query asset/positions/orders/trades, healthy,
+  clean close; **zero order/cancel calls**.
+- **V7 independence/reuse PASS**: sufficient public API, evidence injectable
+  via `ExecutionGuard`, raw QMT states normalized below the adapter boundary,
+  no TGrid filesystem/database dependency.
 
-The previous TGrid Iteration-10 state-machine audit is superseded as an immediate task because that duplicate execution infrastructure may be replaced by the common core. The historical Gate 5.5 PASS_PRELIVE baseline `e252847` remains regression evidence and is not revoked.
+## Findings (reported, NOT fixed — validation-only task)
 
-## Validation contract
+- **P1 — Windows execution-mutex release defect**:
+  `src/qmt_execution_core/mutex.py` `ExecutionMutex._lock` (pre-lock "0"-byte
+  write workaround, lines 73-82) + `acquire` (`truncate`, line 47) + `release`
+  (`LK_UNLCK`, line 65): after one complete owner cycle, any subsequent owner
+  (same or separate process) cannot `release()` — `PermissionError` at
+  `msvcrt.locking(..., LK_UNLCK, 1)`. Deterministic (12/12), cross-process
+  reproduced. Breaks 3 committed tests. The architect may authorize a fix:
+  remove the pre-lock write/read workaround or avoid truncate while the lock
+  is held, then re-run the tests on Windows.
+- **P2 — committed-test gaps**: cancel-rejected + re-query; restart from
+  cancel-pending; fill-during-cancel only partially covered.
 
-Read and execute:
+## Confirmations
 
-```text
-work/gates/QMT_EXECUTION_CORE/VALIDATION_REQUEST_20260816.md
-```
-
-## Hard prohibitions
-
-```text
-NO TGrid migration/refactor
-NO qmt-execution-core production-code changes
-NO real-money order/cancel
-NO QMT simulation order/cancel
-NO order_stock/order_stock_async
-NO cancel_order_stock/cancel_order_stock_async
-NO live trading enablement
-```
-
-Real MiniQMT may be used only for safe read-only connection/query smoke testing.
-
-## Required output
-
-```text
-work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md
-```
-
-Report either:
-
-```text
-SELF_CERTIFIED PASS
-```
-
-or:
-
-```text
-CHANGES_REQUIRED
-```
-
-with exact defects and evidence. Do not repair findings in this task.
-
-## Required handoff
-
-When validation is complete:
-
-```text
-state = REVIEW_READY
-owner = architect
-authorized_next = [AUDIT_QMT_EXECUTION_CORE_0_2_0]
-live_trading_allowed = false
-```
-
-Do not start TGrid migration until the architect independently reviews this validation.
+- No real or simulation QMT order/cancel invoked.
+- TGrid migration not performed; TGrid execution code untouched.
+- `qmt-execution-core` unmodified (tree clean after validation).
+- `live_trading_allowed=false` maintained.
