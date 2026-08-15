@@ -21,6 +21,7 @@ from tgrid.main import (
     LOGGER_NAME,
     main,
 )
+from tgrid.persistence import MAX_SCHEMA_VERSION
 from tgrid.reporting import shutdown_logger as real_shutdown_logger
 
 
@@ -128,9 +129,9 @@ class TestPreflightSuccess(unittest.TestCase):
 
             conn = sqlite3.connect(db_path)
             try:
-                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 5)
+                self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], MAX_SCHEMA_VERSION)
                 count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(count, 5)
+                self.assertEqual(count, MAX_SCHEMA_VERSION)
             finally:
                 conn.close()
 
@@ -149,7 +150,7 @@ class TestPreflightSuccess(unittest.TestCase):
             conn = sqlite3.connect(db_path)
             try:
                 count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-                self.assertEqual(count, 5)
+                self.assertEqual(count, MAX_SCHEMA_VERSION)
             finally:
                 conn.close()
 

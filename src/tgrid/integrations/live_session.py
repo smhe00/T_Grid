@@ -1,45 +1,52 @@
-"""Production live-session factory (NODEB-RR-001).
+"""Production live-session factory (NODEB-RR-001 / RR4-001).
 
 The dependency-injected :func:`~tgrid.integrations.live_bootstrap.build_live_stack`
-is a test/internal assembly helper.  This module adds the ONE production
-live-session factory that reuses the hardened Gate-1 / ``reverse_repo``
-account-binding semantics instead of accepting an arbitrary raw account object:
+is a test/internal assembly helper.  :func:`build_live_session` is the ONE
+production live-session entry point.  It consumes **validated TGrid
+configuration** (a :class:`~tgrid.models.RootConfig` whose
+``global_config.live_trading`` is the trusted double-enable first step) plus
+the separate QMT account/path binding, and follows the established
+``reverse_repo`` lifecycle oracle:
 
-* instantiate/connect the trader from the selected QMT userdata path;
-* distinguish live vs simulation path;
-* validate the configured QMT-path fingerprint;
-* discover account infos/statuses through strict queries;
-* select exactly one normal securities account whose account fingerprint
-  matches the binding;
-* subscribe that exact account;
-* persist only non-sensitive account label/environment verification, never
-  plaintext account ids.
+::
 
-Production order capability is unreachable if account/path/environment
-verification fails or is ambiguous.
+    construct trader from QMT path
+    -> start
+    -> connect (exact plain-int success)
+    -> strict account info/status discovery
+    -> exactly one bound normal securities account
+    -> subscribe (exact plain-int success)
+    -> assemble bridge/adapter (default OFF via global.live_trading)
+    -> mandatory recovery + runtime confirmation (LiveStack.activate)
+
+Wrong environment/path/account, nonzero or wrong-type connect/subscribe
+result, or zero/multiple account matches fail before any order-capable stack
+becomes ready.  The database is opened from the validated TGrid config
+(never an arbitrary caller connection / ``:memory:``), so the durable
+exposure journal goes through the normal migration lifecycle (RR4-004).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from tgrid.events import EventQueue
-from tgrid.execution.store import ExecutionStore
+from tgrid.integrations.exposure_store import SqliteExposureStore
 from tgrid.integrations.live_bootstrap import LiveStack, build_live_stack
 from tgrid.integrations.live_broker_adapter import (
-    LiveBrokerAdapter,
     LiveBrokerPolicy,
 )
 from tgrid.integrations.qmt_gate1_runtime import (
     AccountBinding,
     Gate1Config,
-    QmtGate1RuntimeAccountError,
     QmtGate1RuntimeError,
     load_account_binding,
     load_gate1_config,
     load_runtime_config,
 )
-from tgrid.integrations.exposure_store import SqliteExposureStore
+from tgrid.models import RootConfig
+from tgrid.persistence import initialize as initialize_database
 
 
 class LiveSessionError(QmtGate1RuntimeError):
@@ -48,6 +55,24 @@ class LiveSessionError(QmtGate1RuntimeError):
 
 class LiveSessionAccountError(LiveSessionError):
     """Account/environment/path verification failed; order capability denied."""
+
+
+def _require_exact_zero(value: object, *, label: str) -> None:
+    """The reference lifecycle treats a nonzero/wrong-type result as failure."""
+    if type(value) is not int or value != 0:
+        raise LiveSessionError(
+            f"{label} did not return the exact plain-int success value"
+        )
+
+
+def _fingerprint(account_id: object) -> str:
+    import hashlib
+
+    normalized = str(account_id).strip()
+    if not normalized:
+        raise LiveSessionAccountError("account ID is missing")
+    payload = f"miniqmt-account-v1:{normalized}".encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _select_bound_account(
@@ -70,7 +95,7 @@ def _select_bound_account(
     if type(attempts) is not int or attempts < 1:
         raise LiveSessionAccountError("attempts must be a positive int")
     errors: list = []
-    for _ in range(1, attempts + 1):
+    for attempt in range(1, attempts + 1):
         try:
             infos = list(trader.query_account_infos())
             statuses = list(trader.query_account_status())
@@ -96,7 +121,7 @@ def _select_bound_account(
                     str(getattr(matches[0], "account_id", "")).strip()
                 )
             errors.append(f"expected exactly one normal account, found {len(matches)}")
-        if _ < attempts:
+        if attempt < attempts:
             import time
 
             time.sleep(delay_seconds)
@@ -105,69 +130,80 @@ def _select_bound_account(
     )
 
 
-def _fingerprint(account_id: object) -> str:
-    import hashlib
+@dataclass(frozen=True)
+class LiveSessionPaths:
+    """Separate QMT account/path binding inputs for the production session."""
 
-    normalized = str(account_id).strip()
-    if not normalized:
-        raise LiveSessionAccountError("account ID is missing")
-    payload = f"miniqmt-account-v1:{normalized}".encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    gate1_config_path: Path
+    environment: str
 
 
 def build_live_session(
     *,
-    config_path: object,
+    root_config: RootConfig,
+    gate1_config_path: object,
+    environment: str,
     event_queue: EventQueue,
-    store: ExecutionStore,
     policy: LiveBrokerPolicy,
-    db_conn,
     runtime_confirmation_token: str,
     trade_date: str,
     strategy_name: str = "TGRID",
-    order_timeout_seconds: int = 120,
+    order_timeout_seconds: int | None = None,
     trader_factory=None,
     xtconstant_values=None,
     stock_account_factory=None,
-    environment: str = "simulation",
 ) -> LiveStack:
-    """Assemble the production live stack with verified account binding.
+    """Assemble the production live stack from VALIDATED TGrid configuration.
 
-    ``trader_factory`` / ``xtconstant_values`` / ``stock_account_factory`` are
-    dependency injection points for tests (fake XtQuant only).  In production
-    they default to the real XtQuant imports (lazy, as in Gate 1).
+    ``root_config`` is the already-validated TGrid configuration; its
+    ``global_config.live_trading`` is the trusted first step of the
+    double-enable (default OFF — missing/false keeps execution disabled,
+    RR4-001).  ``gate1_config_path`` + ``environment`` provide the separate
+    QMT account/path binding.  The database is opened from
+    ``root_config.global_config.database`` through the normal migration
+    lifecycle (RR4-004); no arbitrary caller connection is accepted.
 
-    Returns a :class:`LiveStack` whose adapter holds an opaque-bound account;
-    order capability is unreachable until :meth:`LiveStack.activate` completes
-    startup recovery + runtime confirmation (RR-003).
+    Dependency-injected ``trader_factory`` / ``xtconstant_values`` /
+    ``stock_account_factory`` are test-only (fake XtQuant); production uses
+    the real XtQuant imports (lazy, as in Gate 1).
     """
+    if not isinstance(root_config, RootConfig):
+        raise LiveSessionError("root_config must be a validated RootConfig")
+    global_cfg = root_config.global_config
+    if type(global_cfg.live_trading) is not bool:
+        raise LiveSessionError("global.live_trading must be a plain bool")
+
+    # Separate QMT binding (not the simulation-only Gate-1 parser).
+    gate1: Gate1Config = load_gate1_config(gate1_config_path)
+    if gate1.environment != environment:
+        raise LiveSessionError(
+            f"binding environment {gate1.environment!r} does not match "
+            f"requested {environment!r}"
+        )
+    runtime = load_runtime_config(
+        gate1.runtime_config_path, environment=gate1.environment
+    )
+    binding = load_account_binding(
+        gate1.account_binding_path,
+        environment=gate1.environment,
+        qmt_path=runtime.qmt_path,
+    )
+
     from tgrid.integrations.qmt_gate1_runtime import (
         _real_stock_account_factory,
         _real_trader_factory,
         _real_xtconstant_values,
     )
 
-    config: Gate1Config = load_gate1_config(config_path)
-    if config.environment != environment:
-        raise LiveSessionError(
-            f"configured environment {config.environment!r} does not match "
-            f"requested {environment!r}"
-        )
-    runtime = load_runtime_config(
-        config.runtime_config_path, environment=config.environment
-    )
-    binding = load_account_binding(
-        config.account_binding_path,
-        environment=config.environment,
-        qmt_path=runtime.qmt_path,
-    )
-
+    # Reference lifecycle: construct -> start -> connect(exact int) ->
+    # discover -> unique account -> subscribe(exact int).
     trader = (trader_factory or _real_trader_factory)(str(runtime.qmt_path))
     try:
+        trader.start()
+        connect_result = trader.connect()
+        _require_exact_zero(connect_result, label="trader.connect")
         security_type, status_ok = xtconstant_values or _real_xtconstant_values()
         stock_factory = stock_account_factory or _real_stock_account_factory()
-        # Discovery: strict query of account infos/statuses, select exactly one
-        # normal securities account matching the binding fingerprint.
         stock_account = _select_bound_account(
             trader,
             binding=binding,
@@ -175,9 +211,8 @@ def build_live_session(
             account_status_ok=status_ok,
             stock_account_factory=stock_factory,
         )
-        trader.start()
-        trader.connect()
-        trader.subscribe(stock_account)
+        subscribe_result = trader.subscribe(stock_account)
+        _require_exact_zero(subscribe_result, label="trader.subscribe")
     except QmtGate1RuntimeError:
         _attempt_stop(trader)
         raise
@@ -185,20 +220,35 @@ def build_live_session(
         _attempt_stop(trader)
         raise LiveSessionError("live session construction failed") from exc
 
-    # Durable exposure journal: the production bootstrap constructs the
-    # concrete SQLite store itself (RR-004) — callers cannot substitute a fake.
-    exposure_store = SqliteExposureStore(db_conn)
+    # Database from validated config through the migration lifecycle (RR4-004):
+    # never an arbitrary caller connection / :memory:.
+    db_path = str(global_cfg.database)
+    if not db_path or db_path == ":memory:":
+        _attempt_stop(trader)
+        raise LiveSessionError(
+            "live session requires a persistent database path from validated config"
+        )
+    conn = initialize_database(db_path)
+    exposure_store = SqliteExposureStore(conn)
 
-    # Assemble the stack via the single assembly helper; the bridge + adapter
-    # hold an opaque-bound account and no plaintext account id ever crosses
-    # into the stack.
-    return build_live_stack(
-        trader=trader, account=stock_account, store=store, policy=policy,
-        exposure_store=exposure_store, event_queue=event_queue,
-        trade_date=trade_date, runtime_confirmation_token=runtime_confirmation_token,
-        strategy_name=strategy_name, order_timeout_seconds=order_timeout_seconds,
-        config_live_enabled=False,
+    timeout = (
+        order_timeout_seconds
+        if order_timeout_seconds is not None
+        else global_cfg.order_timeout_seconds
     )
+    from tgrid.execution.store import ExecutionStore
+
+    stack = build_live_stack(
+        trader=trader, account=stock_account, store=ExecutionStore(conn),
+        policy=policy, exposure_store=exposure_store, event_queue=event_queue,
+        trade_date=trade_date,
+        runtime_confirmation_token=runtime_confirmation_token,
+        strategy_name=strategy_name, order_timeout_seconds=timeout,
+        config_live_enabled=global_cfg.live_trading,
+    )
+    # attach the opened connection so the caller can close it after teardown
+    stack._db_conn = conn  # test/internal convenience only
+    return stack
 
 
 def _attempt_stop(trader: object) -> None:

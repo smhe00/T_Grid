@@ -18,7 +18,9 @@ import unittest
 from tgrid.events import EventQueue
 from tgrid.execution.executor import ExecutionEngine, OrderStatus
 from tgrid.execution.models import BUY, SELL
+from tgrid.execution.port import BrokerOrder
 from tgrid.execution.store import ExecutionStore
+from tgrid.integrations.daily_exposure import DailyExposureLedger
 from tgrid.integrations.live_bootstrap import build_live_stack
 from tgrid.integrations.live_broker_adapter import (
     ExposureNotReadyError,
@@ -89,9 +91,37 @@ class _FakeXtQuantTrader:
         self.trades = []
         self._seq = 0
         self.callback = None
+        self.connected = True
+        self.connect_result = 0
 
     def register_callback(self, callback):
         self.callback = callback
+
+    def connect(self):
+        return self.connect_result
+
+    def start(self):
+        return 0
+
+    def stop(self):
+        return 0
+
+    def subscribe(self, account):
+        self.subscribed = account
+        return 0
+
+    def query_account_status(self):
+        return [type("S", (), {
+            "account_id": "fake-account",
+            "account_type": 1,
+            "status": 1,
+        })()]
+
+    def query_account_infos(self):
+        return [type("I", (), {
+            "account_id": "fake-account",
+            "account_type": 1,
+        })()]
 
     def order_stock(self, account, stock_code, order_type, order_volume,
                     price_type, price, strategy_name="", order_remark=""):
@@ -282,9 +312,11 @@ class TestQueueHealthBlocksOrders(unittest.TestCase):
             queue.stop()
             queue.join(timeout=1.0)
 
-    def test_disconnect_rejects_immediate_order_until_explicit_recovery(self):
-        # NODEB-RR-005: disconnect marks unhealthy immediately; explicit
-        # mark_connected recovery is required before new orders resume.
+    def test_disconnect_rejects_immediate_order_until_authoritative_recovery(self):
+        # NODEB-RR-005 / RR4-002: disconnect marks unhealthy immediately; a
+        # naked health flip must NOT restore order capability.  Only the
+        # authoritative reconnect (verified connect + account status + queue
+        # RUNNING) restores it.
         trader = _FakeXtQuantTrader()
         queue = EventQueue(lambda e: None, maxsize=100)
         queue.start()
@@ -303,12 +335,35 @@ class TestQueueHealthBlocksOrders(unittest.TestCase):
             with self.assertRaises(LiveBrokerError):
                 adapter.place_order(symbol="510300.SH", side="BUY",
                                     qty=100, limit_price=4.6)
-            # Explicit reconnection restores the channel health.
-            bridge.mark_connected()
+            # A naked internal health flip must NOT make the stack order-capable.
+            if bridge.callback_handler is not None:
+                bridge.callback_handler._healthy = True
+            self.assertFalse(bridge.execution_healthy)
+            with self.assertRaises(LiveBrokerError):
+                adapter.place_order(symbol="510300.SH", side="BUY",
+                                    qty=100, limit_price=4.6)
+            # Authoritative reconnect: verified connect + account status.
+            bridge.reconnect()
             self.assertTrue(bridge.execution_healthy)
             order_id = adapter.place_order(symbol="510300.SH", side="BUY",
                                            qty=100, limit_price=4.6)
             self.assertTrue(order_id.startswith("9"))
+        finally:
+            queue.stop()
+            queue.join(timeout=1.0)
+
+    def test_reconnect_fails_closed_on_bad_connect_result(self):
+        # NODEB-RR4-002: nonzero/wrong-type connect result denies recovery.
+        trader = _FakeXtQuantTrader()
+        trader.connect_result = -1
+        queue = EventQueue(lambda e: None, maxsize=100)
+        queue.start()
+        try:
+            bridge = XtQuantBrokerBridge(trader, _FakeAccount(), event_sink=queue)
+            trader.callback.on_disconnected()
+            with self.assertRaises(Exception):
+                bridge.reconnect()
+            self.assertFalse(bridge.execution_healthy)
         finally:
             queue.stop()
             queue.join(timeout=1.0)
@@ -404,17 +459,18 @@ class TestExposureCrashSafety(unittest.TestCase):
 
 
 class TestDurableExposureStore(unittest.TestCase):
-    """RR-004: concrete SQLite store; restart with the durable journal."""
+    """RR-004 / RR4-004: concrete SQLite store through the migration lifecycle."""
 
     def test_sqlite_store_restart_reconstructs_exposure(self):
-        import sqlite3
-
         db_path = _temp_db_path()
         trader = _FakeXtQuantTrader()
         bridge = XtQuantBrokerBridge(trader, _FakeAccount())
-        conn = sqlite3.connect(db_path)
+        # Production store requires the MIGRATED schema (RR4-004); raw
+        # sqlite3.connect without initialize() must fail closed.
         from tgrid.integrations.exposure_store import SqliteExposureStore
+        from tgrid.persistence import initialize
 
+        conn = initialize(db_path)
         store = SqliteExposureStore(conn)
         adapter = LiveBrokerAdapter(
             broker=bridge, policy=_policy(max_cash_per_day=500.0),
@@ -422,15 +478,15 @@ class TestDurableExposureStore(unittest.TestCase):
             runtime_confirmation_token="startup-token",
         )
         adapter.apply_config_enable(True)
-        adapter.reconstruct_daily_exposure()
+        adapter.reconstruct_daily_exposure(intents=())
         adapter.confirm_runtime("startup-token")
         adapter.place_order(symbol="510300.SH", side="BUY", qty=100,
                             limit_price=4.6)
         self.assertAlmostEqual(adapter.daily_cash_used, 460.0)
         conn.close()
 
-        # "Restart": reopen the same DB file with a fresh connection.
-        conn2 = sqlite3.connect(db_path)
+        # "Restart": reopen the same DB file through the migration lifecycle.
+        conn2 = initialize(db_path)
         store2 = SqliteExposureStore(conn2)
         restarted = LiveBrokerAdapter(
             broker=bridge, policy=_policy(max_cash_per_day=500.0),
@@ -439,7 +495,7 @@ class TestDurableExposureStore(unittest.TestCase):
         )
         restarted.apply_config_enable(True)
         restarted.confirm_runtime("startup-token")
-        restarted.reconstruct_daily_exposure()
+        restarted.reconstruct_daily_exposure(intents=())
         self.assertAlmostEqual(restarted.daily_cash_used, 460.0)
         with self.assertRaises(LiveBrokerError):
             restarted.place_order(symbol="510300.SH", side="BUY", qty=100,
@@ -447,9 +503,82 @@ class TestDurableExposureStore(unittest.TestCase):
         conn2.close()
         os.remove(db_path)
 
+    def test_unmigrated_connection_fails_closed(self):
+        # NODEB-RR4-004: an arbitrary/raw connection without the migrated
+        # daily_exposure table must not masquerade as the production journal.
+        import sqlite3
+
+        from tgrid.integrations.exposure_store import SqliteExposureStore
+
+        conn = sqlite3.connect(":memory:")
+        with self.assertRaises(Exception):
+            SqliteExposureStore(conn)
+        conn.close()
+
+    def test_reconstruction_uses_durable_intent_dates_not_raw_order_time(self):
+        # NODEB-RR4-003: safety-critical same-day reconstruction must come
+        # from durable OrderIntent.created_at joined to broker orders, never
+        # from raw QMT order_time formatting (native ints / non-ISO strings
+        # must NOT cause undercount).
+        from tgrid.execution.models import OrderIntent
+
+        ledger = DailyExposureLedger(trade_date="2026-08-15", store=_DictStore())
+        # Broker orders with native-int-like / non-ISO / empty order_time.
+        broker_buy_same_day = BrokerOrder(
+            order_id="5001", symbol="510300.SH", side="BUY", qty=100,
+            limit_price=4.6, status="FILLED", filled_qty=100,
+            order_remark="TG_510300SH_B001", order_time="1784_123456789",
+        )
+        broker_buy_other_day = BrokerOrder(
+            order_id="5002", symbol="510300.SH", side="BUY", qty=100,
+            limit_price=4.6, status="FILLED", filled_qty=100,
+            order_remark="TG_510300SH_B002", order_time="2026-08-14 09:35:00",
+        )
+        broker_buy_no_intent = BrokerOrder(
+            order_id="5003", symbol="510300.SH", side="BUY", qty=100,
+            limit_price=4.6, status="CANCELED", filled_qty=0,
+            order_remark="TG_510300SH_B003", order_time="",
+        )
+        intents = (
+            OrderIntent(
+                client_order_key="K1", symbol="510300.SH", side="BUY", qty=100,
+                limit_price=4.6, strategy_name="TGRID",
+                order_remark="TG_510300SH_B001", status="FILLED",
+                broker_order_id="5001", created_at="2026-08-15T09:35:00",
+                updated_at="2026-08-15T09:36:00",
+            ),
+            OrderIntent(
+                client_order_key="K2", symbol="510300.SH", side="BUY", qty=100,
+                limit_price=4.6, strategy_name="TGRID",
+                order_remark="TG_510300SH_B002", status="FILLED",
+                broker_order_id="5002", created_at="2026-08-14T09:35:00",
+                updated_at="2026-08-14T09:36:00",
+            ),
+        )
+        ledger.reconstruct_from_orders(
+            (broker_buy_same_day, broker_buy_other_day, broker_buy_no_intent),
+            intents=intents,
+        )
+        # 5001 (same-day durable intent) + 5003 (no intent, conservative) =
+        # 2 * 460; 5002's durable intent says another day -> correctly skipped.
+        self.assertAlmostEqual(ledger.used, 920.0)
+
+    def test_reconstruction_never_drops_on_unknown_timestamp(self):
+        # RR4-003: an unassignable managed broker order is counted
+        # conservatively, never silently skipped because its timestamp
+        # formatting is unknown.
+        ledger = DailyExposureLedger(trade_date="2026-08-15", store=_DictStore())
+        unknown = BrokerOrder(
+            order_id="9001", symbol="510300.SH", side="BUY", qty=50,
+            limit_price=4.6, status="PARTIAL", filled_qty=20,
+            order_remark="TG_510300SH_B009", order_time="9:35:00",
+        )
+        ledger.reconstruct_from_orders((unknown,), intents=())
+        self.assertAlmostEqual(ledger.used, 230.0)
+
 
 class TestLiveSessionBinding(unittest.TestCase):
-    """NODEB-RR-001: production account/env/path binding; order unreachable on failure."""
+    """NODEB-RR-001 / RR4-001: production account/env/path binding + lifecycle."""
 
     def _binding_path(self, *, environment="simulation", account_fp="", path_fp=""):
         import hashlib
@@ -465,7 +594,7 @@ class TestLiveSessionBinding(unittest.TestCase):
                 "qmt_path_fingerprint": path_fp,
             }],
         }
-        path = _temp_db_path() + ".binding.json"
+        path = tempfile.mktemp(suffix=".binding.json")
         with open(path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
         return path
@@ -489,18 +618,85 @@ class TestLiveSessionBinding(unittest.TestCase):
             json.dump({f"{environment}_qmt_path": qmt_path}, handle)
         return base, gate1, runtime
 
+    def _root_config(self, *, live_trading=False, database=""):
+        from tgrid.models import GlobalConfig, RootConfig
+
+        if not database:
+            database = _temp_db_path()
+        return RootConfig(
+            global_config=GlobalConfig(
+                live_trading=live_trading, database=database, log_dir="logs",
+                bar_period="5m", order_timeout_seconds=120,
+                skip_open_minutes=15, skip_close_minutes=15,
+                volatility_halt_atr=2.5, minimum_cash_buffer=50000.0,
+            ),
+            symbols={},
+        )
+
+    def _full_factory_kwargs(self, *, gate1, root):
+        return dict(
+            root_config=root, gate1_config_path=gate1, environment="simulation",
+            event_queue=EventQueue(lambda e: None, maxsize=100),
+            policy=_policy(), runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15",
+            trader_factory=lambda path: _FakeXtQuantTrader(),
+            xtconstant_values=(1, 1),
+            stock_account_factory=lambda aid: type("A", (), {
+                "account_id": aid, "account_type": "STOCK",
+            })(),
+        )
+
     def test_wrong_environment_fails_before_order_capability(self):
         from tgrid.integrations.live_session import build_live_session, LiveSessionError
 
         base, gate1, runtime = self._config_paths(environment="simulation")
+        root = self._root_config()
+        kwargs = self._full_factory_kwargs(gate1=gate1, root=root)
+        kwargs["environment"] = "live"  # requested env mismatch
         with self.assertRaises(LiveSessionError):
-            build_live_session(
-                config_path=gate1,
-                event_queue=EventQueue(lambda e: None, maxsize=100),
-                store=None, policy=_policy(), db_conn=None,
-                runtime_confirmation_token="t", trade_date="2026-08-15",
-                environment="live",  # requested env mismatch
-            )
+            build_live_session(**kwargs)
+
+    def test_default_off_keeps_execution_disabled(self):
+        # RR4-001: global.live_trading missing/false keeps execution disabled.
+        import hashlib
+
+        from tgrid.integrations.live_session import build_live_session
+
+        base, gate1, runtime = self._config_paths(environment="simulation")
+        # Craft a binding whose fingerprints match the real qmt path and the
+        # fake-account so the path + account checks pass and the session gets
+        # to the enable wiring.
+        real_qmt = os.path.join(base, "qmt")
+        os.makedirs(real_qmt, exist_ok=True)
+        path_fp = hashlib.sha256(os.path.normcase(os.path.abspath(real_qmt)).encode("utf-8")).hexdigest()
+        account_fp = hashlib.sha256("miniqmt-account-v1:fake-account".encode("utf-8")).hexdigest()
+        binding = self._binding_path(environment="simulation",
+                                     account_fp=account_fp, path_fp=path_fp)
+        with open(gate1, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["account_binding_path"] = binding
+        with open(gate1, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        root = self._root_config(live_trading=False)
+        kwargs = self._full_factory_kwargs(gate1=gate1, root=root)
+        stack = build_live_session(**kwargs)
+        try:
+            # Activation completes (no intents to reconcile) but the stack is
+            # NOT order-capable: global.live_trading=false keeps the
+            # double-enable first step OFF.
+            stack.activate(token="startup-token")
+            with self.assertRaises(Exception):
+                stack.engine.send_buy(
+                    client_order_key="K1", symbol="510300.SH", qty=100,
+                    limit_price=4.6, order_remark="TG_510300SH_B001",
+                    now="t0", expected_available_cash=100000.0,
+                    reserved_cash=460.0,
+                )
+        finally:
+            stack.event_queue.stop()
+            stack.event_queue.join(timeout=1.0)
+            stack._db_conn.close()
+            os.remove(root.global_config.database)
 
     def test_binding_fingerprint_mismatch_fails(self):
         from tgrid.integrations.qmt_gate1_runtime import QmtGate1RuntimeError
@@ -508,7 +704,6 @@ class TestLiveSessionBinding(unittest.TestCase):
 
         base, gate1, runtime = self._config_paths(environment="simulation")
         binding = self._binding_path(account_fp="0" * 64, path_fp="1" * 64)
-        # Point gate1's binding path at our crafted binding file.
         with open(gate1, "r", encoding="utf-8") as handle:
             payload = json.load(handle)
         payload["account_binding_path"] = binding
@@ -516,13 +711,47 @@ class TestLiveSessionBinding(unittest.TestCase):
             json.dump(payload, handle)
         # The verified Gate-1 path-fingerprint check fails closed before any
         # order capability is enabled (RR-001).
+        root = self._root_config()
+        kwargs = self._full_factory_kwargs(gate1=gate1, root=root)
         with self.assertRaises(QmtGate1RuntimeError):
-            build_live_session(
-                config_path=gate1,
-                event_queue=EventQueue(lambda e: None, maxsize=100),
-                store=None, policy=_policy(), db_conn=None,
-                runtime_confirmation_token="t", trade_date="2026-08-15",
+            build_live_session(**kwargs)
+
+    def test_positive_live_session_lifecycle(self):
+        # RR4-001: positive production-shaped fake test proves the FULL live
+        # sequence succeeds with live_trading=true.
+        import hashlib
+
+        from tgrid.integrations.live_session import build_live_session
+
+        base, gate1, runtime = self._config_paths(environment="simulation")
+        real_qmt = os.path.join(base, "qmt")
+        os.makedirs(real_qmt, exist_ok=True)
+        path_fp = hashlib.sha256(os.path.normcase(os.path.abspath(real_qmt)).encode("utf-8")).hexdigest()
+        account_fp = hashlib.sha256("miniqmt-account-v1:fake-account".encode("utf-8")).hexdigest()
+        binding = self._binding_path(environment="simulation",
+                                     account_fp=account_fp, path_fp=path_fp)
+        with open(gate1, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        payload["account_binding_path"] = binding
+        with open(gate1, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle)
+        root = self._root_config(live_trading=True)
+        kwargs = self._full_factory_kwargs(gate1=gate1, root=root)
+        stack = build_live_session(**kwargs)
+        try:
+            stack.activate(token="startup-token")
+            result = stack.engine.send_buy(
+                client_order_key="K1", symbol="510300.SH", qty=100,
+                limit_price=4.6, order_remark="TG_510300SH_B001",
+                now="t0", expected_available_cash=100000.0,
+                reserved_cash=460.0,
             )
+            self.assertEqual(result.status, OrderStatus.SUBMITTED)
+        finally:
+            stack.event_queue.stop()
+            stack.event_queue.join(timeout=1.0)
+            stack._db_conn.close()
+            os.remove(root.global_config.database)
 
 
 class TestBootstrap(unittest.TestCase):
@@ -681,6 +910,35 @@ class TestBootstrap(unittest.TestCase):
         finally:
             queue.stop()
             queue.join(timeout=1.0)
+            conn.close()
+
+    def test_safe_mode_cannot_be_cleared_without_reconciliation(self):
+        # NODEB-RR4-002: the reconciliation-driven clear rejects unresolved
+        # outcomes; the naked reset is a test-internal hook, not production.
+        conn = initialize(_temp_db_path())
+        try:
+            store = ExecutionStore(conn)
+            from tgrid.execution.simbroker import SimBroker
+
+            engine = ExecutionEngine(store, SimBroker())
+            engine.engage_safe_mode("test unresolved")
+            with self.assertRaises(Exception):
+                engine.clear_safe_mode_after_reconciliation(
+                    (type("R", (), {
+                        "outcome": "INTENT_ONLY", "broker_status": None,
+                        "client_order_key": "K1",
+                    })(),)
+                )
+            self.assertTrue(engine.safe_mode)
+            # A resolved reconciliation tuple clears it.
+            engine.clear_safe_mode_after_reconciliation(
+                (type("R", (), {
+                    "outcome": "MATCHED", "broker_status": "SUBMITTED",
+                    "client_order_key": "K1",
+                })(),)
+            )
+            self.assertFalse(engine.safe_mode)
+        finally:
             conn.close()
 
 

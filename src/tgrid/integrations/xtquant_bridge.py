@@ -233,11 +233,19 @@ class XtQuantCallbackHandler:
         pass
 
     def on_disconnected(self) -> None:
-        # NODEB-RR-005: disconnect marks the execution channel unhealthy
-        # immediately (not just an informational event); recovery must be
-        # explicit before new orders resume.
+        # NODEB-RR-005 / RR4-002: disconnect marks the execution channel
+        # unhealthy immediately (not just an informational event) AND latches
+        # the bridge's disconnect flag; recovery must be the authoritative
+        # reconnect before new orders resume.
         self._emit(BrokerDisconnectEvent())
         self._mark_unhealthy()
+        self._on_bridge_disconnect()
+
+    def _on_bridge_disconnect(self) -> None:
+        """Bridge hook: latch the disconnect until authoritative reconnect."""
+        bridge = getattr(self, "_bridge", None)
+        if bridge is not None:
+            bridge._disconnected = True
 
     def on_account_status(self, status) -> None:
         self._emit(
@@ -290,9 +298,12 @@ class XtQuantBrokerBridge(BrokerPort):
         self._account = account
         self._strategy_name = strategy_name
         self._event_sink = event_sink
+        self._disconnected = False
         self._handler = XtQuantCallbackHandler(event_sink) if event_sink is not None else None
-        if self._handler is not None and hasattr(trader, "register_callback"):
-            trader.register_callback(self._handler)
+        if self._handler is not None:
+            self._handler._bridge = self
+            if hasattr(trader, "register_callback"):
+                trader.register_callback(self._handler)
 
     @property
     def callback_handler(self) -> XtQuantCallbackHandler | None:
@@ -303,11 +314,14 @@ class XtQuantBrokerBridge(BrokerPort):
     def execution_healthy(self) -> bool:
         """False when a callback enqueue failed or the event channel is down.
 
-        NODEB-RR-005: reads the ACTUAL EventQueue lifecycle state (FAILED /
-        STOPPING / STOPPED reject new orders immediately, even without another
-        callback) in addition to callback-handler enqueue health.  A broker
-        disconnect also flips health false until explicit recovery.
+        NODEB-RR-005 / RR4-002: reads the ACTUAL EventQueue lifecycle state
+        (FAILED / STOPPING / STOPPED reject new orders immediately, even
+        without another callback) plus callback-handler enqueue health.  A
+        broker disconnect latches ``_disconnected`` — a naked health flip
+        cannot clear it; only the authoritative :meth:`reconnect` can.
         """
+        if self._disconnected:
+            return False
         if self._handler is not None and not self._handler.healthy:
             return False
         queue_state = getattr(self._event_sink, "state", None)
@@ -317,13 +331,63 @@ class XtQuantBrokerBridge(BrokerPort):
                 return False
         return True
 
-    def mark_connected(self) -> None:
-        """Explicit recovery: clear the disconnect-unhealthy flag.
+    def reconnect(self) -> None:
+        """Authoritative disconnect recovery (NODEB-RR4-002).
 
-        NODEB-RR-005: reconnection/recovery must be explicit before new orders
-        resume.  The handler health is restored only after a successful
-        reconnection; the event queue must itself be RUNNING.
+        A naked health flip must NOT make a disconnected production stack
+        order-capable.  Recovery requires, in order:
+
+        1. the EventQueue is RUNNING (a dead event channel cannot be healthy);
+        2. the trader reconnects and the connect result is the exact plain
+           success value ``0`` (wrong type/nonzero fails closed);
+        3. the bound account remains subscribed/healthy on the broker side
+           (strict ``query_account_status`` sees the account id).
+
+        Only after all three pass is the callback handler health restored.
         """
+        queue_state = getattr(self._event_sink, "state", None)
+        if queue_state is not None:
+            state_value = getattr(queue_state, "value", None)
+            if state_value != "RUNNING":
+                raise BrokerDisconnectedError(
+                    "event channel is not RUNNING; cannot reconnect"
+                )
+        connect_fn = getattr(self._trader, "connect", None)
+        if not callable(connect_fn):
+            raise BrokerDisconnectedError(
+                "broker has no connect surface; cannot recover"
+            )
+        try:
+            result = connect_fn()
+        except Exception as exc:  # noqa: BLE001 - broker boundary
+            raise BrokerDisconnectedError("reconnect failed") from exc
+        if type(result) is not int or result != 0:
+            raise BrokerDisconnectedError(
+                "broker reconnect did not return the exact success value"
+            )
+        status_fn = getattr(self._trader, "query_account_status", None)
+        if not callable(status_fn):
+            raise BrokerDisconnectedError(
+                "broker has no account-status surface; cannot verify recovery"
+            )
+        account_id = str(getattr(self._account, "account_id", "")).strip()
+        if not account_id:
+            raise BrokerDisconnectedError(
+                "bound account has no verifiable id; recovery denied"
+            )
+        try:
+            statuses = list(status_fn())
+        except Exception as exc:  # noqa: BLE001 - broker boundary
+            raise BrokerDisconnectedError("account-status verify failed") from exc
+        if account_id not in {
+            str(getattr(s, "account_id", "")).strip() for s in statuses
+        }:
+            raise BrokerDisconnectedError(
+                "bound account not present after reconnect; recovery denied"
+            )
+        # Authoritative recovery complete: clear the disconnect latch and
+        # restore handler health together.
+        self._disconnected = False
         if self._handler is not None:
             self._handler._healthy = True
 

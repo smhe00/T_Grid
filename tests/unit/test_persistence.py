@@ -66,7 +66,7 @@ class TestInitialize(unittest.TestCase):
             rows = conn.execute(
                 "SELECT version, name, applied_at FROM schema_migrations"
             ).fetchall()
-            self.assertEqual(len(rows), 5)
+            self.assertEqual(len(rows), MAX_SCHEMA_VERSION)
             self.assertEqual(rows[0][0], 1)
             self.assertEqual(rows[0][1], "bootstrap")
             self.assertTrue(rows[0][2])
@@ -82,6 +82,9 @@ class TestInitialize(unittest.TestCase):
             self.assertEqual(rows[4][0], 5)
             self.assertEqual(rows[4][1], "order_reservations")
             self.assertTrue(rows[4][2])
+            self.assertEqual(rows[5][0], 6)
+            self.assertEqual(rows[5][1], "daily_exposure")
+            self.assertTrue(rows[5][2])
 
             meta = conn.execute(
                 "SELECT key, value, updated_at FROM application_metadata"
@@ -92,7 +95,7 @@ class TestInitialize(unittest.TestCase):
             self.assertTrue(meta[0][2])
 
             user_version = conn.execute("PRAGMA user_version").fetchone()[0]
-            self.assertEqual(user_version, 5)
+            self.assertEqual(user_version, MAX_SCHEMA_VERSION)
             self.assertEqual(user_version, MAX_SCHEMA_VERSION)
         finally:
             conn.close()
@@ -104,12 +107,12 @@ class TestInitialize(unittest.TestCase):
         conn2 = initialize(path)
         try:
             count = conn2.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            self.assertEqual(count, 5)
+            self.assertEqual(count, MAX_SCHEMA_VERSION)
             meta_count = conn2.execute(
                 "SELECT COUNT(*) FROM application_metadata"
             ).fetchone()[0]
             self.assertEqual(meta_count, 1)
-            self.assertEqual(conn2.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(conn2.execute("PRAGMA user_version").fetchone()[0], MAX_SCHEMA_VERSION)
         finally:
             conn2.close()
 
@@ -118,7 +121,7 @@ class TestInitialize(unittest.TestCase):
         conn = initialize(path)
         conn.close()
         with open_database(path) as reopened:
-            self.assertEqual(reopened.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(reopened.execute("PRAGMA user_version").fetchone()[0], MAX_SCHEMA_VERSION)
 
     def test_foreign_keys_and_busy_timeout(self):
         path = _temp_db_path()
@@ -208,7 +211,7 @@ class TestCorruptionAndVersion(unittest.TestCase):
             handle.write(b"")
         conn = initialize(path)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], MAX_SCHEMA_VERSION)
         finally:
             conn.close()
 
@@ -323,9 +326,9 @@ class TestMigrationRollback(unittest.TestCase):
         # After rollback, the file must be re-initializable deterministically.
         conn = initialize(path)
         try:
-            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], 5)
+            self.assertEqual(conn.execute("PRAGMA user_version").fetchone()[0], MAX_SCHEMA_VERSION)
             count = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()[0]
-            self.assertEqual(count, 5)
+            self.assertEqual(count, MAX_SCHEMA_VERSION)
         finally:
             conn.close()
 
@@ -504,7 +507,7 @@ class TestSchemaContractValidation(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(
             [(row[0], row[1]) for row in after],
-            [(1, "bootstrap"), (2, "t_lot_ledger"), (3, "t_lot_audit_log"), (4, "order_intents"), (5, "order_reservations")],
+            [(1, "bootstrap"), (2, "t_lot_ledger"), (3, "t_lot_audit_log"), (4, "order_intents"), (5, "order_reservations"), (6, "daily_exposure")],
         )
         self.assertTrue(all(row[2] for row in after))
 

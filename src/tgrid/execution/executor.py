@@ -140,13 +140,41 @@ class ExecutionEngine:
         return self._safe_mode_reason
 
     def engage_safe_mode(self, reason: str) -> None:
-        """Explicitly block new orders until :meth:`clear_safe_mode`."""
+        """Explicitly block new orders until a reconciliation clears it."""
         if type(reason) is not str or reason == "":
             raise ExecutionInputError("safe-mode reason must be a non-empty string")
         self._safe_mode_reason = reason
 
+    def clear_safe_mode_after_reconciliation(self, results: tuple) -> None:
+        """Reconciliation-driven SAFE_MODE release (NODEB-RR4-002).
+
+        Clears SAFE_MODE ONLY after a successful authoritative broker/local
+        reconciliation: ``results`` must contain no unresolved outcome
+        (``UNMATCHED_BROKER_ORDER`` / ``INTENT_ONLY`` / broker status
+        ``UNKNOWN``).  A caller cannot substitute an unrestricted public flag
+        clear on the production path.
+        """
+        if type(results) is not tuple:
+            raise ExecutionInputError(
+                "reconciliation results must be a tuple"
+            )
+        unresolved = [
+            r for r in results
+            if getattr(r, "outcome", None) in ("UNMATCHED_BROKER_ORDER", "INTENT_ONLY")
+            or getattr(r, "broker_status", None) == "UNKNOWN"
+        ]
+        if unresolved:
+            raise ExecutionError(
+                "reconciliation did not resolve all intents; SAFE_MODE retained"
+            )
+        self._safe_mode_reason = None
+
     def clear_safe_mode(self) -> None:
-        """Resume new-order execution after reconciliation resolves the state."""
+        """Test-internal/private raw reset hook (NODEB-RR4-002).
+
+        NOT a production path: production SAFE_MODE release must go through
+        :meth:`clear_safe_mode_after_reconciliation`.
+        """
         self._safe_mode_reason = None
 
     def _engage_safe_mode(self, reason: str) -> None:

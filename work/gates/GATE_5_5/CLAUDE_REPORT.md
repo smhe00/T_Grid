@@ -2,48 +2,34 @@
 
 ## Status
 
-`AUDIT_READY_PRELIVE (ITERATION 4)` — Node B Iteration-3 复审（`3b0d53f`，
-`work/gates/GATE_5_5/NODE_B_REVIEW_ITER3_REFERENCE_20260815.md`）判定
-`CHANGES_REQUIRED`；**NODEB-RR-001..006 已全部修复（SELF_CERTIFIED）**，
+`AUDIT_READY_PRELIVE (ITERATION 5)` — Node B Iteration-4 复审（`66264f1`，
+`work/gates/GATE_5_5/NODE_B_REVIEW_ITER4_REFERENCE_20260815.md`）判定
+`CHANGES_REQUIRED`；**NODEB-RR4-001..005 已全部修复（SELF_CERTIFIED）**，
 等待 Audit Node B 复审。**本任务未调用任何真实 order/cancel；
 `live_trading_allowed=false` 保持。**
 
-授权来源：Gate 5 Node A PASS（`4c1cc8c`）+ Node B Iteration-3 授权仅限修复
-NODEB-RR-001..006（reference-conformance pass）。
+授权来源：Gate 5 Node A PASS（`4c1cc8c`）+ Node B Iteration-4 授权仅限修复
+NODEB-RR4-001..005（final production-glue correction）。
 
 参考实现（QMT 行为基线）：`https://github.com/smhe00/reverse_repo`
 pinned commit `c9ecc701d9b1c47d6a8d03539b482368741204a3`。
 
-## Reference-Conformance Matrix（reverse_repo c9ecc70 → TGrid）
-
-| reverse_repo 模式 | 文件 | TGrid 实现/测试 |
-|------|------|------|
-| `strict_query()` 有界重试，None 永不等于空成功 | `scripts/repo_execution_core.py` | `XtQuantBrokerBridge._strict_query` → `BrokerQueryAmbiguous`（RR-002）|
-| `query_order_strict()` 原生 `query_stock_order(account, int)` | 同上 | `query_order` 优先原生单查，否则严格唯一匹配扫描（RR-002）|
-| `select_bound_account()` env/path/fingerprint/唯一 normal 账号 | 同上 | `build_live_session` + Gate-1 `load_account_binding`/`_select_normal_account`（RR-001）|
-| `AccountBinding` 禁明文账号、SHA-256 fingerprint | 同上 | Gate-1 `parse_account_binding`（沿用）|
-| `classify_order()` 已知/未知状态分类 | 同上 | `XT_STATUS_TO_TGRID` + UNKNOWN fail-closed（I2-002）|
-| callback 仅 wake/update 信号，broker query 权威 | `BrokerUpdateSignal` | `XtQuantCallbackHandler` → EventQueue 不可变事件（I2-003）|
-| AtomicJournal 持久 journal + 确定重启恢复 | 同上 | `SqliteExposureStore` + mandatory `reconcile_open_intents`（RR-003/004）|
-| 当前 session/trade-date 校验后 live 执行 | 同上 | `roll_day(session_date=必填)` + ISO 校验（RR-004）|
-
-## NODEB-RR-001..006 Closure（SELF_CERTIFIED）
+## NODEB-RR4-001..005 Closure（SELF_CERTIFIED）
 
 | # | 级别 | 修复 |
 |---|------|------|
-| RR-001 | P0 | `build_live_session()` 生产 live-session 工厂：复用 Gate-1/reverse_repo 账号绑定语义（environment 匹配、QMT-path fingerprint 校验、strict 查询 account infos/statuses、唯一 normal securities 账号匹配 fingerprint、subscribe 后 opaque 绑定）；订单能力在验证失败/歧义时不可达（FI：错误 env、path fingerprint 不匹配 → fail closed） |
-| RR-002 | P0 | 移植 `strict_query` 有界重试：None/异常重试 3 次后抛 `BrokerQueryAmbiguous`；`query_orders`/`query_trades`/`query_order` 全部 strict；`query_order` 优先原生 `query_stock_order(account, int)`，否则严格唯一匹配；FI：None、瞬时异常→成功、持久异常、空列表成功、重复匹配 |
-| RR-003 | P0 | `LiveStack.activate()` 恢复**强制**（不再接受 None）；UNMATCHED_BROKER_ORDER/INTENT_ONLY/UNKNOWN/歧义阻塞激活并 engage SAFE_MODE；`reconcile_and_resume()` 为 reconciliation 驱动的 SAFE_MODE 释放（成功对账后才 `clear_safe_mode`）；restart 测试证明不能跳过恢复、不能裸翻转标志 |
-| RR-004 | P0 | 具体 `SqliteExposureStore`（SQLite `daily_exposure` 表）由生产 bootstrap 自建（调用方不可替换 in-memory fake）；`roll_day` 的 `session_date` 在重置路径**必填**且须等于新日期；重建不依赖原始 QMT `order_time` 字符串格式（ISO 前缀或 durable 日期）；用具体 durable store 做 restart 测试 |
-| RR-005 | P0 | `execution_healthy` 读取**真实 EventQueue 生命周期状态**（FAILED/STOPPING/STOPPED 即使无后续 callback 也立即拒单）+ handler 入队健康；`on_disconnected` 立即标记 unhealthy；`mark_connected()` 显式恢复；测试：worker 失败无后续 callback、断开后立即下单被拒、显式恢复后放行 |
-| RR-006 | P1 | 修正 `WORKFLOW_STATE.yaml` `git_base_commit` SHA typo（`cb7aeb6006618…` 而非 `cb7aeb6606618…`）；新增 `reference_repository`/`reference_commit` 字段记录 pinned 参考 |
+| RR4-001 | P0 | `build_live_session()` 改为**真实生产路径**：消费已校验 `RootConfig`（`global.live_trading` 默认 OFF，缺失/false 保持执行禁用），不再复用 simulation-only Gate-1 parser 作为 live parser；严格按参考生命周期顺序：construct trader → `start` → `connect`（精确 int 成功）→ strict account 发现 → 唯一 bound normal 账号 → `subscribe`（精确 int 成功）；错误 env/path/account、非零/错误类型 connect/subscribe 结果、零/多账号匹配 → 在 order-capable stack 就绪前失败；新增 positive production-shaped fake 测试（live_trading=true 全流程成功） |
+| RR4-002 | P0 | SAFE_MODE 释放改为 reconciliation 驱动：`clear_safe_mode_after_reconciliation(results)` 仅在所有 outcome 已解析（无 UNMATCHED/INTENT_ONLY/UNKNOWN）时清除，裸 `clear_safe_mode` 保留为 test-internal hook；broker 断开恢复改为权威 `reconnect()`：EventQueue RUNNING + verified connect（精确 int 0）+ account-status 验证，disconnect latch（`_disconnected`）无法被裸 health flip 清除；测试证明裸翻转不能恢复订单能力 |
+| RR4-003 | P0 | 日敞口重建从**持久 OrderIntent.created_at** join broker orders（broker id / client key / remark），绝不依赖原始 QMT `order_time` 格式化；无法安全分日的 managed 单**保守计入**（绝不因时间戳格式未知而静默跳过）；FI：原生 int 风格 order_time、非 ISO 字符串、空值、终态订单、broker/local 匹配 intents 证明重启无少算 |
+| RR4-004 | P1 | `daily_exposure` 进入正常 schema 迁移生命周期（Migration 6 + no-delete trigger）；`SqliteExposureStore` 要求已迁移表（拒绝 raw/:memory: 连接）；生产工厂从 validated config 打开数据库（不接受任意 caller connection） |
+| RR4-005 | P1 | `git_head_commit` 记录**已推送的元数据/交接 HEAD**（与 `implementation_commit` 明确区分）；state/task/docs/report 一致 |
 
 ## Evidence
 
-- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **943 tests OK**（较 929 新增 14：strict-query FI、EventQueue 生命周期健康、durable SQLite exposure restart、account-binding FI、mandatory recovery、reconcile-driven SAFE_MODE）。
+- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **950 tests OK**（较 943 新增 7：positive/negative production session 生命周期、connect/subscribe exact-result FI、global.live_trading 双确认（默认 false + 显式 true）、SAFE_MODE 无裸清除、断开无裸重连、exposure 原生 int order_time FI、持久 DB/迁移生命周期）。
 - `python -m compileall -q src tests scripts` → exit 0。
-- capability 扫描：`src` 55 文件；真实 `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处（白名单）、桥外 0 处**；`RESULT: PASS`。
-- 测试文件：`test_xtquant_bridge.py`（strict-query FI 扩展）、`test_live_bootstrap.py`（durable store / EventQueue health / mandatory recovery / account binding 扩展）。
+- capability 扫描：真实 `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处（白名单）、桥外 0 处**；`RESULT: PASS`。
+- 测试文件：`test_live_bootstrap.py`（session 生命周期 / SAFE_MODE / disconnect / exposure FI / 迁移扩展）、`test_xtquant_bridge.py`（strict-query 保持）、迁移测试（`test_t_lot_schema` / `test_t_lot_audit_schema` / `test_persistence` / `test_cli` 版本断言同步为 MAX_SCHEMA_VERSION=6）。
 - 既有 AST 扫描（assert / xtquant import / 桥外 order call）保持 PASS。
 
 ## Boundary
@@ -55,5 +41,5 @@ pinned commit `c9ecc701d9b1c47d6a8d03539b482368741204a3`。
 
 ## Recommendation
 
-`AUDIT_READY_PRELIVE`（Iteration 4）——等待 Audit Node B 复审 NODEB-RR-001..006；
+`AUDIT_READY_PRELIVE`（Iteration 5）——等待 Audit Node B 复审 NODEB-RR4-001..005；
 首笔真实订单须 Node B PASS + 用户显式授权。

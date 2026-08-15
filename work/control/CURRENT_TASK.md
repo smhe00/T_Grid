@@ -1,119 +1,149 @@
-# Current Task — Gate 5.5 Node B Iteration 5 Final Production-Glue Fix
+# Current Task — Gate 5.5 Live Broker Adapter (Pre-Live Only)
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — implementation + self-review. Self-review must remain `SELF_CERTIFIED`.
+`DSH (DeepSeek Harness)` — single programming Agent, implementation + self-review allowed.
+
+Self-review must be labelled `SELF_CERTIFIED`; it is not an independent pre-live authorization.
 
 ## Status
 
-`CHANGES_REQUIRED` after independent Node B Iteration-4 review of:
+`AUDIT_READY_PRELIVE (ITERATION 5)`（NODEB-RR4-001..005 remediation complete, SELF_CERTIFIED, awaiting Audit Node B re-review）
+
+## Completion Record — Iteration 5 (SELF_CERTIFIED — 2026-08-15)
+
+Node B Iteration-4 audit (`66264f1`) returned `CHANGES_REQUIRED`; all 5 findings closed:
+
+- **NODEB-RR4-001 (P0)**: `build_live_session()` is now a true production
+  path — consumes validated `RootConfig` (global.live_trading default OFF) +
+  separate QMT account/path binding; reference lifecycle order (construct →
+  start → connect(exact int) → discover → unique bound normal account →
+  subscribe(exact int)); wrong env/path/account and nonzero/wrong-type
+  connect/subscribe results fail before any order-capable stack; positive +
+  negative fake lifecycle tests.
+- **NODEB-RR4-002 (P0)**: SAFE_MODE release is reconciliation-driven
+  (`clear_safe_mode_after_reconciliation` rejects unresolved outcomes; naked
+  `clear_safe_mode` kept test-internal only); broker disconnect recovery is
+  authoritative `reconnect()` (verified connect + account-status + EventQueue
+  RUNNING) with a disconnect latch that a naked health flip cannot clear.
+- **NODEB-RR4-003 (P0)**: exposure reconstruction joins durable
+  `OrderIntent.created_at` to broker orders by id/key/remark — never raw QMT
+  `order_time` formatting; unassignable managed orders counted conservatively;
+  FI with native-int order_time / non-ISO strings / empty / terminal orders.
+- **NODEB-RR4-004 (P1)**: `daily_exposure` is now Migration 6 (schema
+  lifecycle + no-delete trigger); `SqliteExposureStore` requires the migrated
+  table (rejects raw/:memory: conns); production DB opened from validated
+  config.
+- **NODEB-RR4-005 (P1)**: canonical `git_head_commit` records the pushed
+  metadata head, distinct from `implementation_commit`.
+
+Evidence: **950 tests OK** (was 943); compileall 0; capability scan PASS
+(2 allowlisted bridge call sites, 0 outside); no real order/cancel invoked.
+Report: `work/gates/GATE_5_5/CLAUDE_REPORT.md`.
+
+Gate 5 passed independent Audit Node A on 2026-08-15. Gate 6 / Gate 7 remain blocked. `live_trading_allowed=false` remains mandatory.
+
+## Source of Authorization
+
+Read and comply with:
 
 ```text
-main: 082a109b343db1e662842c2768ba8a18413604cc
-implementation: 7f3c667fa13fa6bb3e470b22000492aab0705b57
+work/gates/GATE_5/NODE_A_FINAL_REVIEW_20260815.md
 ```
 
-Golden QMT reference remains pinned:
+Audit target:
 
 ```text
-https://github.com/smhe00/reverse_repo
-c9ecc701d9b1c47d6a8d03539b482368741204a3
+df1cbb53471d8f765c89c4bc644323d5839d0dd6
 ```
 
-## Scope — ONLY NODEB-RR4-001..005
-
-### RR4-001 — true production live session
-
-Fix `build_live_session()` so it is actually usable for live QMT and follows the reference lifecycle:
+Accepted Gate-5 implementation commit:
 
 ```text
-validated TGrid RootConfig (global.live_trading default false)
-+ QMT runtime/account/path binding
--> construct trader
--> start
--> connect (plain-int success required)
--> strict account infos/status discovery
--> exactly-one bound normal securities account
--> subscribe (plain-int success required)
--> EventQueue/bridge/adapter
--> mandatory startup reconciliation
--> runtime confirmation
+5a2e2fd32e21328badd1ceb2c92b973436c4c95a
 ```
 
-Do NOT reuse the simulation-only Gate-1 config parser as the live environment parser. Reuse/extract its hardened account/path fingerprint primitives instead.
+## Objective
 
-Production config enable must come from validated `RootConfig.global_config.live_trading`; no out-of-band `adapter.apply_config_enable(True)` requirement.
+Implement Gate 5.5: the real broker execution adapter and its pre-live safety boundary, while **never invoking a real order or real cancel** during this task.
 
-### RR4-002 — no naked safety-state reset
-
-- Production SAFE_MODE may clear only after successful authoritative reconciliation.
-- Remove/privatize/gate raw `ExecutionEngine.clear_safe_mode()` for production reachability.
-- Broker disconnect recovery must perform authoritative reconnect/account/session verification + reconciliation before health can become true.
-- A direct `mark_connected()` flag flip must not restore production order capability.
-
-### RR4-003 — exposure reconstruction must not parse raw QMT time as ISO
-
-Current code skips non-ISO broker `order_time`; native QMT integer timestamps therefore can undercount.
-
-Use durable TGrid intent/journal trade dates (`OrderIntent.created_at` or explicit trade-date field) joined to broker orders. Unknown-date managed orders must fail closed or count conservatively, never be silently skipped.
-
-### RR4-004 — bind exposure persistence to production DB lifecycle
-
-- Real production factory must use validated persistent TGrid database lifecycle, not arbitrary `db_conn` / `:memory:`.
-- Prefer normal migration/versioned schema for `daily_exposure` rather than ad-hoc table creation.
-- Keep in-memory/test injection only in clearly internal/test assembly helpers.
-
-### RR4-005 — exact canonical head metadata
-
-Keep implementation SHA separate from actual pushed head. Final state must use exact GitHub SHAs and all control docs must agree.
-
-## Frozen — DO NOT REOPEN WITHOUT REGRESSION
-
-- Gate 5 independent PASS.
-- BrokerPort live execution chain.
-- single XtQuant order/cancel bridge.
-- native int order-id conversion.
-- strict bounded broker queries / None fail-closed.
-- UNKNOWN -> reconciliation failure/SAFE_MODE.
-- duplicate-match recovery rejection.
-- mandatory startup reconciliation logic itself.
-- immutable real EventQueue callback path.
-- EventQueue lifecycle FAILED/STOPPING/STOPPED health read.
-- kill switch blocks new orders but allows cancel/query.
-- Reservation + OrderIntent before send + idempotency.
-- pre-send BUY exposure reservation.
-- executor/adapter finite-number hardening.
-- legacy Core authority guard.
-
-## Required SELF_CERTIFIED evidence
-
-1. Positive production-shaped fake live-session lifecycle test.
-2. Wrong env/path/account + zero/multiple account + connect/subscribe failure/wrong-type FI.
-3. `global.live_trading` false-by-default and explicit-true wiring tests.
-4. SAFE_MODE cannot clear without successful reconciliation.
-5. disconnect cannot clear without verified reconnect/recovery.
-6. durable exposure restart with native QMT-style integer `order_time`; no undercount.
-7. production persistent DB/migration lifecycle test.
-8. full unit regression + compileall + capability scan.
-9. no real order/cancel invocation.
-
-## Boundary
+Target architecture:
 
 ```text
-live_trading_allowed=false
-Gate 6=BLOCKED
-Gate 7=BLOCKED
+ExecutionEngine
+    -> LiveBrokerAdapter
+    -> XtQuantTrader
 ```
 
-No real TGrid order or cancel. No live-soak claim.
+The adapter may contain the broker capability needed for later live execution, but this task ends before the first real invocation.
 
-## Stop / Handoff
+## Mandatory Requirements
 
-After fixes:
+1. `live_trading` defaults false and cannot be enabled implicitly.
+2. A second explicit runtime confirmation is required in addition to configuration before broker execution is permitted.
+3. Explicit symbol allowlist.
+4. Hard per-order quantity limit.
+5. Hard per-order and/or per-day cash exposure limit.
+6. Kill switch / emergency disable path.
+7. Broker callbacks may only enqueue events; callbacks must not directly mutate T-Lots, position state, reservations, DB strategy state, or issue new orders.
+8. Reuse Gate-4 idempotent OrderIntent + Reservation-before-send semantics.
+9. Partial fills must be modeled explicitly.
+10. Timeout path must be `cancel request -> broker re-query -> reconcile`; cancellation acknowledgement must never be interpreted as proof of zero fill.
+11. Order/trade reconciliation and restart/crash recovery must be deterministic and fail closed.
+12. Exact-type validation must occur before arithmetic or broker calls.
+13. No force push / history rewrite.
+14. Do not commit account identifiers, balances, holdings, ports, userdata paths, secrets or local runtime configs.
+
+## Mandatory Carry-Forward Fix — NODEB-P0-001
+
+Fix the legacy reconciliation Core mismatch guard before Node B review.
+
+Current issue: `_load_reconciliation_state()` discards an optional legacy `core_qty` before `_check_core_authority()` can inspect it. Therefore a legacy file containing a Core different from `SymbolConfig.core_qty` is silently ignored instead of failing closed.
+
+Required resolution:
+
+- either reject `core_qty` as an unexpected reconciliation-state field; or
+- preserve it, require exact equality with `SymbolConfig.core_qty`, then discard it.
+
+Add a loader-to-runner test proving a mismatched legacy Core fails closed before any broker execution capability can be invoked.
+
+## Forbidden During Gate 5.5
+
+- no real order invocation;
+- no real cancel invocation;
+- no enabling `live_trading_allowed` in canonical state;
+- no Gate 6 tiny-capital run;
+- no production/live soak claim;
+- no bypass of Node B.
+
+## Required Self-Certified Evidence
+
+- full unit regression;
+- compileall;
+- capability scan identifying every real broker order/cancel call site introduced by Gate 5.5;
+- tests for double enable/confirmation;
+- allowlist and hard-limit tests;
+- callback isolation tests;
+- idempotency/reservation tests against the live adapter boundary using mocks/fakes only;
+- partial fill / cancel / re-query / uncertain-state tests;
+- restart/recovery tests;
+- NODEB-P0-001 integration test;
+- proof that no real order/cancel was invoked while producing the evidence.
+
+## Stop / Handoff — Audit Node B
+
+When implementation is complete:
+
+1. push normally to GitHub `main`;
+2. set canonical state to `AUDIT_READY_PRELIVE`;
+3. record exact implementation commit(s), test counts and capability call sites;
+4. authorize only `AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`;
+5. STOP.
+
+The first real order is prohibited until:
 
 ```text
-state = AUDIT_READY_PRELIVE
-authorized_next = AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER
+Audit Node B = PASS
+AND
+explicit user authorization = YES
 ```
-
-Push normally and STOP. First real order still requires independent Node B PASS + explicit user authorization.

@@ -344,15 +344,22 @@ class LiveBrokerAdapter(BrokerPort):
     def daily_cash_used(self) -> float:
         return self._ledger.used
 
-    def reconstruct_daily_exposure(self) -> None:
-        """Startup gate: rebuild today's exposure from managed broker orders.
+    def reconstruct_daily_exposure(self, *, intents: tuple = ()) -> None:
+        """Startup gate: rebuild today's exposure from durable intent dates.
 
         Sets ``exposure_ready=True`` on success; a failure leaves the adapter
-        refusing new orders (NODEB-I2-004).  Reconstruction includes terminal
-        same-day managed BUY orders (submitted notional is never removed).
+        refusing new orders (NODEB-I2-004).  Reconstruction joins durable
+        ``OrderIntent.created_at`` dates to authoritative broker orders by
+        broker id / client key / remark (NODEB-RR4-003); orders with no
+        assignable intent are counted conservatively and never dropped on raw
+        broker timestamp formatting.  ``intents`` defaults to the caller's
+        ExecutionStore intents when not supplied (kept optional for the
+        low-level unit path).
         """
         try:
-            self._ledger.reconstruct_from_orders(self.broker.query_orders())
+            self._ledger.reconstruct_from_orders(
+                self.broker.query_orders(), intents=intents,
+            )
         except DailyExposureError as exc:
             raise LiveBrokerError(str(exc)) from exc
         self.exposure_ready = True

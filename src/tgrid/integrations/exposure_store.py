@@ -23,9 +23,12 @@ from tgrid.risk.exceptions import PersistenceError
 class SqliteExposureStore:
     """Durable get/set exposure surface backed by SQLite.
 
-    ``conn`` must be an initialized ``sqlite3.Connection``; the table is
-    created idempotently on construction.  Values are validated as finite
-    non-negative numbers before any write (fail closed).
+    ``conn`` must be an initialized ``sqlite3.Connection`` whose schema went
+    through the TGrid migration lifecycle (Migration 6 creates
+    ``daily_exposure``).  NODEB-RR4-004: the table is NOT created ad hoc here —
+    a connection without the migrated table fails closed, so an arbitrary raw
+    or ``:memory:`` connection cannot masquerade as the production journal.
+    Values are validated as finite non-negative numbers before any write.
     """
 
     def __init__(self, conn: sqlite3.Connection) -> None:
@@ -33,15 +36,17 @@ class SqliteExposureStore:
             raise PersistenceError("exposure store requires a sqlite3.Connection")
         self._conn = conn
         try:
-            self._conn.execute(
-                "CREATE TABLE IF NOT EXISTS daily_exposure ("
-                " trade_date TEXT PRIMARY KEY,"
-                " buy_notional REAL NOT NULL"
-                ")"
-            )
-            self._conn.commit()
+            row = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table'"
+                " AND name = 'daily_exposure'"
+            ).fetchone()
         except sqlite3.Error as exc:
-            raise PersistenceError("exposure table creation failed") from exc
+            raise PersistenceError("exposure schema verification failed") from exc
+        if row is None:
+            raise PersistenceError(
+                "daily_exposure table missing; database was not migrated "
+                "(run initialize() / Migration 6 first)"
+            )
 
     def get(self, trade_date: str):
         if type(trade_date) is not str or trade_date == "":

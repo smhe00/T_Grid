@@ -105,19 +105,46 @@ class DailyExposureLedger:
         self._used += float(notional)
         self._persist()
 
-    def reconstruct_from_orders(self, orders: tuple, *, remark_prefix: str = "TG_") -> None:
-        """Conservatively rebuild today's exposure from managed broker orders.
+    def reconstruct_from_orders(
+        self,
+        orders: tuple,
+        *,
+        intents: tuple = (),
+        remark_prefix: str = "TG_",
+    ) -> None:
+        """Conservatively rebuild today's exposure (NODEB-RR4-003).
 
-        Managed = BUY orders tagged with ``remark_prefix`` that belong to the
-        current ``trade_date``.  The date is taken from the order's
-        **durable intent/journal timestamp** when present (``order_time`` in the
-        native QMT representation is NOT assumed — RR-004: do not key
-        safety-critical same-day reconstruction on a raw broker timestamp
-        format).  Orders carrying no durable date are counted conservatively.
-        **Terminal same-day orders are included** (I2-004): the "submitted BUY
-        notional is never removed" rule means a filled/canceled/rejected
-        same-day order still consumed the cap.
+        The safety-critical trade date is taken from DURABLE TGrid intent
+        dates (``OrderIntent.created_at`` / explicit trade-date field), joined
+        to authoritative broker orders by broker id / client key / remark —
+        NEVER from raw broker ``order_time`` formatting.  Managed BUY orders:
+
+        * with a local intent whose durable date is today  -> counted;
+        * with a local intent dated another day            -> skipped (correct);
+        * with NO local intent (cannot be safely assigned) -> counted
+          conservatively (never silently dropped on unknown timestamp format).
+
+        Terminal same-day orders are included (submitted notional is never
+        removed for the trade date).  The exposure becomes the maximum of the
+        persisted value and the sum; persisted pre-send exposure remains the
+        lower bound.
         """
+        if intents:
+            by_broker_id = {
+                getattr(i, "broker_order_id", None): i for i in intents
+                if getattr(i, "broker_order_id", None) is not None
+            }
+            by_key = {
+                getattr(i, "client_order_key", None): i for i in intents
+                if getattr(i, "client_order_key", None) is not None
+            }
+            by_remark = {
+                getattr(i, "order_remark", None): i for i in intents
+                if getattr(i, "order_remark", None) is not None
+            }
+        else:
+            by_broker_id = by_key = by_remark = {}
+
         total = 0.0
         for order in orders:
             remark = getattr(order, "order_remark", None)
@@ -125,19 +152,26 @@ class DailyExposureLedger:
                 continue
             if getattr(order, "side", None) != "BUY":
                 continue
-            order_time = getattr(order, "order_time", "")
-            if isinstance(order_time, str) and order_time and self._trade_date:
-                # Accept the ISO date prefix of the journal timestamp; raw
-                # QMT formats are not assumed, so an unrecognized value makes
-                # the order count conservatively rather than being dropped.
-                if not order_time.startswith(self._trade_date):
-                    continue
             qty = getattr(order, "qty", 0)
             price = getattr(order, "limit_price", 0.0)
             if type(qty) is not int or qty <= 0:
                 continue
             if type(price) not in (int, float) or isinstance(price, bool) or not math.isfinite(float(price)) or price <= 0:
                 continue
+            order_id = getattr(order, "order_id", None)
+            client_key = getattr(order, "client_order_key", None)
+            intent = (
+                by_broker_id.get(order_id)
+                or by_key.get(client_key)
+                or by_remark.get(remark)
+            )
+            if intent is not None:
+                created = getattr(intent, "created_at", "")
+                if isinstance(created, str) and created and self._trade_date:
+                    if not created.startswith(self._trade_date):
+                        continue  # durable intent date says a different day
+            # Counted conservatively: same-day intent, or no intent (cannot be
+            # safely assigned) — never dropped on unknown timestamp format.
             total += qty * float(price)
         self._used = max(self._used, total)
         self._persist()

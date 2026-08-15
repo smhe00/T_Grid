@@ -74,8 +74,11 @@ class LiveStack:
             self.event_queue.start()
         if session_date is not None:
             self.adapter.roll_day(session_date, session_date=session_date)
-        # 1) Startup exposure reconstruction (mandatory readiness gate).
-        self.adapter.reconstruct_daily_exposure()
+        # 1) Startup exposure reconstruction (mandatory readiness gate),
+        #    joined to durable OrderIntent dates (NODEB-RR4-003).
+        self.adapter.reconstruct_daily_exposure(
+            intents=self.engine.store.list_intents()
+        )
         # 2) MANDATORY startup order/intent recovery (RR-003): the recovery
         #    entry point is never None on the production path.
         results = reconcile_open_intents(self.engine.store, self.adapter)
@@ -96,25 +99,19 @@ class LiveStack:
         self.adapter.confirm_runtime(token)
 
     def reconcile_and_resume(self, *, token: str, session_date: str | None = None) -> None:
-        """Reconciliation-driven SAFE_MODE release (RR-003).
+        """Reconciliation-driven SAFE_MODE release (RR-003 / RR4-002).
 
-        Clears the engine SAFE_MODE only after a successful authoritative
-        broker/local reconciliation — never by flipping a naked boolean.
-        Re-runs mandatory recovery; on success, resumes new-order capability.
+        Releases SAFE_MODE only through the engine's reconciliation-driven
+        transition — never by flipping a naked boolean.  Re-runs mandatory
+        recovery; on success, resumes new-order capability.
         """
         if session_date is not None:
             self.adapter.roll_day(session_date, session_date=session_date)
-        self.adapter.reconstruct_daily_exposure()
+        self.adapter.reconstruct_daily_exposure(
+            intents=self.engine.store.list_intents()
+        )
         results = reconcile_open_intents(self.engine.store, self.adapter)
-        blocked = [
-            r for r in results
-            if r.outcome in ("UNMATCHED_BROKER_ORDER", "INTENT_ONLY")
-        ]
-        if blocked:
-            raise LiveBootstrapError(
-                "reconciliation still unresolved; SAFE_MODE retained"
-            )
-        self.engine.clear_safe_mode()
+        self.engine.clear_safe_mode_after_reconciliation(results)
         self.adapter.confirm_runtime(token)
 
 

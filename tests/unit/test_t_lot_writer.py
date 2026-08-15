@@ -13,6 +13,7 @@ import unittest
 from pathlib import Path
 
 from tgrid.persistence import (
+    MAX_SCHEMA_VERSION,
     TLotNotFoundError,
     TLotStatusConflictError,
     TLotTransitionResult,
@@ -273,7 +274,7 @@ class TestAtomicity(unittest.TestCase):
             self.assertEqual(lot, (PENDING_SELL, "t1"))
             self.assertEqual(_audit_count(conn), 1)
             self.assertEqual(
-                conn.execute("PRAGMA user_version").fetchone()[0], 5
+                conn.execute("PRAGMA user_version").fetchone()[0], MAX_SCHEMA_VERSION
             )
         finally:
             conn.close()

@@ -202,6 +202,26 @@ ORDER_RESERVATION_STATEMENTS: Tuple[str, ...] = (
     "END",
 )
 
+# Gate 5.5 durable daily exposure journal (NODEB-RR4-004): the hard daily
+# cash-exposure cap is persisted per trade_date through the normal schema
+# migration/verification lifecycle instead of an ad-hoc table.  One row per
+# trade_date carries the submitted-BUY notional; the row is upserted by the
+# exposure store and never deleted.
+DAILY_EXPOSURE_STATEMENTS: Tuple[str, ...] = (
+    "CREATE TABLE daily_exposure ("
+    " trade_date TEXT NOT NULL PRIMARY KEY"
+    " CHECK(length(trim(trade_date)) > 0),"
+    " buy_notional REAL NOT NULL"
+    " CHECK(typeof(buy_notional) IN ('integer', 'real')"
+    " AND buy_notional >= 0)"
+    ")",
+    "CREATE TRIGGER daily_exposure_no_delete "
+    "BEFORE DELETE ON daily_exposure "
+    "BEGIN "
+    " SELECT RAISE(ABORT, 'daily_exposure rows cannot be deleted'); "
+    "END",
+)
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -223,6 +243,9 @@ MIGRATIONS: Tuple[Migration, ...] = (
     ),
     Migration(
         version=5, name="order_reservations", statements=ORDER_RESERVATION_STATEMENTS
+    ),
+    Migration(
+        version=6, name="daily_exposure", statements=DAILY_EXPOSURE_STATEMENTS
     ),
 )
 

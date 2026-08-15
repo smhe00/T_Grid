@@ -9,9 +9,9 @@
 > NODEA-001..006 + NODEA-R3-001..004 + NODEA-R4-001..004）已完成并自证
 > （`SELF_CERTIFIED`），**独立审计 NODE A PASS**（GitHub main commit `4c1cc8c`）。
 > Gate 5.5 Live Broker Adapter（pre-live 能力）实现完成（`SELF_CERTIFIED`）。
-> **独立审计 NODE B 三轮复审（`0f8e0a19`、`cb7aeb6`、`3b0d53f`）均返回
-> CHANGES_REQUIRED；Iteration 2（NODEB-001..007）、Iteration 3（NODEB-I2-001..006）
-> 与 Iteration 4（NODEB-RR-001..006，对齐 reverse_repo pinned `c9ecc70`）
+> **独立审计 NODE B 四轮复审（`0f8e0a19`、`cb7aeb6`、`3b0d53f`、`66264f1`）
+> 均返回 CHANGES_REQUIRED；Iteration 2..5（NODEB-001..007、NODEB-I2-001..006、
+> NODEB-RR-001..006、NODEB-RR4-001..005，参考基线 reverse_repo `c9ecc70`）
 > 修复已完成（SELF_CERTIFIED）**，状态 `AUDIT_READY_PRELIVE`，等待 NODE B
 > 复审后才允许首次真实订单。证据见 `work/gates/GATE_5_5/CLAUDE_REPORT.md`。
 
@@ -23,14 +23,14 @@
 | G3 | 策略算法离线模拟 | **PROVISIONAL / SELF_CERTIFIED** | 保留现有实现与测试；等待周期性独立抽审 |
 | G4 | Execution Dry Run：OrderIntent/Reservation、SimBroker、Executor、恢复 | **PROVISIONAL / SELF_CERTIFIED** | 架构方向保留；AUD-R1-007 exact-type hardening 已在本次修复关闭 |
 | G5 | Shadow 模式：REAL market/broker query + WOULD orders | **PASS**（NODE A 独立审计） | 独立审计 PASS commit `4c1cc8c`；证据 `work/gates/GATE_5/` |
-| G5.5 | Real Broker Adapter / pre-live capability | **IMPLEMENTED / AUDIT_READY_PRELIVE (IT4)** | NODE B 复审 `3b0d53f` CHANGES_REQUIRED → NODEB-RR-001..006 已修复（SELF_CERTIFIED，对齐 reverse_repo `c9ecc70`）；证据 `work/gates/GATE_5_5/CLAUDE_REPORT.md`；NODE B 复审 PASS 前禁止首次真实订单 |
+| G5.5 | Real Broker Adapter / pre-live capability | **IMPLEMENTED / AUDIT_READY_PRELIVE (IT5)** | NODE B 复审 `66264f1` CHANGES_REQUIRED → NODEB-RR4-001..005 已修复（SELF_CERTIFIED）；证据 `work/gates/GATE_5_5/CLAUDE_REPORT.md`；NODE B 复审 PASS 前禁止首次真实订单 |
 | G6 | 极小真实资金验证 | **BLOCKED** | Audit Node B 独立 PASS + 用户显式授权前禁止开始 |
 | G7 | V1 正式运行 | **BLOCKED** | Gate 6 完成并独立通过前禁止开始 |
 
 ## 当前测试证据（SELF_CERTIFIED）
 
 ```text
-python -m unittest discover -s tests -p "test_*.py"   # 943 tests OK
+python -m unittest discover -s tests -p "test_*.py"   # 950 tests OK
 python -m compileall -q src tests                      # exit 0
 src AST 扫描（assert / xtquant import / 桥外 order_stock/cancel_order_stock）: 0 命中
 capability_scan: 真实 order/cancel 调用点仅限 xtquant_bridge.py（桥内 2、桥外 0）
@@ -67,12 +67,12 @@ Action HALT / INV-016 人工变化检测 / INV-017 数据新鲜度。
 ## 下一独立审计节点
 
 1. **AUDIT NODE A**：**已 PASS**（GitHub main commit `4c1cc8c`，审计对象 `df1cbb5`，接受实现 `5a2e2fd`）。
-2. **AUDIT NODE B**：Gate 5.5 LiveBrokerAdapter 实现完成；NODE B 三轮独立复审
+2. **AUDIT NODE B**：Gate 5.5 LiveBrokerAdapter 实现完成；NODE B 四轮独立复审
    （`0f8e0a19` NODEB-001..007、`cb7aeb6` NODEB-I2-001..006、`3b0d53f`
-   NODEB-RR-001..006，参考基线 reverse_repo pinned `c9ecc70`）均返回
-   `CHANGES_REQUIRED`，修复已完成（`AUDIT_READY_PRELIVE`，`SELF_CERTIFIED`）。
-   在首次真实订单调用前必须独立复审 PASS，并由用户显式授权。
-   授权令牌 `AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`。
+   NODEB-RR-001..006、`66264f1` NODEB-RR4-001..005；参考基线 reverse_repo
+   pinned `c9ecc70`）均返回 `CHANGES_REQUIRED`，修复已完成
+   （`AUDIT_READY_PRELIVE`，`SELF_CERTIFIED`）。在首次真实订单调用前必须
+   独立复审 PASS，并由用户显式授权。授权令牌 `AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`。
 
 详细执行清单以 `work/control/CURRENT_TASK.md` 和
 `work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md` 为准。
