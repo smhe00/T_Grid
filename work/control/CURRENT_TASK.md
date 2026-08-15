@@ -58,11 +58,22 @@ report:     work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md
   (`LK_UNLCK`, line 65): after one complete owner cycle, any subsequent owner
   (same or separate process) cannot `release()` — `PermissionError` at
   `msvcrt.locking(..., LK_UNLCK, 1)`. Deterministic (12/12), cross-process
-  reproduced. Breaks 3 committed tests. The architect may authorize a fix:
-  remove the pre-lock write/read workaround or avoid truncate while the lock
-  is held, then re-run the tests on Windows.
+  reproduced. Breaks 3 committed tests.
 - **P2 — committed-test gaps**: cancel-rejected + re-query; restart from
   cancel-pending; fill-during-cancel only partially covered.
+
+## Fix addendum (architect-authorized, 2026-08-16)
+
+The architect authorized fixing the library. **P1 FIXED** in
+`qmt-execution-core` 0.2.1 (`2e222e1`, fast-forward `a1500e7..2e222e1`):
+`_lock` now seeks to byte 0 and performs a pure `msvcrt.locking`/`flock`
+(mirrors reverse_repo/TGrid), removing the "0"-byte write workaround that
+poisoned subsequent `LK_UNLCK`. Verified: full suite **61 passed** (the 3
+previously-failing tests pass), compileall 0, verifier 50/208/0/0/0 (spec
+unchanged, source `a2258423...`), same-process + cross-process repros OK,
+wheel 0.2.1 clean-env verify OK. **P2 gaps closed**: added
+`test_cancel_rejected_requires_requery` + `test_restart_recovers_cancel_pending`
+(V5 matrix 23/24). Report updated with the fix addendum.
 
 ## Confirmations
 

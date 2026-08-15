@@ -226,3 +226,34 @@ runtime.close(): gate revoked, queue stopped, trader stopped, mutex released
   no TGrid execution code was modified).
 - **qmt-execution-core was not modified** (only read; `git status` clean).
 - Verifier: 0 invariant violations; protected source fail-closed verified.
+
+## Fix addendum (2026-08-16, architect-authorized)
+
+Per the architect instruction, the P1 Windows mutex defect was FIXED in
+`qmt-execution-core`:
+
+```text
+fixed commit: 2e222e16731bd8ce232ffba78c697245472c2094 (main, fast-forward a1500e7..2e222e1)
+version:      0.2.0 -> 0.2.1
+```
+
+- **Root cause** (refined during the fix): `ExecutionMutex._lock` must
+  `seek(0)` before the byte-range lock (after `open("a+b")` the position is
+  not 0 once the file has content), AND the pre-lock "write a 0 byte"
+  Windows workaround — combined with the post-lock `truncate()` — poisoned a
+  SUBSEQUENT owner's `LK_UNLCK` (PermissionError), same-process and
+  cross-process. Fix mirrors the mature reverse_repo/TGrid `ExecutionMutex`:
+  `seek(0)` + pure `msvcrt.locking`/`flock`, no read/"0"-write.
+- **Verification**:
+  - full suite **61 passed** (was 56/59; the 3 previously-failing tests pass);
+  - `compileall` 0; verifier 50/208/0/0/0, `transition_spec_sha256` unchanged
+    `62e04e05...`, `execution_source_sha256` now `a2258423...`;
+  - same-process repro (contention, winner release, loser retry, 10 cycles) OK;
+  - cross-process probe (3 child processes acquire+release after a parent
+    cycle) OK;
+  - wheel `qmt_execution_core-0.2.1-py3-none-any.whl` installed in a clean
+    Python 3.12 venv, `verify` outside the checkout OK with identical hashes.
+- **P2 gaps closed**: added committed tests
+  `test_cancel_rejected_requires_requery` and
+  `test_restart_recovers_cancel_pending` (V5 matrix now 23/24; only
+  fill-during-cancel remains partial by design).
