@@ -4,25 +4,25 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 26
-handoff_id: "NODEB-PASS-PRELIVE-GATE6-SIM-20260815-026"
+handoff_seq: 27
+handoff_id: "REVERSE_REPO-STATEMACHINE-PORT-20260815-027"
 authorized_next: ["GATE6_SIMULATION_VERIFICATION"]
 design_version: "1.1"
 gate: 5.5
 task_id: "GATE6-SIMULATION-VERIFICATION"
 state: "AUDIT_READY_PRELIVE"
 owner: "dsh"
-iteration: 7
+iteration: 8
 last_actor: "dsh"
-last_update: "2026-08-15T22:06:00+08:00"
+last_update: "2026-08-15T22:26:38+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5_5/NODE_B_FINAL_PASS_PRELIVE_20260815.md"
-git_base_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
-implementation_commit: "a967d8ae49282e970e94ed52f746288d0d8a52c6"
-handoff_parent_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
-handoff_metadata_parent: "62e87169b4d65b2fcdfc96bf44d65752e9e27c1d"
+git_base_commit: "1972e1f89a0c621f13387f3dfe9827aecbfc37b2"
+implementation_commit: "1972e1f89a0c621f13387f3dfe9827aecbfc37b2"
+handoff_parent_commit: "574b5e321f453df5cd76d791dac8f4de8447a66e"
+handoff_metadata_parent: "574b5e321f453df5cd76d791dac8f4de8447a66e"
 reference_repository: "https://github.com/smhe00/reverse_repo"
 reference_commit: "c9ecc701d9b1c47d6a8d03539b482368741204a3"
 live_trading_allowed: false
@@ -30,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Node B FINAL PASS_PRELIVE (e252847) accepted on 2026-08-15; Gate 5.5 pre-live capability independently accepted. User explicitly authorized Gate 6 to run on the QMT SIMULATION trading client (already started). Gate 6 simulation verification executed 2026-08-15T21:29 (scripts/gate6_sim_live.py): production live-session(simulation) built (connect/discover/subscribe OK, bridge constants SECURITY_ACCOUNT=2/ACCOUNT_STATUS_OK=0), mandatory recovery + runtime confirmation passed, ONE tiny BUY (510300.SH qty=100 @4.726, caps 200qty/5000cash) sent via real order_stock (native int broker id 1098907651), polled to REJECTED (sim client rejected outside trading hours on Saturday), broker reconcile REJECTED/0 filled, exposure 472.6 booked pre-send. Negative-path verification executed 2026-08-15T21:53 (scripts/gate6_sim_negative.py) on the real sim session: allowlist / qty cap / cash cap / kill switch (cancel still available) / queue-stopped health all fail-closed. 2026-08-15T22:03 runner gained reverse_repo preflight (trading-day via get_trading_dates + execution window 09:30-11:28/13:00-15:28); full order chain verified 2026-08-15T22:05 (engine->adapter->bridge->sim order_stock returned SUBMITTED, native int broker id 1098907653); preflight split evidence 08-14 (trading-day true / window false). Evidence work/reports/gate6-sim/*.json (sanitized). FULL FILL and CANCEL paths still require a trading-hours rerun (next trading day 09:30+). live_trading_allowed=false; Gate 6/7 (real money) remain BLOCKED pending explicit user authorization."
+notes: "Node B FINAL PASS_PRELIVE (e252847) accepted on 2026-08-15; Gate 5.5 pre-live capability independently accepted. User explicitly authorized Gate 6 to run on the QMT SIMULATION trading client (already started). Gate 6 simulation verification executed 2026-08-15T21:29 (scripts/gate6_sim_live.py): production live-session(simulation) built (connect/discover/subscribe OK, bridge constants SECURITY_ACCOUNT=2/ACCOUNT_STATUS_OK=0), mandatory recovery + runtime confirmation passed, ONE tiny BUY (510300.SH qty=100 @4.726, caps 200qty/5000cash) sent via real order_stock (native int broker id 1098907651), polled to REJECTED (sim client rejected outside trading hours on Saturday), broker reconcile REJECTED/0 filled, exposure 472.6 booked pre-send. Negative-path verification executed 2026-08-15T21:53 (scripts/gate6_sim_negative.py) on the real sim session: allowlist / qty cap / cash cap / kill switch (cancel still available) / queue-stopped health all fail-closed. 2026-08-15T22:03 runner gained reverse_repo preflight (trading-day via get_trading_dates + execution window 09:30-11:28/13:00-15:28); full order chain verified 2026-08-15T22:05 (engine->adapter->bridge->sim order_stock returned SUBMITTED, native int broker id 1098907653); preflight split evidence 08-14 (trading-day true / window false). Evidence work/reports/gate6-sim/*.json (sanitized). FULL FILL and CANCEL paths still require a trading-hours rerun (next trading day 09:30+). ITERATION 8 (2026-08-15T22:26): reverse_repo full state machine + formal verifier ported (user-authorized 2026-08-15): TGrid single machine 14 states + SafetyFacts(9) + advance() + verify_state_machines() = 39 reachable abstract states/115 transitions/0 unreachable/0 violations; ExecutionJournal schema v2 (strategy+trade_date triple, temp+fsync+os.replace, history<=500) bound to transition_spec_sha256 7d9959dd... + execution_source_sha256 c0d84be8... (real content binding of 6 source files; commit None because run tree has no .git); engine (machine+journal pair, send/poll/timeout drive events) + LiveStack integration (journal_path opt-in; activate drives BEGIN->PREFLIGHT_OK->RECOVERY_CLEAR/AMBIGUOUS and fail-closed journal binding check: bound-hash mismatch -> LiveBootstrapError, explicit bind_machine_verification() is the only recovery). Regression 980 tests OK (was 957); compileall 0. Honest: state-machine port is a NEW capability (SELF_CERTIFIED, not yet Node B reviewed) and does not supersede PASS_PRELIVE; recommend Node B review before first real order. live_trading_allowed=false; Gate 6/7 (real money) remain BLOCKED pending explicit user authorization."
