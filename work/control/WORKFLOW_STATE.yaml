@@ -1,32 +1,30 @@
 project: TGrid
 collaboration_transport: "single-agent"
-transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
-poll_interval_seconds: 0
-handoff_seq: 23
-handoff_id: "NODEB-RR4-REMEDIATION-DONE-20260815-023"
-authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
+handoff_seq: 24
+handoff_id: "NODEB-RR5-FINAL-PRELIVE-FIX-20260815-024"
+authorized_next:
+  - "NODEB-PRELIVE-ITERATION6-FIX"
 design_version: "1.1"
 gate: 5.5
-task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
-state: "AUDIT_READY_PRELIVE"
+task_id: "NODEB-PRELIVE-ITERATION6-FIX"
+state: "CHANGES_REQUIRED"
 owner: "dsh"
-iteration: 5
-last_actor: "dsh"
-last_update: "2026-08-15T15:40:00+08:00"
+iteration: 6
+last_actor: "independent_auditor"
+last_update: "2026-08-15T17:43:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
-protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER4_REFERENCE_20260815.md"
-git_base_commit: "66264f1efcaeff41d1786cc2b26193f807a92303"
-git_head_commit: "4c894c14c05ad9c742b9e6002b1ca38b1f863daf"
-implementation_commit: "4c894c14c05ad9c742b9e6002b1ca38b1f863daf"
+audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER5_20260815.md"
+audit_base_commit: "a3909505895afb8c4b7f5b7b170dbcd22ce628c3"
+reviewed_implementation_commit: "4c894c14c05ad9c742b9e6002b1ca38b1f863daf"
+previous_independent_audit_commit: "66264f1efcaeff41d1786cc2b26193f807a92303"
 reference_repository: "https://github.com/smhe00/reverse_repo"
 reference_commit: "c9ecc701d9b1c47d6a8d03539b482368741204a3"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
+next_independent_audit: "AUDIT_NODE_B_AFTER_ITERATION6_FIX"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Node B Iteration-4 audit 66264f1 = CHANGES_REQUIRED (NODEB-RR4-001..005). Iteration 5 remediation complete (SELF_CERTIFIED): RR4-001 build_live_session is now a true production path consuming validated RootConfig (global.live_trading default OFF) + separate QMT binding, reference lifecycle order construct->start->connect(exact int)->discover->unique account->subscribe(exact int), positive+negative fake lifecycle tests; RR4-002 SAFE_MODE release requires clear_safe_mode_after_reconciliation (no naked public clear on production path) and broker disconnect recovery is authoritative reconnect (verified connect + account status + queue RUNNING, disconnect latch cannot be cleared by naked health flip); RR4-003 exposure reconstruction joins durable OrderIntent.created_at to broker orders by id/key/remark, never raw order_time formatting, unknown-day orders counted conservatively, FI with native-int order_time; RR4-004 daily_exposure now a real Migration 6 (schema lifecycle), SqliteExposureStore requires migrated table and rejects raw/:memory: conns, production db opened from validated config; RR4-005 git_head_commit now records the pushed metadata head separately from implementation_commit. 950 tests OK; compileall 0; capability scan PASS. No real order/cancel invoked. State AUDIT_READY_PRELIVE, awaiting independent Audit Node B re-review; Gate 6/7 BLOCKED; live_trading_allowed=false."
+notes: "Iteration 5 independent Node B review = CHANGES_REQUIRED. Frozen/accepted: strict queries, BrokerPort/live chain, native int order-id, Reservation+Idempotency, UNKNOWN/duplicate handling, EventQueue callback isolation/lifecycle health, kill switch, finite-number hardening, Core guard, durable OrderIntent-date exposure reconstruction, Migration 6 and persistent production DB path. Remaining only RR5-001..004: true environment=live QMT binding parser/path; eliminate public/fabricated SAFE_MODE clear bypass; disconnect recovery must verify bound OK securities account and complete reconciliation before releasing execution health; exact non-self-referential metadata fields. Gate 6/7 remain blocked; no real order/cancel authorized."
