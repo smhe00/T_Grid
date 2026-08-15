@@ -1,4 +1,4 @@
-"""NODEB-002: end-to-end pre-live chain ExecutionEngine -> LiveBrokerAdapter -> FakeBridge.
+"""NODEB-002 / I2-002: end-to-end pre-live chain ExecutionEngine -> LiveBrokerAdapter -> FakeBridge.
 
 The full execution port chain is exercised with a FAKE concrete XtQuant trader
 backend (never a real client): durable OrderIntent+Reservation before broker
@@ -6,7 +6,8 @@ send, idempotent client_order_key, crash-before-send (no blind resend),
 crash-after-accept (startup reconciliation / SAFE_MODE), partial fills
 preserving remaining reservation, timeout == cancel -> re-query -> reconcile,
 unmatched tagged broker order -> SAFE_MODE, and broker query failure/ambiguous
-status -> fail closed.
+status -> fail closed.  The fake trader mirrors the native INT order-id
+contract (I2-001).
 """
 
 import os
@@ -16,10 +17,9 @@ import unittest
 from tgrid.execution.executor import (
     ExecutionEngine,
     OrderReconciliationError,
-    OrderSendFailedError,
     OrderStatus,
 )
-from tgrid.execution.models import BUY, SELL
+from tgrid.execution.models import BUY
 from tgrid.execution.recovery import reconcile_open_intents
 from tgrid.execution.store import ExecutionStore
 from tgrid.integrations.live_broker_adapter import (
@@ -45,8 +45,8 @@ class _FakeAccount:
 
 class _FakeOrder:
     def __init__(self, order_id, order_type, order_volume, price, order_status,
-                 traded_volume=0, order_remark=None):
-        self.order_id = order_id
+                 traded_volume=0, order_remark=None, order_time=""):
+        self.order_id = order_id  # native int
         self.stock_code = "510300.SH"
         self.order_type = order_type
         self.order_volume = order_volume
@@ -54,21 +54,33 @@ class _FakeOrder:
         self.order_status = order_status
         self.traded_volume = traded_volume
         self.order_remark = order_remark
+        self.order_time = order_time
         self.strategy_name = "TGRID"
 
 
 class _FakeTrade:
     def __init__(self, traded_id, order_id, traded_volume, traded_price, traded_time):
         self.traded_id = traded_id
-        self.order_id = order_id
+        self.order_id = order_id  # native int
         self.stock_code = "510300.SH"
         self.traded_volume = traded_volume
         self.traded_price = traded_price
         self.traded_time = traded_time
 
 
+class _DictStore:
+    def __init__(self):
+        self._data = {}
+
+    def get(self, trade_date):
+        return self._data.get(trade_date)
+
+    def set(self, trade_date, notional):
+        self._data[trade_date] = notional
+
+
 class _FakeXtQuantTrader:
-    """Mirrors XtQuantTrader for the chain; records every real call shape."""
+    """Mirrors XtQuantTrader for the chain; native ids are INTs (I2-001)."""
 
     def __init__(self):
         self.orders = {}
@@ -84,13 +96,12 @@ class _FakeXtQuantTrader:
                     price_type, price, strategy_name="", order_remark=""):
         self.calls.append(("order_stock", stock_code, order_type, order_volume,
                            price_type, price, strategy_name, order_remark))
-        if self.fail_queries:
-            raise RuntimeError("simulated network failure")
         self._seq += 1
-        order_id = f"XT{self._seq:08d}"
+        order_id = 5000 + self._seq  # native int
         self.orders[order_id] = _FakeOrder(
             order_id=order_id, order_type=order_type, order_volume=order_volume,
             price=price, order_status=50, order_remark=order_remark or None,
+            order_time="2026-08-15 09:35:00",
         )
         return order_id
 
@@ -129,9 +140,11 @@ def _chain(trader=None, **pol):
     bridge = XtQuantBrokerBridge(trader, _FakeAccount(), strategy_name="TGRID")
     adapter = LiveBrokerAdapter(
         broker=bridge, policy=_policy(**pol),
-        trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+        trade_date="2026-08-15", exposure_store=_DictStore(),
+        runtime_confirmation_token="startup-token",
     )
     adapter.apply_config_enable(True)
+    adapter.reconstruct_daily_exposure()
     adapter.confirm_runtime("startup-token")
     conn = initialize(_temp_db_path())
     store = ExecutionStore(conn)
@@ -157,6 +170,8 @@ class TestChainOrderFlow(unittest.TestCase):
             self.assertEqual(len(trader.calls), 1)
             self.assertEqual(trader.calls[0][0], "order_stock")
             self.assertEqual(trader.calls[0][7], "TG_510300SH_B001")
+            # I2-001: the native order id is an int, serialized to str by the bridge.
+            self.assertEqual(intent.broker_order_id, "5001")
         finally:
             conn.close()
 
@@ -187,11 +202,10 @@ class TestChainOrderFlow(unittest.TestCase):
                 limit_price=4.6, order_remark="TG_510300SH_B001", now="t0",
                 expected_available_cash=100000.0, reserved_cash=460.0,
             )
-            order_id = result.broker_order_id
-            order = trader.orders[order_id]
+            order = trader.orders[int(result.broker_order_id)]
             order.order_status = 55  # 部成
             order.traded_volume = 60
-            trader.trades.append(_FakeTrade("T1", order_id, 60, 4.6, "t1"))
+            trader.trades.append(_FakeTrade("T1", int(result.broker_order_id), 60, 4.6, "t1"))
             r1 = engine.poll_order("K1", now="t1")
             self.assertEqual(r1.status, OrderStatus.PARTIAL)
             self.assertEqual(r1.filled_qty, 60)
@@ -213,9 +227,7 @@ class TestChainOrderFlow(unittest.TestCase):
                 limit_price=4.6, order_remark="TG_510300SH_B001", now="t0",
                 expected_available_cash=100000.0, reserved_cash=460.0,
             )
-            # A partial fill happened before the timeout: cancel must NOT
-            # assume zero fill; the re-query surfaces it.
-            order = trader.orders[result.broker_order_id]
+            order = trader.orders[int(result.broker_order_id)]
             order.traded_volume = 40
             order.order_status = 54  # 已撤 (with 40 filled before cancel)
             final = engine.timeout_order("K1", now="t1")
@@ -223,6 +235,10 @@ class TestChainOrderFlow(unittest.TestCase):
             self.assertEqual(final.filled_qty, 40)
             self.assertEqual(store.reserved_cash("510300.SH"), 0.0)
             self.assertIn("cancel_order_stock", [c[0] for c in trader.calls])
+            # I2-001: the cancel boundary received the native INT id.
+            cancel_calls = [c for c in trader.calls if c[0] == "cancel_order_stock"]
+            self.assertIs(type(cancel_calls[0][1]), int)
+            self.assertEqual(cancel_calls[0][1], int(result.broker_order_id))
         finally:
             conn.close()
 
@@ -234,7 +250,7 @@ class TestChainOrderFlow(unittest.TestCase):
                 limit_price=4.6, order_remark="TG_510300SH_B001", now="t0",
                 expected_available_cash=100000.0, reserved_cash=460.0,
             )
-            trader.orders.pop(result.broker_order_id)  # cancel will fail
+            trader.orders.pop(int(result.broker_order_id))  # cancel will fail
             from tgrid.execution.executor import CancelFailedError
 
             with self.assertRaises(CancelFailedError):
@@ -249,8 +265,6 @@ class TestChainRecovery(unittest.TestCase):
     def test_crash_before_send_no_blind_resend(self):
         conn, store, trader, engine = _chain()
         try:
-            # Crash after local intent+reservation but BEFORE broker send:
-            # the intent has no broker_order_id and the broker has no order.
             store.create_intent_with_reservation(
                 client_order_key="K1", symbol="510300.SH", side=BUY, qty=100,
                 limit_price=4.6, strategy_name="TGRID",
@@ -259,7 +273,6 @@ class TestChainRecovery(unittest.TestCase):
             )
             results = reconcile_open_intents(store, engine._broker)
             self.assertEqual(results[0].outcome, "INTENT_ONLY")
-            # No blind resend: the trader saw no order_stock call.
             send_calls = [c for c in trader.calls if c[0] == "order_stock"]
             self.assertEqual(send_calls, [])
         finally:
@@ -268,8 +281,6 @@ class TestChainRecovery(unittest.TestCase):
     def test_crash_after_broker_accept_recovery_matches(self):
         conn, store, trader, engine = _chain()
         try:
-            # Local intent written first (NEW), then broker accepts — process
-            # dies before update_intent_status(SUBMITTED).
             store.create_intent_with_reservation(
                 client_order_key="K1", symbol="510300.SH", side=BUY, qty=100,
                 limit_price=4.6, strategy_name="TGRID",
@@ -282,11 +293,10 @@ class TestChainRecovery(unittest.TestCase):
             )
             results = reconcile_open_intents(store, engine._broker)
             self.assertEqual(results[0].outcome, "MATCHED")
-            self.assertEqual(results[0].matched_broker_order_id, order_id)
-            # Recover: record the broker id, then poll to the true state.
+            self.assertEqual(results[0].matched_broker_order_id, str(order_id))
             store.update_intent_status(
                 "K1", status=OrderStatus.SUBMITTED, updated_at="t1",
-                broker_order_id=order_id,
+                broker_order_id=str(order_id),
             )
             trader.orders[order_id].order_status = 56
             trader.orders[order_id].traded_volume = 100
@@ -298,8 +308,6 @@ class TestChainRecovery(unittest.TestCase):
     def test_unmatched_tagged_broker_order_flags_safe_mode(self):
         conn, store, trader, engine = _chain()
         try:
-            # Broker order placed outside the executor (e.g. crash path) with a
-            # TGRID remark but no local intent: duplicate-order risk.
             trader.order_stock(
                 _FakeAccount(), "510300.SH", STOCK_BUY, 100, 11, 4.6,
                 "TGRID", "TG_510300SH_B001",
@@ -307,6 +315,48 @@ class TestChainRecovery(unittest.TestCase):
             results = reconcile_open_intents(store, engine._broker)
             outcomes = [r.outcome for r in results]
             self.assertIn("UNMATCHED_BROKER_ORDER", outcomes)
+        finally:
+            conn.close()
+
+    def test_recovery_rejects_unknown_broker_status(self):
+        conn, store, trader, engine = _chain()
+        try:
+            store.create_intent_with_reservation(
+                client_order_key="K1", symbol="510300.SH", side=BUY, qty=100,
+                limit_price=4.6, strategy_name="TGRID",
+                order_remark="TG_510300SH_B001", created_at="t0",
+                cash_amount=460.0,
+            )
+            order_id = trader.order_stock(
+                _FakeAccount(), "510300.SH", STOCK_BUY, 100, 11, 4.6,
+                "TGRID", "TG_510300SH_B001",
+            )
+            trader.orders[order_id].order_status = 255  # 未知
+            with self.assertRaises(OrderReconciliationError):
+                reconcile_open_intents(store, engine._broker)
+        finally:
+            conn.close()
+
+    def test_recovery_rejects_multiple_remark_matches(self):
+        conn, store, trader, engine = _chain()
+        try:
+            store.create_intent_with_reservation(
+                client_order_key="K1", symbol="510300.SH", side=BUY, qty=100,
+                limit_price=4.6, strategy_name="TGRID",
+                order_remark="TG_510300SH_B001", created_at="t0",
+                cash_amount=460.0,
+            )
+            # Two broker orders share the same remark, neither has the key.
+            trader.order_stock(
+                _FakeAccount(), "510300.SH", STOCK_BUY, 100, 11, 4.6,
+                "TGRID", "TG_510300SH_B001",
+            )
+            trader.order_stock(
+                _FakeAccount(), "510300.SH", STOCK_BUY, 100, 11, 4.6,
+                "TGRID", "TG_510300SH_B001",
+            )
+            with self.assertRaises(OrderReconciliationError):
+                reconcile_open_intents(store, engine._broker)
         finally:
             conn.close()
 
@@ -323,12 +373,11 @@ class TestChainFailClosed(unittest.TestCase):
             trader.fail_queries = True
             with self.assertRaises(OrderReconciliationError):
                 engine.poll_order("K1", now="t1")
-            # Reservation is still held: state is unresolved, not assumed.
             self.assertEqual(store.reserved_cash("510300.SH"), 460.0)
         finally:
             conn.close()
 
-    def test_ambiguous_status_stays_unresolved(self):
+    def test_unknown_status_raises_and_blocks_new_orders(self):
         conn, store, trader, engine = _chain()
         try:
             result = engine.send_buy(
@@ -336,20 +385,31 @@ class TestChainFailClosed(unittest.TestCase):
                 limit_price=4.6, order_remark="TG_510300SH_B001", now="t0",
                 expected_available_cash=100000.0, reserved_cash=460.0,
             )
-            trader.orders[result.broker_order_id].order_status = 255  # 未知
-            r = engine.poll_order("K1", now="t1")
-            # UNKNOWN is not treated as filled/canceled: intent stays pending,
-            # reservation is never released on a guess.
-            self.assertEqual(r.status, OrderStatus.SUBMITTED)
+            trader.orders[int(result.broker_order_id)].order_status = 255  # 未知
+            # I2-002: UNKNOWN must fail closed, not silently downgrade.
+            with self.assertRaises(OrderReconciliationError):
+                engine.poll_order("K1", now="t1")
             self.assertEqual(store.reserved_cash("510300.SH"), 460.0)
+            # SAFE_MODE: new execution is blocked until reconciliation resolves.
+            self.assertTrue(engine.safe_mode)
+            with self.assertRaises(Exception):
+                engine.send_buy(
+                    client_order_key="K2", symbol="510300.SH", qty=100,
+                    limit_price=4.6, order_remark="TG_510300SH_B002", now="t2",
+                    expected_available_cash=100000.0, reserved_cash=460.0,
+                )
+            # Explicit resolution resumes execution.
+            engine.clear_safe_mode()
+            trader.orders[int(result.broker_order_id)].order_status = 56
+            trader.orders[int(result.broker_order_id)].traded_volume = 100
+            final = engine.poll_order("K1", now="t3")
+            self.assertEqual(final.status, OrderStatus.FILLED)
         finally:
             conn.close()
 
     def test_adapter_safety_boundary_rejects_before_engine_send(self):
         conn, store, trader, engine = _chain(max_cash_per_day=100.0)
         try:
-            # 100 * 4.6 = 460 > daily cap 100: the adapter refuses before any
-            # broker call, surfaced through the engine's send path.
             with self.assertRaises(Exception):
                 engine.send_buy(
                     client_order_key="K1", symbol="510300.SH", qty=100,

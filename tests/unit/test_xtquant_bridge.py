@@ -1,4 +1,4 @@
-"""XtQuantBrokerBridge tests (NODEB-001 requirement 4, NODEB-004).
+"""XtQuantBrokerBridge tests (NODEB-001 #4, NODEB-004, I2-001, I2-003).
 
 Exercises the concrete bridge with a FAKE trader object that mirrors the
 XtQuantTrader surface (``order_stock`` / ``cancel_order_stock`` /
@@ -8,10 +8,14 @@ real XtQuant client is constructed or invoked.
 Covers:
 * concrete XtQuant argument mapping (account token, side constants 23/24,
   price type 11, volume, price, strategy name, remark);
+* native **int** order-id contract (I2-001): the fake trader uses positive int
+  ids exactly like the official XtQuant interface, the bridge converts once at
+  its boundary, and the actual cancel argument is asserted to be an int;
 * order/trade/status mapping into TGrid-owned typed DTOs (NODEB-001 #4);
 * fail-closed reads (unknown order id, query failure);
 * callback handler: concrete XtQuant payloads -> immutable events -> ONLY
-  ``event_sink.put(event)`` (NODEB-004); handler holds no engine/store refs.
+  enqueue/put (NODEB-004 / I2-003), including disconnect/account-status/
+  order-error/cancel-error events, and health flips on enqueue failure.
 """
 
 import unittest
@@ -26,6 +30,10 @@ from tgrid.integrations.xtquant_bridge import (
     STOCK_BUY,
     STOCK_SELL,
     XT_STATUS_TO_TGRID,
+    BrokerAccountStatusEvent,
+    BrokerCancelErrorEvent,
+    BrokerDisconnectEvent,
+    BrokerOrderErrorEvent,
     XtQuantBrokerBridge,
     XtQuantCallbackHandler,
 )
@@ -39,7 +47,7 @@ class _FakeAccount:
 class _FakeTrade:
     def __init__(self, traded_id, order_id, traded_volume, traded_price, traded_time):
         self.traded_id = traded_id
-        self.order_id = order_id
+        self.order_id = order_id  # native int
         self.stock_code = "510300.SH"
         self.traded_volume = traded_volume
         self.traded_price = traded_price
@@ -48,8 +56,8 @@ class _FakeTrade:
 
 class _FakeOrder:
     def __init__(self, order_id, order_type, order_volume, price, order_status,
-                 traded_volume=0, order_remark=None):
-        self.order_id = order_id
+                 traded_volume=0, order_remark=None, order_time=""):
+        self.order_id = order_id  # native int
         self.stock_code = "510300.SH"
         self.order_type = order_type
         self.order_volume = order_volume
@@ -57,11 +65,12 @@ class _FakeOrder:
         self.order_status = order_status
         self.traded_volume = traded_volume
         self.order_remark = order_remark
+        self.order_time = order_time
         self.strategy_name = "TGRID"
 
 
 class _FakeTrader:
-    """Mirrors the XtQuantTrader call surface used by the bridge."""
+    """Mirrors the XtQuantTrader call surface; native order ids are INTs."""
 
     def __init__(self):
         self.orders = {}
@@ -83,11 +92,12 @@ class _FakeTrader:
             ))
         )
         self._seq += 1
-        order_id = f"XT{self._seq:08d}"
+        order_id = 1000 + self._seq  # native int, mirrors official contract
         self.orders[order_id] = _FakeOrder(
             order_id=order_id, order_type=order_type, order_volume=order_volume,
             price=price, order_status=50,
             order_remark=order_remark or None,
+            order_time="2026-08-15 09:35:00",
         )
         return order_id
 
@@ -140,7 +150,7 @@ class TestArgumentMapping(unittest.TestCase):
         self.assertEqual(args["price"], 4.6)
         self.assertEqual(args["strategy_name"], "TGRID")
         self.assertEqual(args["order_remark"], "TG_510300SH_B001")
-        self.assertTrue(order_id.startswith("XT"))
+        self.assertEqual(order_id, "1001")  # TGrid string serialization of int
 
     def test_sell_maps_to_stock_sell(self):
         trader, bridge = self._bridge()
@@ -154,14 +164,14 @@ class TestArgumentMapping(unittest.TestCase):
         trader, bridge = self._bridge()
 
         def fail(*a, **k):
-            return -1
+            return -1  # native failure marker
 
         trader.order_stock = fail
         with self.assertRaises(BrokerOrderRejectedError):
             bridge.place_order(symbol="510300.SH", side=BUY, qty=100,
                                limit_price=4.6)
 
-    def test_cancel_maps_to_cancel_order_stock(self):
+    def test_cancel_maps_to_cancel_order_stock_with_int(self):
         trader, bridge = self._bridge()
         order_id = bridge.place_order(
             symbol="510300.SH", side=BUY, qty=100, limit_price=4.6,
@@ -169,12 +179,23 @@ class TestArgumentMapping(unittest.TestCase):
         bridge.cancel_order(order_id)
         name, args = trader.calls[1]
         self.assertEqual(name, "cancel_order_stock")
-        self.assertEqual(args[1], order_id)
+        # I2-001: the native cancel boundary must receive an INT, not a string.
+        self.assertIs(type(args[1]), int)
+        self.assertEqual(args[1], int(order_id))
 
     def test_cancel_failure_raises(self):
         trader, bridge = self._bridge()
         with self.assertRaises(BrokerCancelFailedError):
-            bridge.cancel_order("NO_SUCH")
+            bridge.cancel_order("999999")
+
+    def test_native_conversion_rejects_non_decimal(self):
+        bridge = XtQuantBrokerBridge(_FakeTrader(), _FakeAccount())
+        with self.assertRaises(BrokerError):
+            bridge.cancel_order("XT00000001")
+        with self.assertRaises(BrokerError):
+            bridge.cancel_order("1.5")
+        with self.assertRaises(BrokerError):
+            bridge.cancel_order("")
 
 
 class TestStatusMapping(unittest.TestCase):
@@ -182,7 +203,7 @@ class TestStatusMapping(unittest.TestCase):
 
     def _order_with_status(self, status):
         return _FakeOrder(
-            order_id="X1", order_type=STOCK_BUY, order_volume=100,
+            order_id=1, order_type=STOCK_BUY, order_volume=100,
             price=4.6, order_status=status,
         )
 
@@ -216,7 +237,7 @@ class TestStatusMapping(unittest.TestCase):
         order_id = bridge.place_order(
             symbol="510300.SH", side=BUY, qty=100, limit_price=4.6,
         )
-        order = trader.orders[order_id]
+        order = trader.orders[int(order_id)]
         order.order_status = 55
         order.traded_volume = 60
         dto = bridge.query_order(order_id)
@@ -225,13 +246,13 @@ class TestStatusMapping(unittest.TestCase):
         self.assertEqual(dto.qty, 100)
         self.assertEqual(dto.status, OrderStatus.PARTIAL)
         self.assertEqual(dto.filled_qty, 60)
-        # Core must never see the raw object shape.
+        # Core must never see the raw object shape or the native int directly.
         self.assertFalse(hasattr(dto, "order_type"))
 
     def test_query_order_unknown_id_fails_closed(self):
         bridge = XtQuantBrokerBridge(_FakeTrader(), _FakeAccount())
         with self.assertRaises(BrokerError):
-            bridge.query_order("NO_SUCH")
+            bridge.query_order("999999")
 
     def test_query_trades_maps_to_dtos(self):
         trader = _FakeTrader()
@@ -239,7 +260,7 @@ class TestStatusMapping(unittest.TestCase):
         order_id = bridge.place_order(
             symbol="510300.SH", side=BUY, qty=100, limit_price=4.6,
         )
-        trader.trades.append(_FakeTrade("T1", order_id, 60, 4.6, "20260815093500"))
+        trader.trades.append(_FakeTrade("T1", int(order_id), 60, 4.6, "20260815093500"))
         trades = bridge.query_trades(order_id)
         self.assertEqual(len(trades), 1)
         self.assertEqual(trades[0].trade_id, "T1")
@@ -247,23 +268,22 @@ class TestStatusMapping(unittest.TestCase):
 
 
 class TestCallbackIsolation(unittest.TestCase):
-    """NODEB-004: concrete handler converts payloads to events; only enqueues."""
+    """NODEB-004 / I2-003: concrete handler only enqueues immutable events."""
 
     def test_order_callback_only_enqueues_immutable_event(self):
         sink = _Sink()
         handler = XtQuantCallbackHandler(sink)
         raw = _FakeOrder(
-            order_id="X1", order_type=STOCK_BUY, order_volume=100,
+            order_id=1, order_type=STOCK_BUY, order_volume=100,
             price=4.6, order_status=56, traded_volume=100,
             order_remark="TG_510300SH_B001",
         )
         handler.on_stock_order(raw)
         self.assertEqual(len(sink.events), 1)
         event = sink.events[0]
-        self.assertEqual(event.order_id, "X1")
+        self.assertEqual(event.order_id, "1")
         self.assertEqual(event.status, OrderStatus.FILLED)
         self.assertEqual(event.filled_qty, 100)
-        # Events are immutable and data-only.
         self.assertFalse(hasattr(event, "broker"))
         self.assertFalse(hasattr(event, "engine"))
         with self.assertRaises(Exception):
@@ -272,12 +292,29 @@ class TestCallbackIsolation(unittest.TestCase):
     def test_trade_callback_only_enqueues_immutable_event(self):
         sink = _Sink()
         handler = XtQuantCallbackHandler(sink)
-        raw = _FakeTrade("T1", "X1", 60, 4.6, "20260815093500")
+        raw = _FakeTrade("T1", 1, 60, 4.6, "20260815093500")
         handler.on_stock_trade(raw)
         self.assertEqual(len(sink.events), 1)
         event = sink.events[0]
         self.assertEqual(event.trade_id, "T1")
         self.assertEqual(event.qty, 60)
+
+    def test_critical_callbacks_are_not_dropped(self):
+        sink = _Sink()
+        handler = XtQuantCallbackHandler(sink)
+        handler.on_disconnected()
+        handler.on_account_status(type("S", (), {"status": 1})())
+        handler.on_order_error(type("E", (), {"order_id": 7, "error_msg": "bad"})())
+        handler.on_cancel_error(type("C", (), {"order_id": 8, "error_msg": "nope"})())
+        kinds = [e.kind for e in sink.events]
+        self.assertEqual(kinds, [
+            "BROKER_DISCONNECT", "BROKER_ACCOUNT_STATUS",
+            "BROKER_ORDER_ERROR", "BROKER_CANCEL_ERROR",
+        ])
+        self.assertIsInstance(sink.events[0], BrokerDisconnectEvent)
+        self.assertIsInstance(sink.events[1], BrokerAccountStatusEvent)
+        self.assertIsInstance(sink.events[2], BrokerOrderErrorEvent)
+        self.assertIsInstance(sink.events[3], BrokerCancelErrorEvent)
 
     def test_handler_holds_no_engine_or_store_references(self):
         sink = _Sink()
@@ -287,12 +324,38 @@ class TestCallbackIsolation(unittest.TestCase):
         self.assertFalse(hasattr(handler, "adapter"))
         self.assertFalse(hasattr(handler, "broker"))
 
+    def test_enqueue_failure_flips_unhealthy(self):
+        class FailingSink:
+            def enqueue(self, event):
+                raise RuntimeError("queue full")
+
+        handler = XtQuantCallbackHandler(FailingSink())
+        handler.on_stock_order(_FakeOrder(
+            order_id=1, order_type=STOCK_BUY, order_volume=100,
+            price=4.6, order_status=50,
+        ))
+        self.assertFalse(handler.healthy)
+
     def test_bridge_registers_handler_on_trader(self):
         trader = _FakeTrader()
         sink = _Sink()
         bridge = XtQuantBrokerBridge(trader, _FakeAccount(), event_sink=sink)
         self.assertIsNotNone(bridge.callback_handler)
         self.assertIs(trader.callback, bridge.callback_handler)
+        self.assertTrue(bridge.execution_healthy)
+
+    def test_bridge_execution_healthy_flips_after_enqueue_failure(self):
+        class FailingSink:
+            def enqueue(self, event):
+                raise RuntimeError("queue full")
+
+        trader = _FakeTrader()
+        bridge = XtQuantBrokerBridge(trader, _FakeAccount(), event_sink=FailingSink())
+        trader.callback.on_stock_order(_FakeOrder(
+            order_id=1, order_type=STOCK_BUY, order_volume=100,
+            price=4.6, order_status=50,
+        ))
+        self.assertFalse(bridge.execution_healthy)
 
     def test_no_sink_means_no_handler(self):
         bridge = XtQuantBrokerBridge(_FakeTrader(), _FakeAccount())

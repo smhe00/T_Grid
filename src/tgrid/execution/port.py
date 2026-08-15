@@ -48,6 +48,12 @@ class BrokerOrder:
     vocabulary; ``side`` is ``BUY``/``SELL``; ``filled_qty`` is the broker
     reported filled quantity; ``client_order_key`` / ``order_remark`` carry the
     §18 idempotency tags when the broker echoes them back.
+
+    ``order_id`` is the TGrid-persisted serialization of the broker order id:
+    the port keeps it a string so the DTO/store serialization is deterministic,
+    even though the native XtQuant surface uses integer ids (NODEB-I2-001).
+    ``order_time`` is the broker-reported order timestamp (when available) and
+    is used by durable daily-exposure reconstruction (NODEB-I2-004).
     """
 
     order_id: str
@@ -59,6 +65,7 @@ class BrokerOrder:
     filled_qty: int
     client_order_key: str | None = None
     order_remark: str | None = None
+    order_time: str = ""
 
     def __post_init__(self) -> None:
         for name in ("order_id", "symbol", "status"):
@@ -81,6 +88,8 @@ class BrokerOrder:
             value = getattr(self, name)
             if value is not None and type(value) is not str:
                 raise BrokerError(f"{name} must be a string or None")
+        if type(self.order_time) is not str:
+            raise BrokerError("order_time must be a string")
 
 
 @dataclass(frozen=True)

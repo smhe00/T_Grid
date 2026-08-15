@@ -515,5 +515,56 @@ class TestReservationConflicts(unittest.TestCase):
             conn.close()
 
 
+class TestNonFiniteRejection(unittest.TestCase):
+    """NODEB-I2-005: NaN/Inf rejected BEFORE any store mutation or broker call."""
+
+    def _assert_zero_mutation_zero_calls(self, *, side=BUY, **kwargs):
+        conn, store, broker, engine = _store_and_broker()
+        try:
+            with self.assertRaises(ExecutionError):
+                engine.send_buy(
+                    client_order_key="K1", symbol="0700.HK", qty=100,
+                    order_remark="TG_0700_B01", now="t0",
+                    **kwargs,
+                )
+            # Zero ExecutionStore mutation: no intent, no reservation.
+            self.assertEqual(store.list_intents(), ())
+            self.assertEqual(store.reserved_cash("0700.HK"), 0.0)
+            # Zero broker calls.
+            self.assertEqual(broker._orders, {})
+        finally:
+            conn.close()
+
+    def test_nan_limit_price_rejected(self):
+        self._assert_zero_mutation_zero_calls(
+            limit_price=float("nan"),
+            expected_available_cash=500000.0, reserved_cash=42000.0,
+        )
+
+    def test_inf_limit_price_rejected(self):
+        self._assert_zero_mutation_zero_calls(
+            limit_price=float("inf"),
+            expected_available_cash=500000.0, reserved_cash=42000.0,
+        )
+
+    def test_nan_expected_cash_rejected(self):
+        self._assert_zero_mutation_zero_calls(
+            limit_price=420.0,
+            expected_available_cash=float("nan"), reserved_cash=42000.0,
+        )
+
+    def test_nan_reserved_cash_rejected(self):
+        self._assert_zero_mutation_zero_calls(
+            limit_price=420.0,
+            expected_available_cash=500000.0, reserved_cash=float("nan"),
+        )
+
+    def test_inf_reserved_cash_rejected(self):
+        self._assert_zero_mutation_zero_calls(
+            limit_price=420.0,
+            expected_available_cash=500000.0, reserved_cash=float("inf"),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

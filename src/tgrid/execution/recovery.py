@@ -21,17 +21,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tgrid.execution.executor import OrderReconciliationError
 from tgrid.execution.models import OrderIntent, OrderStatus
 from tgrid.execution.port import BrokerOrder, BrokerTrade
 from tgrid.execution.store import ExecutionStore
-from tgrid.risk.exceptions import TGridError
 
 # Broker-side statuses reported by query_order (design §24).
 BrokerOrderStatus = OrderStatus  # reuse the single status set
-
-
-class OrderReconciliationError(TGridError):
-    """Broker/local state cannot be reconciled; fail closed to SAFE_MODE."""
 
 
 @dataclass(frozen=True)
@@ -76,16 +72,30 @@ def reconcile_open_intents(
     broker_orders = broker.query_orders()
 
     for intent in open_intents:
-        match = None
-        for order in broker_orders:
-            if getattr(order, "client_order_key", None) == intent.client_order_key:
-                match = order
-                break
+        # NODEB-I2-002: exact client_order_key match first; more than one
+        # candidate is an ambiguous mapping and must fail closed.
+        matches = [
+            o for o in broker_orders
+            if getattr(o, "client_order_key", None) == intent.client_order_key
+        ]
+        if len(matches) > 1:
+            raise OrderReconciliationError(
+                f"multiple broker orders match client_order_key "
+                f"{intent.client_order_key!r}; ambiguous mapping — SAFE_MODE"
+            )
+        match = matches[0] if matches else None
         if match is None:
-            for order in broker_orders:
-                if getattr(order, "order_remark", None) == intent.order_remark:
-                    match = order
-                    break
+            # Remark (design §18 tag) fallback; multiple candidates -> ambiguous.
+            remark_matches = [
+                o for o in broker_orders
+                if getattr(o, "order_remark", None) == intent.order_remark
+            ]
+            if len(remark_matches) > 1:
+                raise OrderReconciliationError(
+                    f"multiple broker orders match order_remark "
+                    f"{intent.order_remark!r}; ambiguous mapping — SAFE_MODE"
+                )
+            match = remark_matches[0] if remark_matches else None
         if match is None:
             results.append(
                 IntentReconciliation(
@@ -97,6 +107,14 @@ def reconcile_open_intents(
                 )
             )
         else:
+            # NODEB-I2-002: UNKNOWN broker status is an explicit unresolved
+            # outcome, never silently accepted as MATCHED.
+            if match.status == "UNKNOWN":
+                raise OrderReconciliationError(
+                    f"broker order {match.order_id!r} for intent "
+                    f"{intent.client_order_key!r} reports UNKNOWN status; "
+                    "unresolved — SAFE_MODE"
+                )
             results.append(
                 IntentReconciliation(
                     client_order_key=intent.client_order_key,

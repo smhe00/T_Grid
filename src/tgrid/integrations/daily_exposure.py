@@ -1,4 +1,4 @@
-"""Durable daily cash-exposure ledger (NODEB-005).
+"""Durable daily cash-exposure ledger (NODEB-005 / NODEB-I2-004).
 
 The daily exposure cap must survive restarts and must not be resettable by an
 unrestricted public zeroing method.  :class:`DailyExposureLedger` binds the
@@ -9,14 +9,24 @@ Counting rule (deterministic): the cap counts **submitted BUY notional**
 (``qty * limit_price`` at submission).  Once counted, a submitted notional is
 never removed for that trade_date — cancel/reject/partial fills do not reopen
 the cap, and on restart the conservative maximum of (persisted value, sum of
-managed broker-side BUY orders' notional) is used, so a restart cannot silently
-reset the boundary.  Only a validated **monotonic trading-day transition**
-(``roll_day``) resets the ledger, and only when ``new_trade_date`` is strictly
-after the current date.
+managed broker-side BUY orders' notional INCLUDING terminal same-day orders)
+is used (I2-004), so a restart cannot silently reset the boundary.
+
+Crash safety (I2-004):
+
+* ``trade_date`` must be a real ISO calendar date (``datetime.date``), so a
+  lexicographic-looking future string cannot bypass the cap;
+* day rollover is a strict monotonic ISO-date transition only;
+* reconstruction counts every managed BUY order on the trade date — terminal
+  or not — matching the "submitted notional never removed" rule;
+* a send-before-ledger crash window is closed by reserving submitted BUY
+  notional conservatively BEFORE the broker send (failed/rejected sends do not
+  need to reopen the daily cap).
 """
 
 from __future__ import annotations
 
+import datetime
 import math
 
 from tgrid.risk.exceptions import TGridError
@@ -27,25 +37,34 @@ class DailyExposureError(TGridError):
 
 
 class ExposureDateError(DailyExposureError):
-    """trade_date is invalid or not a monotonic day transition."""
+    """trade_date is invalid or not a monotonic ISO-day transition."""
 
 
 class ExposureValueError(DailyExposureError):
     """An exposure amount is not a finite non-negative number."""
 
 
+def _validate_iso_date(trade_date: str) -> datetime.date:
+    if type(trade_date) is not str or trade_date == "":
+        raise ExposureDateError("trade_date must be a non-empty string")
+    try:
+        return datetime.date.fromisoformat(trade_date)
+    except ValueError as exc:
+        raise ExposureDateError(f"trade_date must be an ISO calendar date: {trade_date!r}") from exc
+
+
 class DailyExposureLedger:
     """Trade-date-bound daily BUY-notional ledger.
 
-    ``store`` is an optional durable key/value surface (``get(trade_date)`` /
-    ``set(trade_date, notional)``) so the persisted value survives restart; when
-    ``None`` the ledger is in-memory only and relies on broker-side
-    reconstruction (:meth:`reconstruct_from_orders`) for restart safety.
+    ``trade_date`` is a validated ISO calendar date; ``store`` is the durable
+    key/value surface (``get(trade_date)`` / ``set(trade_date, notional)``) so
+    the persisted value survives restart.  Production/live construction MUST
+    provide a durable store (the adapter enforces this, NODEB-I2-004).
     """
 
     def __init__(self, *, trade_date: str = "", store: object | None = None) -> None:
-        if type(trade_date) is not str:
-            raise ExposureDateError("trade_date must be a string")
+        if trade_date:
+            _validate_iso_date(trade_date)
         self._trade_date = trade_date
         self._store = store
         self._used = 0.0
@@ -89,10 +108,12 @@ class DailyExposureLedger:
     def reconstruct_from_orders(self, orders: tuple, *, remark_prefix: str = "TG_") -> None:
         """Conservatively rebuild today's exposure from managed broker orders.
 
-        Managed = BUY orders tagged with ``remark_prefix`` (the §18 tag) that
-        are not terminal.  The exposure becomes the maximum of the persisted
-        value and the sum of those orders' submitted notional, so a restart can
-        never silently shrink the daily cap (NODEB-005).
+        Managed = BUY orders tagged with ``remark_prefix`` whose broker-reported
+        ``order_time`` falls on the current ``trade_date`` (orders without a
+        timestamp are counted conservatively).  **Terminal same-day orders are
+        included** (I2-004): the "submitted BUY notional is never removed" rule
+        means a filled/canceled/rejected same-day order still consumed the cap.
+        The exposure becomes the maximum of the persisted value and the sum.
         """
         total = 0.0
         for order in orders:
@@ -101,8 +122,10 @@ class DailyExposureLedger:
                 continue
             if getattr(order, "side", None) != "BUY":
                 continue
-            if getattr(order, "status", None) in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN"):
-                continue
+            order_time = getattr(order, "order_time", "")
+            if isinstance(order_time, str) and order_time and self._trade_date:
+                if not order_time.startswith(self._trade_date):
+                    continue  # not a same-day managed BUY order
             qty = getattr(order, "qty", 0)
             price = getattr(order, "limit_price", 0.0)
             if type(qty) is not int or qty <= 0:
@@ -114,14 +137,15 @@ class DailyExposureLedger:
         self._persist()
 
     def roll_day(self, new_trade_date: str) -> None:
-        """Advance to ``new_trade_date``; only a strict monotonic transition resets."""
-        if type(new_trade_date) is not str or new_trade_date == "":
-            raise ExposureDateError("new_trade_date must be a non-empty string")
-        if self._trade_date and new_trade_date <= self._trade_date:
-            raise ExposureDateError(
-                f"day roll requires a monotonic transition: "
-                f"{self._trade_date!r} -> {new_trade_date!r}"
-            )
+        """Advance to ``new_trade_date``; only a strict monotonic ISO-day transition resets."""
+        new_date = _validate_iso_date(new_trade_date)
+        if self._trade_date:
+            current = _validate_iso_date(self._trade_date)
+            if new_date <= current:
+                raise ExposureDateError(
+                    f"day roll requires a monotonic ISO transition: "
+                    f"{self._trade_date!r} -> {new_trade_date!r}"
+                )
         self._trade_date = new_trade_date
         self._used = 0.0
         self._persist()

@@ -5,29 +5,26 @@ remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
 handoff_seq: 21
-handoff_id: "NODEB-IT3-PRELIVE-FIX-20260815-021"
-authorized_next:
-  - "NODEB-PRELIVE-FIX"
+handoff_id: "NODEB-I2-REMEDIATION-DONE-20260815-021"
+authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
 design_version: "1.1"
 gate: 5.5
-task_id: "NODEB-PRELIVE-FIX"
-state: "CHANGES_REQUIRED"
+task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
+state: "AUDIT_READY_PRELIVE"
 owner: "dsh"
 iteration: 3
-last_actor: "independent_auditor"
-last_update: "2026-08-15T14:03:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-15T13:50:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER2_20260815.md"
-git_base_commit: "9ef60c75bd72db94f1cfda919965531c4557cb18"
-git_head_commit: "9ef60c75bd72db94f1cfda919965531c4557cb18"
-audit_target_commit: "9ef60c75bd72db94f1cfda919965531c4557cb18"
-reviewed_implementation_commit: "b4d121c00f4c06a71ba5cb134661eac1a686c3cb"
-accepted_gate5_implementation_commit: "5a2e2fd32e21328badd1ceb2c92b973436c4c95a"
+git_base_commit: "cb7aeb660661811673b873171b76957aa5af1f07"
+git_head_commit: "PENDING_PUSH"
+implementation_commit: "PENDING_PUSH"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_AFTER_ITERATION_3_FIXES"
+next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Audit Node B Iteration 2 verdict CHANGES_REQUIRED. Gate 5 remains PASS. Accepted/frozen: BrokerPort architecture, ExecutionEngine live-port integration, bridge-only real call sites, full fake execution chain, Reservation+OrderIntent-before-send, idempotency, corrected kill-switch cancel behavior, legacy Core guard, adapter NaN/Inf checks, generic callback removal, and no real order/cancel invocation. Remaining pre-live blockers: XtQuant native order_id int contract at cancel boundary; UNKNOWN/ambiguous broker state not fail-closed; XtQuant callback sink does not connect to actual TGrid EventQueue and critical disconnect/order/cancel errors are dropped; daily exposure still has optional durable store, no mandatory reconstruction-ready gate, send-before-ledger crash window, terminal-order reconstruction gap, and weak roll_day validation; ExecutionEngine non-finite cash/capacity can mutate durable state before adapter; production bootstrap remains fragmented rather than one audited safe-order construction path. Gate 6/7 BLOCKED; live_trading_allowed=false."
+notes: "Node B Iteration-2 audit cb7aeb6 = CHANGES_REQUIRED (NODEB-I2-001..006). Iteration 3 remediation complete (SELF_CERTIFIED): native int XtQuant order-id contract (fake trader int ids, single audited str->int conversion, cancel receives int); UNKNOWN/ambiguous state fail-closed (poll_order raises + SAFE_MODE gate, recovery rejects UNKNOWN/multi-match); bridge wired to real TGrid EventQueue with disconnect/account-status/order-error/cancel-error immutable events and execution_healthy health signal; durable exposure crash-safety (required durable store, exposure_ready startup gate, pre-send reservation, terminal same-day reconstruction, ISO date validation, trusted-session roll); ExecutionEngine math.isfinite before any store/broker call; single build_live_stack production bootstrap factory (cannot order before activate; ambiguous recovery fails closed). 929 tests OK; compileall 0; capability scan PASS (2 bridge call sites, 0 outside). No real order/cancel invoked. State AUDIT_READY_PRELIVE, awaiting independent Audit Node B re-review; Gate 6/7 BLOCKED; live_trading_allowed=false."

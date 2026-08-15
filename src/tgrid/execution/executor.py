@@ -27,6 +27,7 @@ strategy orders (INV-004).
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from tgrid.execution.models import BUY, SELL, OrderIntent, OrderStatus
@@ -121,12 +122,42 @@ class ExecutionEngine:
         self._strategy_name = strategy_name
         self._order_timeout_seconds = order_timeout_seconds
         self._max_reprice_attempts = max_reprice_attempts
+        self._safe_mode_reason: str | None = None
 
     # ------------------------------------------------------------- queries
 
     @property
     def store(self) -> ExecutionStore:
         return self._store
+
+    @property
+    def safe_mode(self) -> bool:
+        """True when an unresolved broker state blocks new-order execution."""
+        return self._safe_mode_reason is not None
+
+    @property
+    def safe_mode_reason(self) -> str | None:
+        return self._safe_mode_reason
+
+    def engage_safe_mode(self, reason: str) -> None:
+        """Explicitly block new orders until :meth:`clear_safe_mode`."""
+        if type(reason) is not str or reason == "":
+            raise ExecutionInputError("safe-mode reason must be a non-empty string")
+        self._safe_mode_reason = reason
+
+    def clear_safe_mode(self) -> None:
+        """Resume new-order execution after reconciliation resolves the state."""
+        self._safe_mode_reason = None
+
+    def _engage_safe_mode(self, reason: str) -> None:
+        self._safe_mode_reason = reason
+
+    def _require_not_safe_mode(self) -> None:
+        if self._safe_mode_reason is not None:
+            raise ExecutionError(
+                f"SAFE_MODE: {self._safe_mode_reason}; "
+                "new orders blocked until reconciliation resolves"
+            )
 
     def pending_order_keys(self, *, symbol: str | None = None) -> tuple:
         """client_order_keys in a pending (non-terminal) state."""
@@ -215,8 +246,16 @@ class ExecutionEngine:
             raise ExecutionInputError("side must be BUY or SELL")
         if type(qty) is not int or qty <= 0:
             raise ExecutionInputError("qty must be a positive plain int")
-        if type(limit_price) not in (int, float) or isinstance(limit_price, bool) or limit_price <= 0:
-            raise ExecutionInputError("limit_price must be a positive number")
+        # NODEB-I2-005: reject NaN/±Inf for all price/cash/reservation values
+        # BEFORE any arithmetic, persistence or broker call.  A non-finite
+        # reserved_cash must never reach create_intent_with_reservation.
+        if type(limit_price) not in (int, float) or isinstance(limit_price, bool):
+            raise ExecutionInputError("limit_price must be a plain number")
+        if not math.isfinite(float(limit_price)) or limit_price <= 0:
+            raise ExecutionInputError("limit_price must be a finite positive number")
+        # NODEB-I2-002: an unresolved broker state blocks new execution until
+        # reconciliation resolves it (no guessing, no silent continuation).
+        self._require_not_safe_mode()
         # AUD-R1-007: exact-type validation BEFORE any arithmetic/conversion.
         # ``expected_available_cash`` carries the caller-declared capacity; an
         # untrusted object must never pass through int()/float() first.  BUY
@@ -224,16 +263,22 @@ class ExecutionEngine:
         # non-negative int (quantity).
         if side == BUY:
             if (type(expected_available_cash) not in (int, float)
-                    or isinstance(expected_available_cash, bool)
-                    or expected_available_cash < 0):
+                    or isinstance(expected_available_cash, bool)):
                 raise ExecutionInputError(
                     "expected_available_cash must be a non-negative number"
                 )
+            if not math.isfinite(float(expected_available_cash)) or expected_available_cash < 0:
+                raise ExecutionInputError(
+                    "expected_available_cash must be a finite non-negative number"
+                )
             if cash_amount is None or (type(cash_amount) not in (int, float)
-                                       or isinstance(cash_amount, bool)
-                                       or cash_amount < 0):
+                                       or isinstance(cash_amount, bool)):
                 raise ExecutionInputError(
                     "reserved cash must be a non-negative number"
+                )
+            if not math.isfinite(float(cash_amount)) or cash_amount < 0:
+                raise ExecutionInputError(
+                    "reserved cash must be a finite non-negative number"
                 )
         else:
             if type(expected_available_cash) is not int or expected_available_cash < 0:
@@ -347,6 +392,17 @@ class ExecutionEngine:
             raise OrderReconciliationError("broker disconnected during poll") from exc
         except BrokerError as exc:
             raise OrderReconciliationError("broker query failed during poll") from exc
+
+        # NODEB-I2-002: any status outside the known state machine is an
+        # explicit unresolved outcome, never a silent downgrade to SUBMITTED.
+        # The reservation is preserved and the run must be treated as unsafe.
+        if order.status == "UNKNOWN":
+            self._engage_safe_mode(
+                f"broker order {intent.broker_order_id!r} reports UNKNOWN status"
+            )
+            raise OrderReconciliationError(
+                "broker status UNKNOWN; order state unresolved — SAFE_MODE"
+            )
 
         if order.status == "REJECTED":
             self._store.update_intent_status(

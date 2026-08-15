@@ -21,6 +21,8 @@ import unittest
 from tgrid.execution.port import BrokerOrder, BrokerPort
 from tgrid.integrations.live_broker_adapter import (
     CashExposureLimitError,
+    ExecutionUnhealthyError,
+    ExposureNotReadyError,
     KillSwitchEngagedError,
     LiveBrokerAdapter,
     LiveBrokerError,
@@ -52,6 +54,7 @@ class _FakeBroker(BrokerPort):
         self.trades = {}
         self._seq = 0
         self.calls = []
+        self.healthy = True
 
     def place_order(self, **kwargs):
         self.calls.append(("place", kwargs))
@@ -91,11 +94,8 @@ class _FakeBroker(BrokerPort):
             orders = tuple(o for o in orders if o.symbol == symbol)
         return orders
 
-
-def _bootstrap(adapter, *, token="startup-token"):
-    adapter.apply_config_enable(True)
-    adapter.confirm_runtime(token)
-    return adapter
+    def execution_healthy(self):
+        return self.healthy
 
 
 class _DictStore:
@@ -111,10 +111,27 @@ class _DictStore:
         self._data[trade_date] = notional
 
 
+def _bootstrap(adapter, *, token="startup-token"):
+    adapter.apply_config_enable(True)
+    adapter.reconstruct_daily_exposure()
+    adapter.confirm_runtime(token)
+    return adapter
+
+
 def _ready_adapter(**pol):
     return LiveBrokerAdapter(
         broker=_FakeBroker(), policy=_policy(**pol),
+        trade_date="2026-08-15", exposure_store=_DictStore(),
+        runtime_confirmation_token="startup-token",
+    )
+
+
+def _raw_adapter(**overrides):
+    """Adapter without exposure_store (default None) — must be rejected."""
+    return LiveBrokerAdapter(
+        broker=_FakeBroker(), policy=_policy(),
         trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+        **overrides,
     )
 
 
@@ -124,10 +141,12 @@ class TestBootstrapContract(unittest.TestCase):
     def test_live_disabled_by_default(self):
         adapter = LiveBrokerAdapter(
             broker=_FakeBroker(), policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="startup-token",
         )
         self.assertFalse(adapter.live_enabled)
         self.assertFalse(adapter.runtime_confirmed)
+        self.assertFalse(adapter.exposure_ready)
         with self.assertRaises(LiveTradingDisabledError):
             adapter.place_order(symbol="510300.SH", side="BUY", qty=100,
                                 limit_price=4.6)
@@ -135,10 +154,12 @@ class TestBootstrapContract(unittest.TestCase):
     def test_config_enable_only_after_confirm(self):
         adapter = LiveBrokerAdapter(
             broker=_FakeBroker(), policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="startup-token",
         )
         adapter.apply_config_enable(True)
         self.assertTrue(adapter.live_enabled)
+        adapter.reconstruct_daily_exposure()  # pass the exposure gate
         with self.assertRaises(LiveTradingNotConfirmedError):
             adapter.place_order(symbol="510300.SH", side="BUY", qty=100,
                                 limit_price=4.6)
@@ -146,11 +167,13 @@ class TestBootstrapContract(unittest.TestCase):
     def test_confirm_requires_exact_token(self):
         adapter = LiveBrokerAdapter(
             broker=_FakeBroker(), policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="startup-token",
         )
         adapter.apply_config_enable(True)
         with self.assertRaises(RuntimeConfirmationTokenError):
             adapter.confirm_runtime("wrong-token")
+        adapter.reconstruct_daily_exposure()
         adapter.confirm_runtime("startup-token")
         order_id = adapter.place_order(
             symbol="510300.SH", side="BUY", qty=100, limit_price=4.6,
@@ -160,7 +183,8 @@ class TestBootstrapContract(unittest.TestCase):
     def test_confirm_without_configured_token_fails(self):
         adapter = LiveBrokerAdapter(
             broker=_FakeBroker(), policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="",
         )
         adapter.apply_config_enable(True)
         with self.assertRaises(RuntimeConfirmationTokenError):
@@ -175,22 +199,31 @@ class TestBootstrapContract(unittest.TestCase):
                             limit_price=4.6)
         restarted = LiveBrokerAdapter(
             broker=_FakeBroker(), policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="startup-token",
         )
         restarted.apply_config_enable(True)
         self.assertTrue(restarted.live_enabled)
         self.assertFalse(restarted.runtime_confirmed)
-        with self.assertRaises(LiveTradingNotConfirmedError):
+        self.assertFalse(restarted.exposure_ready)
+        # New order still refused: runtime not confirmed AND exposure not ready.
+        with self.assertRaises(ExposureNotReadyError):
             restarted.place_order(symbol="510300.SH", side="BUY", qty=100,
                                   limit_price=4.6)
 
     def test_untrusted_config_enable_rejected(self):
         adapter = LiveBrokerAdapter(
             broker=_FakeBroker(), policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="startup-token",
         )
         with self.assertRaises(LiveBrokerError):
             adapter.apply_config_enable("yes")
+
+    def test_exposure_store_is_required(self):
+        # NODEB-I2-004: an in-memory-only live adapter is not crash-safe.
+        with self.assertRaises(LiveBrokerError):
+            _raw_adapter(exposure_store=None)
 
 
 class TestAllowlistAndLimits(unittest.TestCase):
@@ -352,7 +385,8 @@ class TestNanInfRejection(unittest.TestCase):
         broker = _FakeBroker()
         adapter = LiveBrokerAdapter(
             broker=broker, policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="startup-token",
         )
         _bootstrap(adapter)
         with self.assertRaises(LiveBrokerError):
@@ -371,7 +405,8 @@ class TestExactTypeValidation(unittest.TestCase):
         broker = _FakeBroker()
         adapter = LiveBrokerAdapter(
             broker=broker, policy=_policy(),
-            trade_date="2026-08-15", runtime_confirmation_token="startup-token",
+            trade_date="2026-08-15", exposure_store=_DictStore(),
+            runtime_confirmation_token="startup-token",
         )
         _bootstrap(adapter)
         return broker, adapter
