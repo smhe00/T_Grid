@@ -4,32 +4,30 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 29
-handoff_id: "NODEB-STATEMACHINE-PORT-FIX-20260815-029"
-authorized_next:
-  - "NODEB-STATEMACHINE-PORT-FIX"
+handoff_seq: 30
+handoff_id: "REVIEW-READY-STATEMACHINE-ITER10-20260815-030"
+authorized_next: ["AUDIT_NODE_B_STATE_MACHINE_PORT"]
 design_version: "1.1"
 gate: 5.5
-task_id: "NODEB-STATEMACHINE-PORT-FIX"
-state: "CHANGES_REQUIRED"
-owner: "dsh"
+task_id: "STATEMACHINE-PORT-ITER10-REFINEMENT"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 10
-last_actor: "independent_auditor"
-last_update: "2026-08-15T22:48:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-15T22:58:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5_5/NODE_B_STATE_MACHINE_PORT_REVIEW_ITER9_20260815.md"
-fix_request_file: "work/gates/GATE_5_5/FIX_REQUEST_STATE_MACHINE_ITER10_20260815.md"
-audit_base_commit: "bf261835f70cbd56fa75b1ea2dc86447d22dcadb"
-reviewed_implementation_commit: "f1e918ed474c9c107b03ab7ddcd3ad101783cce7"
-baseline_pass_prelive_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
-previous_independent_audit_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
+git_base_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
+implementation_commit: "10196f7ae1f5640fd39596877547f57330bf8fde"
+handoff_parent_commit: "54038292d6f83f3df61da64bbde6f85a23df600d"
+handoff_metadata_parent: "54038292d6f83f3df61da64bbde6f85a23df600d"
 reference_repository: "https://github.com/smhe00/reverse_repo"
 reference_commit: "c9ecc701d9b1c47d6a8d03539b482368741204a3"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_STATE_MACHINE_PORT_AFTER_ITERATION10"
-pre_live_independent_audit: "BASELINE_PASS_PRELIVE_EXTENSION_CHANGES_REQUIRED"
-notes: "User-authorized reverse_repo state-machine + explicit-state verifier direction is accepted. Baseline Gate 5.5 PASS_PRELIVE at e252847 remains accepted, but current main contains a new execution extension that is CHANGES_REQUIRED before first real-money execution. Iteration 10 is limited to SM9-001 production wiring (state machine/journal/mutex mandatory on build_live_session), SM9-002 mutex ownership covering journal lifecycle and disabling execution after release, SM9-003 implementation-to-model refinement (trusted snapshot facts, state-aware cancel/poll/rejection, recovery multiplicity), SM9-004 durable intent remark as sole unknown-submission recovery authority, and SM9-005 fail-closed/complete protected source binding. Existing Gate 6 QMT simulation evidence is retained as baseline-channel evidence but did not exercise the new state-machine path. No real-money or additional QMT simulation order/cancel is authorized during the fix; live_trading_allowed=false."
+next_independent_audit: "AUDIT_NODE_B_STATE_MACHINE_PORT"
+pre_live_independent_audit: "AUDIT_NODE_B_STATE_MACHINE_PORT"
+notes: "Node B FINAL PASS_PRELIVE (e252847) accepted on 2026-08-15; Gate 5.5 pre-live capability independently accepted. User explicitly authorized Gate 6 to run on the QMT SIMULATION trading client (already started). Gate 6 simulation verification executed 2026-08-15T21:29 (scripts/gate6_sim_live.py): production live-session(simulation) built (connect/discover/subscribe OK, bridge constants SECURITY_ACCOUNT=2/ACCOUNT_STATUS_OK=0), mandatory recovery + runtime confirmation passed, ONE tiny BUY (510300.SH qty=100 @4.726, caps 200qty/5000cash) sent via real order_stock (native int broker id 1098907651), polled to REJECTED (sim client rejected outside trading hours on Saturday), broker reconcile REJECTED/0 filled, exposure 472.6 booked pre-send. Negative-path verification executed 2026-08-15T21:53 (scripts/gate6_sim_negative.py) on the real sim session: allowlist / qty cap / cash cap / kill switch (cancel still available) / queue-stopped health all fail-closed. 2026-08-15T22:03 runner gained reverse_repo preflight (trading-day via get_trading_dates + execution window 09:30-11:28/13:00-15:28); full order chain verified 2026-08-15T22:05 (engine->adapter->bridge->sim order_stock returned SUBMITTED, native int broker id 1098907653); preflight split evidence 08-14 (trading-day true / window false). Evidence work/reports/gate6-sim/*.json (sanitized). FULL FILL and CANCEL paths still require a trading-hours rerun (next trading day 09:30+). ITERATION 10 (2026-08-15T22:58): closed NODEB-SM9-001..005 (audit 5403829 = CHANGES_REQUIRED on the state-machine extension; baseline PASS_PRELIVE e252847 stays accepted). SM9-001 build_live_session now derives journal (<db>/tgrid-execution-<date>.json) + mutex (<db>/tgrid-execution.lock) from validated config and wires them unconditionally (no silent opt-out; missing authority -> LiveSessionError); production-shaped fake tests for simulation + live. SM9-002 journal is LAZY (no read/write at construction); LiveStack.activate acquires the mutex BEFORE journal load/create + machine attach, so a losing process never touches the shared journal (FI: bytes unchanged); release_execution_lock() engages engine.block_permanently() (irreversible; reconcile cannot clear; FI post-release orders rejected). SM9-003 (A) send_* no longer synthesizes TRIGGER/SNAPSHOT_OK; LiveStack.prepare_snapshot(evidence=...) emits them with evidence bound in the journal transition (details.evidence); (B) poll/cancel events state-aware: CANCEL_PENDING -> CANCEL_STILL_PENDING/CANCEL_TERMINAL, ORDER_ACTIVE (incl. spontaneous cancel) -> ORDER_TERMINAL; (C) recovery multiplicity/mixed unresolved -> RECOVERY_AMBIGUOUS -> SAFE_HALT + SAFE_MODE fail-closed; (D) new port-level BrokerRejectedError (LiveBrokerError family + BrokerOrderRejectedError inherit) -> SUBMIT_REJECTED -> SAFE_HALT + intent REJECTED + reservation release; ambiguous -> SUBMIT_EXCEPTION. SM9-004 recover_unknown_submission has NO caller remark override; persisted intent remark is the sole recovery authority. SM9-005 execution_source_sha256 raises ExecutionSourceIntegrityError on missing protected files; manifest expanded to 14 safety-critical sources; integrity FIs. Regression 1009 tests OK (was 998; +11 FIs); compileall 0; verifier unchanged (spec 7d9959dd..., 39/115/0/0/0; source 0f5d3ca6...). state=REVIEW_READY, owner=architect, authorized_next=[AUDIT_NODE_B_STATE_MACHINE_PORT]. No real order/cancel invoked; live_trading_allowed=false; real-money Gate 6/7 remain BLOCKED pending explicit user authorization."
