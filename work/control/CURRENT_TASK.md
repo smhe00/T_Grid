@@ -1,95 +1,76 @@
-# Current Task — AUD-R1 Gate 5 Remediation
+# Current Task — Audit Node A Iteration 4 Fixes
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — single programming Agent, may perform implementation + self-review.
+`DSH (DeepSeek Harness)` — single programming Agent, implementation + self-review allowed.
 
-Self-review is useful evidence but must be labelled `SELF_CERTIFIED`; it is not an independent Gate verdict.
+Self-review must be labelled `SELF_CERTIFIED`; it is not an independent Gate verdict.
 
 ## Status
 
-`AUDIT_READY`（修复完成，SELF_CERTIFIED，等待独立审计 NODE A）
+`CHANGES_REQUIRED`
 
-Gate 6 and Gate 7 are blocked. `live_trading_allowed=false` remains mandatory.
+Gate 5.5 / Gate 6 / Gate 7 are blocked. `live_trading_allowed=false` remains mandatory.
 
-## Completion Record (SELF_CERTIFIED — 2026-08-15)
+## Review Source
 
-All seven findings closed:
-
-1. AUD-R1-001 explicit RAW/ADJUSTED basis — `tgrid.shadow.marketdata` (dividend_type
-   bound to underlying call, basis metadata, fail closed, tests).
-2. AUD-R1-002 settlement/T+1 sellable model — `tgrid.shadow.settlement`
-   (SettlementPolicy/Tracker, same-day lock, next-session release, tests).
-3. AUD-R1-003 real-vs-shadow reconciliation — `reconciliation` vs `shadow_delta`
-   separate reports (AUD-R1-003), no silent reclassification.
-4. AUD-R1-004 evidence classification — `REAL_QMT_HISTORICAL_REPLAY +
-   REAL_BROKER_SNAPSHOT` in `evidence.json` and reports.
-5. AUD-R1-005 repo hygiene — `_tmp/` removed + .gitignore; reports sanitized.
-6. AUD-R1-006 control plane — SELF_CERTIFIED labels; Gate 6/7 BLOCKED.
-7. AUD-R1-007 ExecutionEngine exact-type hardening — closed with tests.
-
-Evidence: 818 tests OK; compileall 0; src AST scan 46 files 0 hits.
-Details: `work/gates/GATE_5/REMEDIATION_REPORT.md`.
-
-## Source of Requirements
-
-Read and execute:
+Execute the narrow fixes in:
 
 ```text
-work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md
+work/gates/GATE_5/NODE_A_REVIEW_ITER3_20260815.md
 ```
 
-The independent audit was made against baseline:
+Review target/baseline:
 
 ```text
-2f4957b215beec9f6b6e40054cc6a0375198c29d
+03d392341d0c558c5a2461637e6ac5cade6645ed
 ```
 
 ## Required Work
 
-Fix all Gate-5 remediation findings:
+Only the remaining Node-A findings need closure. Retain the already accepted Iteration-3 work.
 
-1. deterministic explicit RAW/ADJUSTED market-data acquisition;
-2. settlement/T+1-aware total vs sellable position model;
-3. correct separation of real broker reconciliation and shadow hypothetical delta;
-4. truthful evidence classification (historical real-QMT replay is not wall-clock multi-day live soak);
-5. remove `_tmp/` and sanitize local runtime/account/environment details; update ignore rules;
-6. restore consistent canonical project state and mark DSH Gate results as `SELF_CERTIFIED`;
-7. close or explicitly carry the Gate-4 exact-type coercion hardening item into Gate 5.5; it must be fixed before any real-order invocation.
+1. **Basis factor provenance / per-day normalization**
+   - real-QMT runner must not default ADJUSTED->RAW factor to 1.0;
+   - factor must be trusted and keyed to each trading day;
+   - missing/ambiguous factor fails closed;
+   - add strategy-level 2:1 discontinuity test, not only arithmetic transform test;
+   - remove the pre-loop `begin_day` that seeds the replay with a backwards session transition; enforce monotonic trading sessions.
 
-Do not roll back good Gate 2–4 implementation solely because of the audit.
+2. **Trusted strategy/settlement/session configuration**
+   - no runtime use of `config.example.yaml` as trusted strategy state;
+   - add explicit local strategy config binding;
+   - symbol must be configured;
+   - settlement must be explicit via trusted config or required CLI, not suffix default;
+   - session policy must be explicit per supported market, or restrict the runner to a validated market.
 
-## Safety / Forbidden During This Task
+3. **Trusted real reconciliation decomposition**
+   - Core / StrategicExtra / persisted real OpenT must come from independent trusted local state;
+   - unavailable component => UNKNOWN/SAFE_MODE input, never implicit zero;
+   - produce sanitized non-zero REAL_QMT reconciliation summary, or mark this acceptance item BLOCKED if the evidence cannot be obtained.
 
-- no real order submission;
-- no real cancel execution;
-- no enabling `live_trading`;
-- no force push / history rewrite;
-- no silent deletion of audit evidence needed to understand prior behavior;
-- no committing account identifiers, cash/position details, userdata paths, ports/endpoints, local config, secrets or logs.
+4. **Control/evidence consistency**
+   - make `WORKFLOW_STATE`, `CURRENT_TASK`, `docs/GATES`, fix report and commit messages agree on exact test count/status;
+   - record concrete implementation/evidence SHA(s), not `PENDING_PUSH`;
+   - do not claim strategy invariance/evidence not actually present.
 
-## Required Evidence
+## Required Verification
 
 - full unit regression;
 - `python -m compileall -q src tests`;
-- AST/capability scan showing no unexpected real order/cancel capability;
-- focused tests for price-basis binding, settlement sellability and reconciliation semantics;
-- refreshed Gate-5 evidence after the fixes:
-  - zero-real-position case;
-  - non-zero real/Core-position case;
-  - settlement-policy behavior;
-  - explicit RAW/ADJUSTED basis behavior;
-- sanitized committed reports only.
+- capability AST scan proving no real order/cancel path;
+- strategy-level basis normalization FI with materially different RAW/ADJUSTED scales;
+- missing factor/config/settlement/session fail-closed tests;
+- reconciliation unknown-component tests;
+- `_tmp/` remains absent from current HEAD;
+- `live_trading_allowed=false`.
 
-## Stop / Handoff Condition — AUDIT NODE A
+## Stop / Handoff
 
-When remediation is complete:
+When complete:
 
-1. push normally to GitHub `main`;
-2. update `WORKFLOW_STATE.yaml` to an unambiguous `AUDIT_READY` state;
-3. record exact baseline/head, tests, evidence and open risks;
-4. stop before implementing Gate 5.5 or any real order/cancel adapter.
-
-ChatGPT will perform the next independent audit at this point.
-
-A second mandatory audit (`AUDIT NODE B`) is required later after Gate-5.5 real broker capability is implemented but **before the first real order invocation**. Gate 6 remains blocked until Node B independent PASS + explicit user authorization.
+1. push normally to `main`;
+2. set canonical state to `AUDIT_READY`;
+3. record exact implementation/evidence commit SHA(s), tests and open blockers;
+4. authorize only `AUDIT_NODE_A_REVIEW`;
+5. STOP before Gate 5.5 / any real broker order or cancel capability.

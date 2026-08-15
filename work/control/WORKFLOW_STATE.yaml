@@ -4,26 +4,27 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 16
-handoff_id: "AUD-NODEA-GATE5-FIX-DONE-20260815-016"
-authorized_next: ["AUDIT_NODE_A_REVIEW"]
+handoff_seq: 17
+handoff_id: "AUD-NODEA-GATE5-FIX-ITER4-20260815-017"
+authorized_next:
+  - "AUD-NODEA-GATE5-FIX"
 design_version: "1.1"
 gate: 5
 task_id: "AUD-NODEA-GATE5-FIX"
-state: "AUDIT_READY"
+state: "CHANGES_REQUIRED"
 owner: "dsh"
-iteration: 3
-last_actor: "dsh"
-last_update: "2026-08-15T11:30:00+08:00"
+iteration: 4
+last_actor: "independent_auditor"
+last_update: "2026-08-15T11:17:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5/NODE_A_REVIEW_20260815.md"
-git_base_commit: "910a727d3ef66c262abfd9dea45b092106f6d4a6"
-git_head_commit: "PENDING_PUSH"
+audit_file: "work/gates/GATE_5/NODE_A_REVIEW_ITER3_20260815.md"
+git_base_commit: "03d392341d0c558c5a2461637e6ac5cade6645ed"
+git_head_commit: "03d392341d0c558c5a2461637e6ac5cade6645ed"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_A_AFTER_ITERATION_3_FIXES"
+next_independent_audit: "AUDIT_NODE_A_AFTER_ITERATION_4_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "NODEA-001..006 fixed (SELF_CERTIFIED), state AUDIT_READY, awaiting independent Node-A re-review. NODEA-001: explicit ADJUSTED->RAW same-day factor transform (tgrid.strategy.basis_transform) + BasisBinding metadata consistency; price-like basis fields live in RAW domain. NODEA-002: settlement released balance carries forward across sessions (persistent balance). NODEA-003: runner requires explicit settlement rule + configured symbol (fail closed, no synthetic config). NODEA-004: reconciliation never infers Strategic/OpenT from broker residual; independent decomposition; non-zero evidence regenerated. NODEA-005: tracked _tmp/ removed from HEAD via normal forward commit. NODEA-006: control plane consistent (832 tests OK, real SHA, REAL_QMT_REPLAY_VERIFIED wording). Gate 5.5/6/7 BLOCKED; live_trading_allowed=false; no real order/cancel capability."
+notes: "Audit Node A re-review of DSH Iteration 3 remains CHANGES_REQUIRED. Independently accepted: settlement carry-forward, tracked _tmp removal, BasisBinding metadata consistency, reconciliation-vs-shadow structural separation, no-live-order boundary. Remaining fixes: trusted per-day ADJUSTED->RAW factor provenance (no scalar 1.0 default, strategy-level discontinuity FI, monotonic replay sessions); trusted runtime strategy config plus explicit settlement/session policy (no config.example runtime state or suffix authorization); trusted local reconciliation decomposition and sanitized non-zero REAL_QMT summary or explicit BLOCKED; canonical test/commit/evidence metadata consistency. Gate 5.5/6/7 remain blocked; live_trading_allowed=false."
