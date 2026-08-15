@@ -1,83 +1,61 @@
-# Current Task — qmt-execution-core 0.2.0 Validation (2026-08-16)
-
-## Owner
-
-`DSH (DeepSeek Harness)` — validation only. Self-review evidence is labelled
-`SELF_CERTIFIED`.
+# Current Task — qmt-execution-core 0.2.1 Independent Audit
 
 ## Status
 
-`REVIEW_READY` — validation report delivered
-(`work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md`),
-**verdict SELF_CERTIFIED CHANGES_REQUIRED**, handed off for
-**AUDIT_QMT_EXECUTION_CORE_0_2_0** independent review.
+`PASS_FOR_MIGRATION_AWAIT_USER`
 
-TGrid migration remains **PAUSED** until the architect reviews this
-validation. `live_trading_allowed=false`. No real or simulation QMT
-order/cancel was invoked. Neither production codebase was modified.
-
-## Audit target
+The reusable execution library has passed independent audit for use as the future TGrid execution-core dependency:
 
 ```text
 repository: https://github.com/smhe00/qmt-execution-core
-branch:     main
-commit:     a1500e724bcfed13efbac65d9fbdce2b2513c817
-version:    0.2.0
+version:    0.2.1
+commit:     2e222e16731bd8ce232ffba78c697245472c2094
 local:      D:\gitee\miniQMT\qmt-execution-core
-request:    work/gates/QMT_EXECUTION_CORE/VALIDATION_REQUEST_20260816.md
-report:     work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md
 ```
 
-## Validation summary (SELF_CERTIFIED)
+Independent audit:
 
-- **V1 identity PASS**: local HEAD exactly `a1500e7...`, tree clean;
-  pyproject 0.2.0; **0 `tgrid` imports** (src + tests); xtquant only lazy
-  inside `miniqmt/runtime.py::_real_xtquant_dependencies()`; Python 3.12.10 /
-  Windows.
-- **V2 source tree**: `pytest` = **56 passed / 3 failed**, `compileall` = 0,
-  `qmt-execution-core verify` = PASS (50 reachable states / 208 transitions /
-  0 unreachable / 0 violations; spec `62e04e05...`, source `67dd05dd...`).
-- **V3 wheel**: built `qmt_execution_core-0.2.0-py3-none-any.whl`, installed in
-  a clean Python 3.12 venv, `verify` from outside the checkout gives identical
-  hashes; missing protected source fails closed (isolated fixture only).
-- **V4 static audit**: all sampled controls (V4-A..V4-I) PASS — see report.
-- **V5 refinement coverage**: 21/24 committed-test paths; gaps:
-  cancel-rejected+re-query, restart-cancel-pending, fill-during-cancel (partial).
-- **V6 real MiniQMT read-only smoke PASS**: simulation client (running),
-  connect/discover/subscribe/query asset/positions/orders/trades, healthy,
-  clean close; **zero order/cancel calls**.
-- **V7 independence/reuse PASS**: sufficient public API, evidence injectable
-  via `ExecutionGuard`, raw QMT states normalized below the adapter boundary,
-  no TGrid filesystem/database dependency.
+```text
+work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_0_2_1_20260816.md
+```
 
-## Findings (reported, NOT fixed — validation-only task)
+DSH validation/fix evidence:
 
-- **P1 — Windows execution-mutex release defect**:
-  `src/qmt_execution_core/mutex.py` `ExecutionMutex._lock` (pre-lock "0"-byte
-  write workaround, lines 73-82) + `acquire` (`truncate`, line 47) + `release`
-  (`LK_UNLCK`, line 65): after one complete owner cycle, any subsequent owner
-  (same or separate process) cannot `release()` — `PermissionError` at
-  `msvcrt.locking(..., LK_UNLCK, 1)`. Deterministic (12/12), cross-process
-  reproduced. Breaks 3 committed tests.
-- **P2 — committed-test gaps**: cancel-rejected + re-query; restart from
-  cancel-pending; fill-during-cancel only partially covered.
+```text
+work/gates/QMT_EXECUTION_CORE/DSH_VALIDATION_REPORT_20260816.md
+```
 
-## Fix addendum (architect-authorized, 2026-08-16)
+## Independent conclusion
 
-The architect authorized fixing the library. **P1 FIXED** in
-`qmt-execution-core` 0.2.1 (`2e222e1`, fast-forward `a1500e7..2e222e1`):
-`_lock` now seeks to byte 0 and performs a pure `msvcrt.locking`/`flock`
-(mirrors reverse_repo/TGrid), removing the "0"-byte write workaround that
-poisoned subsequent `LK_UNLCK`. Verified: full suite **61 passed** (the 3
-previously-failing tests pass), compileall 0, verifier 50/208/0/0/0 (spec
-unchanged, source `a2258423...`), same-process + cross-process repros OK,
-wheel 0.2.1 clean-env verify OK. **P2 gaps closed**: added
-`test_cancel_rejected_requires_requery` + `test_restart_recovers_cancel_pending`
-(V5 matrix 23/24). Report updated with the fix addendum.
+- 0.2.0 had a real Windows P1 mutex-release defect and is NOT an acceptable migration target.
+- 0.2.1 fixes that defect with symmetric byte-0 lock/unlock semantics and passes DSH Windows regression, repeated same-process/cross-process lock probes, installed-wheel verification, and GitHub CI.
+- Full DSH Windows suite: 61 passed; compileall PASS.
+- Formal verifier: 50 reachable abstract states / 208 transitions / 0 unreachable / 0 no-terminal-path / 0 invariant violations.
+- Real MiniQMT simulation read-only smoke passed; no order/cancel APIs were invoked.
+- Dedicated fill-during-cancel race test remains a P2 pre-live requirement, but the runtime/model path already maps `CANCELLING + FILLED -> FILLED`, so this does not block code migration.
 
-## Confirmations
+## Migration state
 
-- No real or simulation QMT order/cancel invoked.
-- TGrid migration not performed; TGrid execution code untouched.
-- `qmt-execution-core` unmodified (tree clean after validation).
-- `live_trading_allowed=false` maintained.
+**PAUSED by explicit user instruction.**
+
+Do not start TGrid migration until the user explicitly says to resume/start it. `f` / fetch alone is not migration authorization.
+
+When resumed, migrate in stages:
+
+1. depend on qmt-execution-core 0.2.1 / exact commit `2e222e1`;
+2. preserve TGrid-specific Core/T-Lot/ledger/daily exposure/strategy risk;
+3. adapt TGrid requests/evidence into `ExecutionRequest` + `ExecutionGuard`;
+4. prove fake/shadow behavioral equivalence before deleting the old TGrid execution stack;
+5. cut QMT execution authority over to `MiniQmtRuntime` only after equivalence tests;
+6. independently audit the integrated path.
+
+## Safety boundary
+
+`live_trading_allowed=false`.
+
+Before first real-money execution, still require:
+
+- dedicated fill-during-cancel regression;
+- integrated QMT simulation evidence for FILL, PARTIAL+CANCEL+REQUERY, restart recovery, and SUBMIT_UNKNOWN recovery;
+- independent audit of the integrated TGrid + qmt-execution-core path;
+- explicit user authorization for real-money Gate 6.
