@@ -13,6 +13,13 @@
 > 独立验收（参考基线 reverse_repo `c9ecc70`）。用户显式授权 Gate 6 在
 > **QMT 模拟交易端**执行；模拟端验证已于 2026-08-15 21:29 完成（下单→查询→
 > 对账→REJECTED 终态，非交易时段废单），**真实成交与撤单路径需交易时段重跑**。
+> 同日用户显式授权 **reverse_repo 完整状态机 + 形式验证器移植**（SELF_CERTIFIED，
+> **新能力**，未经 Audit Node B 复审，不取代 PASS_PRELIVE）：TGrid 单状态机
+> 14 状态 + 9 项 SafetyFacts，`verify_state_machines()` = 39 可达抽象状态 /
+> 115 转移 / 0 违例；ExecutionJournal schema v2（原子写、历史≤500、哈希绑定）；
+> `LiveStack.activate()` 对已绑定 journal 做 **fail-closed 构建失配校验**（失配
+> 抛 `LiveBootstrapError`，显式 `bind_machine_verification()` 为唯一恢复路径）。
+> 回归 **980 tests OK**。
 > `live_trading_allowed=false`；真实资金 Gate 6/7 仍 BLOCKED，须用户另行显式授权。
 
 | Gate | 内容 | 当前状态 | 说明 / 验收证据 |
@@ -31,10 +38,11 @@
 ## 当前测试证据（SELF_CERTIFIED）
 
 ```text
-python -m unittest discover -s tests -p "test_*.py"   # 957 tests OK
+python -m unittest discover -s tests -p "test_*.py"   # 980 tests OK
 python -m compileall -q src tests                      # exit 0
 src AST 扫描（assert / xtquant import / 桥外 order_stock/cancel_order_stock）: 0 命中
 capability_scan: 真实 order/cancel 调用点仅限 xtquant_bridge.py（桥内 2、桥外 0）
+状态机形式验证: verify_state_machines() = 39 可达抽象状态 / 115 转移 / 0 不可达 / 0 违例
 ```
 
 这些是 **SELF_CERTIFIED evidence**，不自动构成 independent Gate PASS。
@@ -72,7 +80,9 @@ Action HALT / INV-016 人工变化检测 / INV-017 数据新鲜度。
    **FINAL PASS_PRELIVE**（`e252847`，2026-08-15；参考基线 reverse_repo
    pinned `c9ecc70`）。**Gate 6 模拟端验证**已由用户授权并在 QMT 模拟交易端
    执行（2026-08-15 21:29，非交易时段，订单 REJECTED；成交/撤单需交易时段
-   重跑）。真实资金 Gate 6/7 在用户显式授权前保持 BLOCKED。
+   重跑）。**reverse_repo 状态机 + 形式验证器移植**（用户 2026-08-15 授权，
+   SELF_CERTIFIED 新能力）完成，建议首笔真实订单前纳入 Node B 复审。
+   真实资金 Gate 6/7 在用户显式授权前保持 BLOCKED。
    授权令牌（真实资金）：需用户明确授权（`f` 仅为 fetch，不构成交易授权）。
 
 详细执行清单以 `work/control/CURRENT_TASK.md` 和

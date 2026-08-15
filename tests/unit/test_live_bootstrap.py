@@ -21,7 +21,10 @@ from tgrid.execution.models import BUY, SELL
 from tgrid.execution.port import BrokerOrder
 from tgrid.execution.store import ExecutionStore
 from tgrid.integrations.daily_exposure import DailyExposureLedger
-from tgrid.integrations.live_bootstrap import build_live_stack
+from tgrid.integrations.live_bootstrap import (
+    LiveBootstrapError,
+    build_live_stack,
+)
 from tgrid.integrations.live_broker_adapter import (
     ExposureNotReadyError,
     LiveBrokerAdapter,
@@ -1034,6 +1037,133 @@ class TestBootstrap(unittest.TestCase):
             self.assertFalse(engine.safe_mode)
         finally:
             conn.close()
+
+
+class TestLiveStackStateMachine(unittest.TestCase):
+    """reverse_repo state machine drives LiveStack via journal_path."""
+
+    def test_stack_with_journal_drives_machine(self):
+        import tempfile as _tf
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-machine.json")
+        queue = EventQueue(lambda e: None, maxsize=100)
+        try:
+            store = ExecutionStore(conn)
+            stack = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                config_live_enabled=True, journal_path=journal_path,
+            )
+            # activate drives BEGIN -> PREFLIGHT -> PREFLIGHT_OK -> RECOVERY
+            # -> RECOVERY_CLEAR -> WAIT_TRIGGER.
+            stack.activate(token="startup-token")
+            self.assertEqual(stack.engine.machine.state.value, "wait_trigger")
+            # send_buy drives INTENT -> SUBMIT_ACCEPTED -> ORDER_ACTIVE.
+            result = stack.engine.send_buy(
+                client_order_key="K1", symbol="510300.SH", qty=100,
+                limit_price=4.6, order_remark="TG_510300SH_B001",
+                now="t0", expected_available_cash=100000.0,
+                reserved_cash=460.0,
+            )
+            self.assertEqual(result.status, OrderStatus.SUBMITTED)
+            self.assertEqual(stack.engine.machine.state.value, "order_active")
+            # Journal persisted the machine; reload restores it.
+            from tgrid.execution.execution_journal import ExecutionJournal
+
+            reloaded = ExecutionJournal(journal_path, strategy="TGRID",
+                                        trade_date="2026-08-15")
+            self.assertEqual(reloaded.machine["state"], "order_active")
+        finally:
+            queue.stop()
+            queue.join(timeout=1.0)
+            conn.close()
+            if os.path.exists(journal_path):
+                os.remove(journal_path)
+
+    def test_stack_journal_binds_verification(self):
+        import tempfile as _tf
+
+        from tgrid.execution.statemachine import verify_state_machines
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-verify.json")
+        queue = EventQueue(lambda e: None, maxsize=100)
+        try:
+            store = ExecutionStore(conn)
+            stack = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                journal_path=journal_path,
+            )
+            stack.bind_machine_verification()
+            from tgrid.execution.execution_journal import (
+                ExecutionJournal,
+                JournalVerification,
+            )
+
+            journal = ExecutionJournal(journal_path, strategy="TGRID",
+                                       trade_date="2026-08-15")
+            verified = verify_state_machines()
+            self.assertTrue(journal.journal_matches_verification(
+                JournalVerification(
+                    transition_spec_sha256=verified["transition_spec_sha256"],
+                    execution_source_sha256=verified["execution_source_sha256"],
+                )
+            ))
+        finally:
+            queue.stop()
+            queue.join(timeout=1.0)
+            conn.close()
+            if os.path.exists(journal_path):
+                os.remove(journal_path)
+
+    def test_stack_activate_fails_closed_on_build_mismatch(self):
+        import tempfile as _tf
+
+        from tgrid.execution.execution_journal import (
+            ExecutionJournal,
+            JournalVerification,
+        )
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-mismatch.json")
+        queue = EventQueue(lambda e: None, maxsize=100)
+        try:
+            # Pre-write a journal bound to a DIFFERENT build.
+            ExecutionJournal(journal_path, strategy="TGRID",
+                             trade_date="2026-08-15").bind_verification(
+                JournalVerification(transition_spec_sha256="a" * 64,
+                                    execution_source_sha256="b" * 64)
+            )
+            store = ExecutionStore(conn)
+            stack = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                journal_path=journal_path,
+            )
+            # activate() must fail closed instead of silently re-binding.
+            with self.assertRaises(LiveBootstrapError):
+                stack.activate(token="startup-token")
+            # Explicit re-bind is the sanctioned recovery.
+            stack.bind_machine_verification()
+            stack.activate(token="startup-token")
+            self.assertEqual(stack.engine.machine.state.value, "wait_trigger")
+        finally:
+            queue.stop()
+            queue.join(timeout=1.0)
+            conn.close()
+            if os.path.exists(journal_path):
+                os.remove(journal_path)
 
 
 if __name__ == "__main__":

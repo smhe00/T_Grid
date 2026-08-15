@@ -1,4 +1,4 @@
-# Current Task — Gate 5.5 PASS_PRELIVE + Gate 6 Simulation Verification
+# Current Task — Gate 5.5 PASS_PRELIVE + Gate 6 Simulation Verification + reverse_repo 状态机移植
 
 ## Owner
 
@@ -10,7 +10,31 @@ Self-review must be labelled `SELF_CERTIFIED`; it is not an independent pre-live
 
 `NODE_B PASS_PRELIVE` — Gate 5.5 pre-live capability independently accepted (`e252847`).
 Gate 6 **simulation** verification executed (user-authorized, QMT sim client, 2026-08-15 21:29).
+reverse_repo 状态机 + 形式验证器移植完成（用户 2026-08-15 显式授权；SELF_CERTIFIED，**新能力**）。
 Real-money Gate 6/7 remain BLOCKED until explicit user authorization.
+
+## reverse_repo 状态机 + 形式验证器移植（SELF_CERTIFIED — 2026-08-15）
+
+用户显式授权移植 reverse_repo 的完整状态机 + 形式验证器（pinned `c9ecc70`）：
+
+1. `src/tgrid/execution/statemachine.py` — TGrid 单状态机（14 状态）+ SafetyFacts
+   （9 布尔不变量）+ `advance()` + `verify_state_machines()`；
+2. `src/tgrid/execution/execution_journal.py` — ExecutionJournal（schema v2、
+   strategy+trade_date 三元校验、temp+fsync+os.replace 原子写、历史≤500、
+   `journal_matches_verification` 绑定 transition_spec + execution_source 哈希）；
+3. `ExecutionEngine` 成对接入（machine+journal 必须同时提供；send/poll/timeout
+   驱动机器事件，转移先于外部副作用原子落盘）；
+4. `LiveStack`（`journal_path` 可选开启）— `activate()` 驱动
+   BEGIN→PREFLIGHT_OK→RECOVERY_CLEAR/AMBIGUOUS，并在 BEGIN 前
+   **fail-closed 校验 journal 绑定**（已绑定哈希失配 → `LiveBootstrapError`，
+   绝不静默重绑；显式 `bind_machine_verification()` 为唯一恢复路径）。
+
+验证产物：39 可达抽象状态 / 115 转移 / 0 不可达 / 0 无终态路径 / 0 不变量违例；
+`transition_spec_sha256=7d9959dd...`、`execution_source_sha256=c0d84be8...`（真实内容绑定）。
+回归 **980 tests OK**；compileall exit 0。
+
+**诚实声明**：状态机移植为**新能力**，未经 Audit Node B 复审，不取代 PASS_PRELIVE
+（`e252847`）；首笔真实订单前建议纳入 Node B 复审。
 
 ## Completion Record — Node B PASS_PRELIVE (2026-08-15)
 
@@ -44,6 +68,8 @@ cancel+re-query, T+1/can_use checks).
 
 - Real-money Gate 6/7: BLOCKED until explicit user authorization (`f` is never
   trading authorization). `live_trading_allowed=false` remains mandatory.
+- reverse_repo 状态机移植为**新能力**（SELF_CERTIFIED）：建议首笔真实订单前纳入
+  Audit Node B 复审；复审前不视为 PASS_PRELIVE 的延伸。
 - Monitor job keeps polling `tgrid-github/main` for any further audit pushes.
 
 ## Source of Authorization

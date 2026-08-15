@@ -74,6 +74,14 @@ class LiveStack:
             self.event_queue.start()
         if session_date is not None:
             self.adapter.roll_day(session_date, session_date=session_date)
+        # State machine (reverse_repo port): BEGIN -> PREFLIGHT, then
+        # PREFLIGHT_OK once environment+account are verified by the adapter.
+        if self.engine.machine is not None:
+            from tgrid.execution.statemachine import TGridEvent
+
+            self._ensure_journal_verification()
+            self.engine._advance_machine(TGridEvent.BEGIN)
+            self.engine._advance_machine(TGridEvent.PREFLIGHT_OK)
         # 1) Startup exposure reconstruction (mandatory readiness gate),
         #    joined to durable OrderIntent dates (NODEB-RR4-003).
         self.adapter.reconstruct_daily_exposure(
@@ -90,13 +98,82 @@ class LiveStack:
             self.engine.engage_safe_mode(
                 "startup recovery found unresolved intents"
             )
+            if self.engine.machine is not None:
+                from tgrid.execution.statemachine import TGridEvent
+
+                self.engine._advance_machine(TGridEvent.RECOVERY_AMBIGUOUS)
             raise LiveBootstrapError(
                 "startup recovery found unresolved intents: "
                 + ", ".join(f"{r.outcome}:{r.client_order_key}" for r in blocked)
                 + "; refusing to activate (SAFE_MODE)"
             )
+        if self.engine.machine is not None:
+            from tgrid.execution.statemachine import TGridEvent
+
+            self.engine._advance_machine(TGridEvent.RECOVERY_CLEAR)
         # 3) Separate, non-persisted runtime confirmation.
         self.adapter.confirm_runtime(token)
+
+    def bind_machine_verification(self) -> None:
+        """Bind the journal to the current transition-spec + source hashes.
+
+        reverse_repo semantics: after a code change the old journal is no
+        longer trusted unless its bound hashes match the current build.
+        No-op when the stack was built without a journal.
+        """
+        journal = getattr(self.engine, "_journal", None)
+        if journal is None:
+            return
+        from tgrid.execution.execution_journal import JournalVerification
+        from tgrid.execution.statemachine import (
+            execution_source_sha256,
+            verify_state_machines,
+        )
+
+        verified = verify_state_machines()
+        journal.bind_verification(JournalVerification(
+            transition_spec_sha256=verified["transition_spec_sha256"],
+            execution_source_sha256=verified["execution_source_sha256"],
+        ))
+
+    def _ensure_journal_verification(self) -> None:
+        """Bind a fresh journal; fail closed on a build-mismatched journal.
+
+        reverse_repo semantics: a journal written by a different build is no
+        longer trusted.  A first-run journal (no bound hashes yet) is bound to
+        the current build; any journal whose bound hashes differ from the
+        current transition spec / execution source raises ``LiveBootstrapError``
+        instead of being silently re-bound — the operator must review and
+        explicitly re-bind via :meth:`bind_machine_verification`.
+        """
+        journal = getattr(self.engine, "_journal", None)
+        if journal is None:
+            return
+        from tgrid.execution.execution_journal import JournalVerification
+        from tgrid.execution.statemachine import (
+            execution_source_sha256,
+            verify_state_machines,
+        )
+
+        verified = verify_state_machines()
+        current = JournalVerification(
+            transition_spec_sha256=verified["transition_spec_sha256"],
+            execution_source_sha256=verified["execution_source_sha256"],
+        )
+        bound = (journal.payload.get("data") or {}).get("formal_verification")
+        if bound is None:
+            journal.bind_verification(current)
+            return
+        if not journal.journal_matches_verification(current):
+            raise LiveBootstrapError(
+                "execution journal is bound to a different build (transition "
+                "spec / execution source hash mismatch); manual review "
+                "required before explicit re-bind via bind_machine_verification()"
+            )
+
+    def advance_machine(self, event) -> None:
+        """Drive the engine state machine (no-op in plain mode)."""
+        self.engine._advance_machine(event)
 
     def reconcile_and_resume(self, *, token: str, session_date: str | None = None) -> None:
         """Reconciliation-driven SAFE_MODE release (RR-003 / RR4-002 / RR5-002).
@@ -178,6 +255,7 @@ def build_live_stack(
     config_live_enabled: bool = False,
     security_account_type: int | None = None,
     account_status_ok: int | None = None,
+    journal_path: str | None = None,
 ) -> LiveStack:
     """Assemble the live stack in the audited order (fake/real trader both ok).
 
@@ -189,6 +267,11 @@ def build_live_stack(
     constants resolved during production session construction; they are
     persisted into the bridge for reconnect account-health verification
     (NODEB-RR6-002).
+
+    ``journal_path`` (optional) enables the formally-verified state machine:
+    when provided, an :class:`ExecutionJournal` is loaded (strategy +
+    trade-date bound, strict schema) and the engine is driven through the
+    reverse_repo-ported machine, persisting every transition atomically.
     """
     bridge = XtQuantBrokerBridge(
         trader, account, strategy_name=strategy_name, event_sink=event_queue,
@@ -202,9 +285,28 @@ def build_live_stack(
         runtime_confirmation_token=runtime_confirmation_token,
     )
     adapter.apply_config_enable(config_live_enabled)
+    machine = None
+    journal = None
+    if journal_path:
+        from tgrid.execution.execution_journal import ExecutionJournal
+        from tgrid.execution.statemachine import (
+            initial_snapshot,
+            snapshot_from_payload,
+        )
+
+        journal = ExecutionJournal(
+            journal_path, strategy=strategy_name, trade_date=trade_date,
+        )
+        machine_payload = journal.machine
+        machine = (
+            snapshot_from_payload(machine_payload)
+            if machine_payload
+            else initial_snapshot()
+        )
     engine = ExecutionEngine(
         store, adapter, strategy_name=strategy_name,
         order_timeout_seconds=order_timeout_seconds,
+        machine=machine, journal=journal,
     )
     return LiveStack(
         engine=engine, adapter=adapter, bridge=bridge,
