@@ -253,15 +253,29 @@ class AccumulateStrategy:
         price-like basis fields (anchor, previous_close) are transformed to the
         RAW trading domain so comparisons against RAW 5m closes are consistent.
         If the factor is missing the engine fails closed rather than guessing.
+
+        Look-ahead guard (NODEA-R4-001): the pre-market basis for ``trade_date``
+        may only use daily bars STRICTLY BEFORE ``trade_date``.  A daily bar
+        stamped on ``trade_date`` itself is a 15:00 close — future information
+        at the 09:xx decision point — and is dropped before any computation.
+        If no strictly-prior bars remain the engine fails closed.
         """
         _require_nonempty_str(trade_date, "trade_date")
         if daily_bars is None or isinstance(daily_bars, (str, bytes)) or not hasattr(daily_bars, "__len__"):
             raise StrategyInputError("daily_bars must be a sequence of Bar objects")
-        bars = list(daily_bars)
-        if len(bars) == 0:
+        raw_bars = list(daily_bars)
+        if len(raw_bars) == 0:
             raise StrategyInputError("daily_bars must not be empty")
-        for bar in bars:
+        for bar in raw_bars:
             _require_exact(bar, Bar, "daily bar")
+        # Look-ahead guard (NODEA-R4-001): keep only bars strictly before
+        # trade_date; the day-D bar is a 15:00 close = future information.
+        bars = [bar for bar in raw_bars if bar.time[:10] < trade_date]
+        if len(bars) == 0:
+            raise StrategyInputError(
+                "no strictly-prior daily bars before trade_date; refusing to "
+                "compute a basis with look-ahead"
+            )
 
         basis_label = daily_price_basis if daily_price_basis is not None else "RAW"
         if type(basis_label) is not str or basis_label not in ("RAW", "ADJUSTED"):

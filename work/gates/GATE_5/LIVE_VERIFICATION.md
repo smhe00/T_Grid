@@ -1,8 +1,14 @@
 # GATE 5 实机验证报告（真实 MiniQMT 影子运行）
 
+> **状态：`SUPERSEDED`（NODEA-R4-003，2026-08-15）**
+> 本报告记录的 10 日回放结果（含 +13.3 PnL 与 `LIVE VERIFIED` 措辞）是在
+> NODEA-R4-001（无 look-ahead 日线）、逐日因子、可信策略/对账配置之前的旧运行，
+> **不作为当前 Gate-5 验收证据**。当前代码的实机重跑证据需用新 CLI 重新生成
+> （见 `GATE5_RUNBOOK.md`）。下文保留为历史记录。
+
 ## Status
 
-`LIVE VERIFIED` — `2026-08-15`，连接真实 MiniQMT（simulation 环境）完成 Gate 5 Shadow 运行。
+`SUPERSEDED` — 原 `LIVE VERIFIED`（`2026-08-15`）已因 NODEA-R4 修复作废。
 
 ## 环境（已脱敏，AUD-R1-005）
 

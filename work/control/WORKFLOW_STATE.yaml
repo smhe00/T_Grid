@@ -5,26 +5,26 @@ remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
 handoff_seq: 18
-handoff_id: "AUD-NODEA-R4-GATE5-FIX-20260815-018"
-authorized_next:
-  - "AUD-NODEA-GATE5-FIX"
+handoff_id: "AUD-NODEA-R4-GATE5-FIX-DONE-20260815-018"
+authorized_next: ["AUDIT_NODE_A_REVIEW"]
 design_version: "1.1"
 gate: 5
-task_id: "AUD-NODEA-GATE5-FIX"
-state: "CHANGES_REQUIRED"
+task_id: "AUD-NODEA-R4-GATE5-FIX"
+state: "AUDIT_READY"
 owner: "dsh"
 iteration: 5
-last_actor: "independent_auditor"
-last_update: "2026-08-15T11:36:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-15T12:30:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5/NODE_A_REVIEW_ITER4_20260815.md"
 git_base_commit: "e6091ee77e1a9e534c02318eec6dd91a974b894e"
-git_head_commit: "e6091ee77e1a9e534c02318eec6dd91a974b894e"
+git_head_commit: "PENDING_PUSH_AFTER_ITER5"
+implementation_commit: "PENDING_PUSH_AFTER_ITER5"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_NODE_A_AFTER_ITERATION_5_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Audit Node A Iteration 4 verdict CHANGES_REQUIRED. Accepted and frozen: per-day DailyFactorRegistry with no implicit 1.0 fallback, strategy-level 2:1 basis invariance tests, trusted strategy-config binding, explicit settlement/SH-SZ session restriction, settlement carry-forward, tracked _tmp removal, reconciliation-vs-shadow structural separation, ExecutionEngine hardening, and no-live-order boundary. Remaining authorized fixes only: P0 eliminate same-day daily-bar look-ahead in historical replay; P0 restore SymbolConfig.core_qty as sole Core authority (reconciliation state must not create a second Core); P1 refresh current-code REAL_QMT evidence and current CLI runbook/supersede stale LIVE_VERIFICATION; P1 correct exact commit-SHA/control metadata. Gate 5.5/6/7 remain blocked; live_trading_allowed=false."
+notes: "NODEA-R4-001..004 fixed (SELF_CERTIFIED), state AUDIT_READY, awaiting independent Node-A re-review (Iteration 5). R4-001 (P0): replay uses only strictly-prior daily bars for day-D basis (no look-ahead; engine begin_day also filters bar_date < trade_date, fails closed if none); extreme day-D OHLC/volume does not change day-D basis or intraday decisions (strategy-level FI + boundary tests). R4-002 (P0): SymbolConfig.core_qty is the sole Core authority; reconciliation-state carries no Core (or exact-match-checked then discarded); mismatch fails closed. R4-003 (P1): runbook rewritten to current CLI (placeholders, no absolute paths); LIVE_VERIFICATION marked SUPERSEDED; current-code replay evidence to be regenerated with the new CLI. R4-004 (P1): canonical SHA uses exact GitHub full hashes; implementation_commit distinguished from metadata handoff commit. 846 tests OK; compileall 0; AST scan 0 hits. Gate 5.5/6/7 BLOCKED; live_trading_allowed=false; no real order/cancel capability."

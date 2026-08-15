@@ -1,0 +1,48 @@
+{
+  "class": "REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT",
+  "code": {
+    "implementation_sha": "4f15e5038a47ea230eff68ff042a92e7139b8c7f179a60528e80bf87e95fc5f4"
+  },
+  "basis": {
+    "daily": {
+      "dividend_type": "front",
+      "price_basis": "ADJUSTED"
+    },
+    "5m": {
+      "dividend_type": "none",
+      "price_basis": "RAW"
+    }
+  },
+  "factor_registry": {
+    "provenance": "TRUSTED_LOCAL_FACTOR_MAP",
+    "binding_count": 10,
+    "dates": [
+      "2026-08-03",
+      "2026-08-04",
+      "2026-08-05",
+      "2026-08-06",
+      "2026-08-07",
+      "2026-08-10",
+      "2026-08-11",
+      "2026-08-12",
+      "2026-08-13",
+      "2026-08-14"
+    ],
+    "symbols": [
+      "510300.SH"
+    ]
+  },
+  "factor_map_sha256": "c15629b0747b3eadfd0a5bb826cc5f246f70fc13a16543a810353b698f383bb0",
+  "reconciliation_state_sha256": "38876fda73d95a9068935f8cdf4f19aed63bf09a31c4c6ead02497f7d5cfc040",
+  "strategy_config_sha256": "b689ccf388221ba431dc768241a11a10fd30d4924355526b04c0943e528732ef",
+  "settlement": {
+    "symbol": "510300.SH",
+    "rule": "T1"
+  },
+  "reconciliation_source": {
+    "core_authority": "SymbolConfig.core_qty",
+    "strategic_extra_present": true,
+    "open_t_position_present": true
+  },
+  "run_days": 10
+}

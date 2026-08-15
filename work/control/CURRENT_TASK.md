@@ -8,10 +8,26 @@ Self-review must be labelled `SELF_CERTIFIED`; it is not an independent Gate ver
 
 ## Status
 
-`CHANGES_REQUIRED` — execute only the four remaining Node-A findings in:
+`AUDIT_READY`（Iteration 5 fixes complete, SELF_CERTIFIED, awaiting independent Node-A re-review）
 
-```text
-work/gates/GATE_5/NODE_A_REVIEW_ITER4_20260815.md
+## Completion Record (SELF_CERTIFIED — 2026-08-15)
+
+1. NODEA-R4-001 (P0): replay basis uses ONLY strictly-prior daily bars
+   (`bar_date < D`); `AccumulateStrategy.begin_day` also filters and fails
+   closed if none remain; strategy-level FI proves extreme day-D OHLC/volume
+   does not change day-D basis or intraday decisions; boundary tests confirm
+   the last prior bar is included and the current-day bar excluded.
+2. NODEA-R4-002 (P0): `SymbolConfig.core_qty` is the sole Core authority;
+   reconciliation-state carries no Core (or exact-match-checked then
+   discarded); mismatch fails closed before strategy execution.
+3. NODEA-R4-003 (P1): runbook rewritten to the current CLI (placeholders, no
+   absolute paths); `LIVE_VERIFICATION.md` marked `SUPERSEDED`; current-code
+   replay evidence to be regenerated with the new CLI.
+4. NODEA-R4-004 (P1): canonical SHA uses exact full GitHub hashes;
+   `implementation_commit` distinguished from the metadata handoff commit.
+
+Evidence: 846 tests OK; compileall 0; src AST scan 0 hits;
+`work/gates/GATE_5/NODEA_R4_FIX_REPORT.md`.
 ```
 
 Gate 5.5 / Gate 6 / Gate 7 remain blocked. `live_trading_allowed=false` remains mandatory.

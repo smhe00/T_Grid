@@ -2,78 +2,95 @@
 
 > 本手册用于在**真实 MiniQMT 环境**执行设计 §40 的 5 交易日 Shadow 运行。
 > Shadow 模式绝不产生真实订单；任何时刻 `live_trading_allowed=false`。
-
-## 已验证命令（2026-08-15 实机通过）
-
-```powershell
-# 使用带 xtquant 的 venv
-$env:PYTHONPATH = "D:\gitee\miniQMT\T_Grid_dsh\src"
-& "D:\gitee\miniQMT\.venv\Scripts\python.exe" scripts\gate5_shadow_live.py `
-    --config config\gate1_qmt.local.json `
-    --out work\reports\shadow\10day-<date> `
-    --date <YYYY-MM-DD> --code 510300.SH --run-days 10
-```
-
-实机证据见 `work/gates/GATE_5/LIVE_VERIFICATION.md`（10 交易日，4 条 WOULD 订单，
-Realized T PnL +13.3，对账一致）。
+> 本手册反映 NODEA-R4 后的当前 CLI（NODEA-R3-002/R4-003）：显式可信配置、
+> 逐日因子、可信对账状态；**不使用** `config.example.yaml` 作为运行时配置。
 
 ## 前置条件
 
 1. 已安装并登录 MiniQMT（XtQuant 可用），账户为模拟/只读授权状态。
-2. 本仓库代码就绪（`pip install -e .`），`config/config.local.yaml` 已按需配置
-   （`0700.HK` / `000333.SZ` 或自选标的，数量仅为示例）。
-3. 确认 `config/gate1_qmt.local.json` 指向真实 runtime 配置（Gate 1 已验收的
+2. 本仓库代码就绪（`pip install -e .`），准备以下**可信本地文件**（不入库）：
+   - `--strategy-config`：可信策略 YAML（含目标 symbol 的完整 `SymbolConfig`）；
+   - `--factor-map`：逐日 ADJUSTED→RAW 因子 JSON（键 `"SYMBOL|YYYY-MM-DD"` →
+     因子值；每个回放日必须有条目，无默认 1.0）；
+   - `--reconciliation-state`：可信本地分解 JSON（`{ "<symbol>": {
+     "strategic_extra": int, "open_t_position": int } }`；Core 来自
+     `SymbolConfig.core_qty`，state 不得再作 Core 权威）。
+3. 确认 `--config`（gate1_qmt.local.json）指向真实 runtime 配置（Gate 1 已验收的
    version-2 hashed binding）。
 
-## 接入方式（推荐）
-
-`ShadowEngine` 是纯离线核心；真实接入只需把 Gate 1 只读 Adapter 的输出转换成
-`Bar` 序列喂给引擎。生产环境建议直接使用仓库脚本：
+## 运行命令（当前 CLI，NODEA-R4 后）
 
 ```powershell
-python scripts\gate5_shadow_live.py --config config\gate1_qmt.local.json `
-    --out work\reports\shadow\<date> --date <YYYY-MM-DD> --code <SYMBOL> --run-days 5
+# 使用带 xtquant 的 venv；路径仅作示例，请按本机环境替换占位符
+$env:PYTHONPATH = "<repo>/src"
+& "<venv>/Scripts/python.exe" scripts\gate5_shadow_live.py `
+    --config config\gate1_qmt.local.json `
+    --strategy-config <trusted-strategy.yaml> `
+    --factor-map <trusted-factors.json> `
+    --reconciliation-state <trusted-recon.json> `
+    --out work\reports\shadow\<date> `
+    --date <YYYY-MM-DD> --code <SYMBOL> --run-days 10 `
+    --settlement T1            # 或在策略配置中显式 settlement_rule
 ```
 
-脚本内部：读取 Gate 1 runtime/binding → 真实下载日线+5m 历史（只读数据获取）→
-逐交易日 `begin_day`（每日冻结 anchor/ATR/G，设计 §9）→ 逐 5m bar 决策（影子持仓按
-"真实持仓 + 影子成交"的有效模型，INV-005）→ 生成四份交付物。
+### 参数说明
 
-或手工接入：
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| `--config` | ✓ | Gate 1 runtime/binding 配置 |
+| `--strategy-config` | ✓ | 可信策略配置；symbol 必须存在（NODEA-R3-002/R4-002） |
+| `--factor-map` | ✓ | 逐日因子 JSON；缺日 fail-closed（NODEA-R3-001） |
+| `--reconciliation-state` | ✓ | 可信 Core?/Strategic/OpenT 状态（Core 校验见下） |
+| `--settlement` | 条件 | 未在策略配置中显式时必填 T0/T1（NODEA-R3-002） |
+| `--out` / `--date` / `--code` / `--run-days` | ✓ | 输出目录 / 末日 / 标的 / 回放天数 |
+
+> 注：本运行器仅支持 SH/SZ 市场（`SUPPORTED_MARKETS`）。HK 会话策略未实现，
+> 传入非 SH/SZ symbol 会 fail-closed（NODEA-R3-002）。
+
+## 手工接入（ShadowEngine）
 
 ```python
-from tgrid.shadow import ShadowEngine
+from tgrid.shadow import ShadowEngine, build_shadow_reports
 from tgrid.strategy.engine import AccumulateStrategy
-from tgrid.strategy.bars import Bar, SessionWindow
+from tgrid.strategy.bars import SessionWindow
 
 engine = ShadowEngine(
-    AccumulateStrategy(cfg.symbols["0700.HK"], cfg.global_config,
-                       session_window=SessionWindow(570, 900)),
-    symbol="0700.HK",
+    AccumulateStrategy(cfg.symbols["510300.SH"], cfg.global_config,
+                       session_window=SessionWindow(570, 900,
+                                                    lunch_start=690,
+                                                    lunch_end=780)),
+    symbol="510300.SH", core_qty=cfg.symbols["510300.SH"].core_qty,
 )
-engine.begin_day(daily_adjusted_bars, trade_date="2026-08-13")
-
-# 每个 5m bar：
-decision = engine.on_bar(
-    bar,                                  # 来自 ReadOnlyMarketDataAdapter 的 5m bar
-    broker_position=700, can_use_qty=700, strategic_extra=0,
-    available_cash=broker_cash,
-    assume_fill_price=bar.close,          # 影子成交假设：按收盘价
-)
-
+# 每个交易日：仅用 STRICTLY-PRIOR 日线 + 显式逐日因子（NODEA-R4-001）
+engine.begin_day(prior_daily_bars, trade_date="2026-08-13",
+                 adjusted_to_raw_factor=0.5, daily_price_basis="ADJUSTED")
+# 逐 5m bar：
+decision = engine.on_bar(bar, broker_position=..., can_use_qty=...,
+                         strategic_extra=..., available_cash=...,
+                         assume_fill_price=bar.close)
 # 收盘后：
 reports = build_shadow_reports(engine, trade_date="2026-08-13",
-                               broker_positions={"0700.HK": 700})
+                               broker_positions={"510300.SH": ...},
+                               strategic_extras={"510300.SH": ...},
+                               open_t_positions={"510300.SH": ...})
 ```
 
-> 注意：影子持仓必须按"真实券商持仓 + 影子成交"的有效持仓喂给策略（保持
-> Broker=Core+Strategic+OpenT 分解，INV-005）；对账报告仍与真实券商持仓比较。
+## 数据/复权/结算纪律（NODEA-R4）
+
+- **无 look-ahead**：日 D 的 basis 只用 `bar_date < D` 的日线；日 D 的 15:00 日线是
+  未来信息，绝不参与当日 basis（设计 §9）。
+- **显式复权**：日线 `front`（ADJUSTED）、5m `none`（RAW）；因子逐日显式绑定，
+  缺日 fail-closed（NODEA-R3-001）。
+- **单一 Core 权威**：Core 只来自 `SymbolConfig.core_qty`；reconciliation-state
+  若带 `core_qty` 必须与配置精确相等，否则 fail-closed（NODEA-R4-002）。
+- **不推断**：Strategic/OpenT 必须来自可信本地状态；未知组件 → UNKNOWN/SAFE_MODE
+  输入，绝不静默当 0（INV-006）。
 
 ## 5 交易日运行要求（§40）
 
 - 连续 **≥ 5 个完整交易日**（`--run-days 5` 或更大）；
-- 每交易日输出四份交付物（Shadow Orders / Signal Log / Reconciliation Report /
-  Daily Report），建议落盘 `work/reports/shadow/<date>/`；
+- 每交易日输出四份交付物 + `shadow_delta` + `evidence`（含 factor 注册表摘要、
+  settlement、basis、reconciliation_source、run_days）；
 - 每日检查 **Reconciliation Report**：`delta != 0` 时必须人工确认原因，不得静默修复；
 - 运行结束后汇总：Shadow Orders 与 Signal Log 一致、无未解释对账差异、无 risk 型
   violations，才允许进入 Gate 6。
@@ -83,6 +100,13 @@ reports = build_shadow_reports(engine, trade_date="2026-08-13",
 - 该 QMT 客户端（sp3 build）不实现 `xtdata.get_trading_calendar`（"function not
   realize"，ErrorID 300000）：交易日历请使用 `get_trading_dates`。
 - 5m 历史默认未下载：运行器会先 `download_history_data`（只读数据获取，非交易）。
+
+## 旧证据状态（NODEA-R4-003）
+
+- `LIVE_VERIFICATION.md` 中 `LIVE VERIFIED` 与 +13.3 结果是 **NODEA-R4-001 修复前**
+  的历史回放，已标记 `SUPERSEDED`；不作为当前 Gate-5 验收证据。
+- 当前可接受证据类别：`REAL_QMT_REPLAY_VERIFIED`（历史回放 + 真实券商快照）；
+  `LIVE_SOAK_VERIFIED`（连续 wall-clock live-soak）为未来独立里程碑。
 
 ## 退出条件
 

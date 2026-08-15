@@ -116,7 +116,13 @@ def _load_factor_registry(factor_map_path: str, code: str, trading_days) -> Dail
 def _load_reconciliation_state(state_path: str, code: str) -> dict:
     """Load trusted local decomposition for real reconciliation (NODEA-R3-003).
 
-    Returns {"core_qty": int, "strategic_extra": int, "open_t_position": int}.
+    Returns ``{"strategic_extra": int, "open_t_position": int}``.  The state
+    provides ONLY independently known StrategicExtra and persisted/open real
+    T quantity.  ``SymbolConfig.core_qty`` is the sole Core authority
+    (NODEA-R4-002): if the state still carries a ``core_qty`` field it must
+    exactly equal the symbol's configured Core, otherwise fail closed — it is
+    never used as a second Core source.
+
     A missing file fails closed; each component must be present (an unknown
     component is NOT treated as zero).
     """
@@ -132,17 +138,71 @@ def _load_reconciliation_state(state_path: str, code: str) -> dict:
         raise SystemExit(
             f"[fail-closed] no reconciliation state for {code!r}"
         )
-    for field in ("core_qty", "strategic_extra", "open_t_position"):
+    for field in ("strategic_extra", "open_t_position"):
         if field not in entry or type(entry[field]) is not int or entry[field] < 0:
             raise SystemExit(
                 f"[fail-closed] reconciliation state for {code!r} is missing "
                 f"non-negative int {field!r}"
             )
     return {
-        "core_qty": entry["core_qty"],
         "strategic_extra": entry["strategic_extra"],
         "open_t_position": entry["open_t_position"],
     }
+
+
+def _check_core_authority(reconciliation_state: dict, symbol_cfg, code: str) -> None:
+    """Single-Core-authority guard (NODEA-R4-002).
+
+    ``symbol_cfg.core_qty`` is the sole Core source.  If the reconciliation
+    state still carries a ``core_qty`` it must exactly equal the configured
+    value; a mismatch fails closed before any strategy execution.  The state
+    value is never used to construct the engine.
+    """
+    if "core_qty" not in reconciliation_state:
+        return  # preferred schema: no Core in reconciliation state
+    state_core = reconciliation_state["core_qty"]
+    if type(state_core) is not int or state_core != symbol_cfg.core_qty:
+        raise SystemExit(
+            f"[fail-closed] reconciliation-state core_qty {state_core!r} does "
+            f"not equal SymbolConfig.core_qty {symbol_cfg.core_qty!r}; "
+            "SymbolConfig.core_qty is the sole Core authority"
+        )
+
+
+def _strict_prior_daily_bars(daily, trade_date: str):
+    """Daily indicator history STRICTLY BEFORE ``trade_date`` (NODEA-R4-001).
+
+    Design §9: Anchor/ATR are computed before market open and frozen for the
+    day, so a replay for day D may only use completed daily bars with
+    ``bar_date < D``.  The day-D daily bar (a 15:00 print) is future
+    information at the 09:xx decision point and must never enter D's basis.
+    """
+    if type(trade_date) is not str or trade_date == "":
+        raise SystemExit("[fail-closed] trade_date must be a non-empty string")
+    prior = [bar for bar in daily if bar.time[:10] < trade_date]
+    return prior
+
+
+def _file_sha256(path: str) -> str:
+    """SHA-256 of a trusted input file (evidence binding, NODEA-R4-003)."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_of_files(*paths: str) -> str:
+    """Combined SHA-256 of the implementation files backing this run."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for path in paths:
+        digest.update(path.encode("utf-8"))
+        digest.update(_file_sha256(path).encode("utf-8"))
+    return digest.hexdigest()
 
 
 def main(argv=None) -> int:
@@ -255,19 +315,24 @@ def main(argv=None) -> int:
     # 3. Trusted reconciliation decomposition (NODEA-R3-003): loaded from an
     #    explicit local state file, never inferred from the broker residual.
     rec_state = _load_reconciliation_state(args.reconciliation_state, code)
+    # NODEA-R4-002: SymbolConfig.core_qty is the sole Core authority; any
+    # core_qty carried in the state must match exactly (else fail closed).
+    _check_core_authority(rec_state, symbol_cfg, code)
 
     # 4. Strategy + shadow engine (pure offline, fed with real bars).
+    #    NODEA-R4-002: SymbolConfig.core_qty is the SOLE Core authority.
     strategy = AccumulateStrategy(
         symbol_cfg, global_cfg, session_window=A_SHARE_SESSION,
     )
     shadow = ShadowEngine(
         strategy, symbol=code, settlement_policy=settlement,
-        core_qty=rec_state["core_qty"],
+        core_qty=symbol_cfg.core_qty,
     )
 
     # 5. Feed 5m bars day by day (design §9: the anchor is frozen per trading
     #    day, never across days).  Trading days must advance monotonically
-    #    (NODEA-R3-001: no backwards session transition from a pre-loop seed).
+    #    (NODEA-R3-001).  Each day's indicator history is STRICTLY prior
+    #    (NODEA-R4-001): never include day D's own daily bar.
     by_day: dict = defaultdict(list)
     for bar in m5:
         by_day[bar.time[:10]].append(bar)
@@ -276,8 +341,13 @@ def main(argv=None) -> int:
         trading_days = trading_days[-args.run_days:]
     factor_registry = _load_factor_registry(args.factor_map, code, trading_days)
 
-    for index, day in enumerate(trading_days, start=1):
-        day_bars = daily[: len(daily) - (len(trading_days) - index)]
+    for day in trading_days:
+        day_bars = _strict_prior_daily_bars(daily, day)
+        if len(day_bars) == 0:
+            raise SystemExit(
+                f"[fail-closed] no strictly-prior daily bars for {day}; "
+                "cannot compute a pre-market basis without look-ahead"
+            )
         # NODEA-R3-001: trusted per-day factor; fail closed if absent.
         factor = factor_registry.factor_for(code, day)
         shadow.begin_day(
@@ -305,6 +375,14 @@ def main(argv=None) -> int:
     )
     reports["evidence"] = {
         "class": EVIDENCE_CLASS,
+        "code": {
+            "implementation_sha": _sha256_of_files(
+                "scripts/gate5_shadow_live.py",
+                "src/tgrid/shadow/engine.py",
+                "src/tgrid/shadow/daily_factor.py",
+                "src/tgrid/strategy/engine.py",
+            ),
+        },
         "basis": {
             "daily": {"dividend_type": DIVIDEND_DAILY,
                       "price_basis": daily_binding.price_basis},
@@ -312,9 +390,15 @@ def main(argv=None) -> int:
                    "price_basis": m5_binding.price_basis},
         },
         "factor_registry": factor_registry.sanitized_summary(),
+        "factor_map_sha256": _file_sha256(args.factor_map),
+        "reconciliation_state_sha256": _file_sha256(args.reconciliation_state),
+        "strategy_config_sha256": _file_sha256(args.strategy_config),
         "settlement": {"symbol": settlement.symbol, "rule": settlement.rule},
         "reconciliation_source": {
-            "core_qty_present": True,
+            # NODEA-R4-002: Core is NOT in the reconciliation state; it comes
+            # solely from SymbolConfig.  Only StrategicExtra and OpenT are
+            # loaded from trusted local state.
+            "core_authority": "SymbolConfig.core_qty",
             "strategic_extra_present": True,
             "open_t_position_present": True,
         },
