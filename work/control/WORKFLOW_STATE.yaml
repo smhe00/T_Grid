@@ -4,27 +4,26 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 15
-handoff_id: "AUD-NODEA-GATE5-FIX-20260815-015"
-authorized_next:
-  - "AUD-NODEA-GATE5-FIX"
+handoff_seq: 16
+handoff_id: "AUD-NODEA-GATE5-FIX-DONE-20260815-016"
+authorized_next: ["AUDIT_NODE_A_REVIEW"]
 design_version: "1.1"
 gate: 5
 task_id: "AUD-NODEA-GATE5-FIX"
-state: "CHANGES_REQUIRED"
+state: "AUDIT_READY"
 owner: "dsh"
 iteration: 3
-last_actor: "independent_auditor"
-last_update: "2026-08-15T10:51:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-15T11:30:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5/NODE_A_REVIEW_20260815.md"
 git_base_commit: "910a727d3ef66c262abfd9dea45b092106f6d4a6"
-git_head_commit: "910a727d3ef66c262abfd9dea45b092106f6d4a6"
+git_head_commit: "PENDING_PUSH"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_NODE_A_AFTER_ITERATION_3_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Audit Node A verdict CHANGES_REQUIRED. DSH is authorized only for six Gate-5 fixes in NODE_A_REVIEW_20260815/CURRENT_TASK: basis-domain normalization between ADJUSTED indicators and RAW trading prices; multi-day settlement sellable carry-forward; explicit settlement/symbol fail-closed policy; reconciliation evidence without broker-residual reclassification; removal of tracked _tmp from current HEAD; canonical/evidence consistency. Explicit dividend_type plumbing, reconciliation-vs-shadow structural separation, AUD-R1-007 executor hardening and no-live-order boundary are retained. Gate 5.5/6/7 remain blocked; live_trading_allowed=false."
+notes: "NODEA-001..006 fixed (SELF_CERTIFIED), state AUDIT_READY, awaiting independent Node-A re-review. NODEA-001: explicit ADJUSTED->RAW same-day factor transform (tgrid.strategy.basis_transform) + BasisBinding metadata consistency; price-like basis fields live in RAW domain. NODEA-002: settlement released balance carries forward across sessions (persistent balance). NODEA-003: runner requires explicit settlement rule + configured symbol (fail closed, no synthetic config). NODEA-004: reconciliation never infers Strategic/OpenT from broker residual; independent decomposition; non-zero evidence regenerated. NODEA-005: tracked _tmp/ removed from HEAD via normal forward commit. NODEA-006: control plane consistent (832 tests OK, real SHA, REAL_QMT_REPLAY_VERIFIED wording). Gate 5.5/6/7 BLOCKED; live_trading_allowed=false; no real order/cancel capability."

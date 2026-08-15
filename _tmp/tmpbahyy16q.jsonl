@@ -1,1 +1,0 @@
-{"schema_version": 1, "timestamp": "2026-08-15T00:16:00.429737+00:00", "level": "INFO", "logger": "tgrid.test.ctx", "event": "evt", "message": "m", "context": {"a": 1, "b": [1, 2], "c": null, "d": true}}

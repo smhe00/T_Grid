@@ -45,7 +45,13 @@ _MODE_TO_BASIS = {
 
 @dataclass(frozen=True)
 class BasisBinding:
-    """Auditable record of exactly how one acquisition was made."""
+    """Auditable record of exactly how one acquisition was made.
+
+    The ``price_basis`` must be the deterministic consequence of
+    ``dividend_type`` (NODEA-001): an inconsistent pair such as
+    ``dividend_type=front`` with ``price_basis=RAW`` is rejected at
+    construction, so basis metadata can never lie about the acquisition.
+    """
 
     period: str
     dividend_type: str
@@ -58,6 +64,12 @@ class BasisBinding:
             raise ShadowInputError(
                 f"unsupported dividend_type {self.dividend_type!r}; "
                 "explicit RAW (none) / ADJUSTED (front) only"
+            )
+        expected_basis = _MODE_TO_BASIS[self.dividend_type]
+        if type(self.price_basis) is not str or self.price_basis != expected_basis:
+            raise ShadowInputError(
+                f"price_basis {self.price_basis!r} is inconsistent with "
+                f"dividend_type {self.dividend_type!r}; expected {expected_basis!r}"
             )
 
 

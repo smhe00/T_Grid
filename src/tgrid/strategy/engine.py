@@ -44,6 +44,7 @@ from tgrid.risk.exceptions import (
     SellReservationConflict,
 )
 from tgrid.strategy.bars import Bar, SessionWindow
+from tgrid.strategy.basis_transform import to_raw_domain
 from tgrid.strategy.exceptions import StrategyError, StrategyInputError
 from tgrid.strategy.grid import buy_level, exit_target_price, grid_pct, legalize_price
 from tgrid.strategy.halts import (
@@ -118,7 +119,16 @@ Reason = _Reason()
 
 @dataclass(frozen=True)
 class DailyBasis:
-    """Frozen daily anchor/volatility/grid values (design §9–§11)."""
+    """Frozen daily anchor/volatility/grid values (design §9–§11).
+
+    All *price-like* fields (``anchor``, ``previous_close``) are stored in the
+    RAW trading domain after an explicit same-day ADJUSTED->RAW transform
+    (NODEA-001), so every subsequent comparison against RAW 5m ``bar.close``
+    is dimensionally consistent.  Dimensionless fields (``atr_pct``,
+    ``grid_g``) are never transformed.  ``adjusted_to_raw_factor`` records the
+    factor used (auditable), or 1.0 when the basis was computed directly from
+    RAW data.
+    """
 
     trade_date: str
     anchor: float
@@ -127,6 +137,7 @@ class DailyBasis:
     atr_pct: float
     grid_g: float
     previous_close: float
+    adjusted_to_raw_factor: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -221,13 +232,27 @@ class AccumulateStrategy:
 
     # ------------------------------------------------------------------ basis
 
-    def begin_day(self, daily_bars: object, *, trade_date: str) -> DailyBasis:
-        """Freeze the day's anchor/ATR/grid from adjusted daily bars (design §9–§11).
+    def begin_day(
+        self,
+        daily_bars: object,
+        *,
+        trade_date: str,
+        adjusted_to_raw_factor: object = None,
+        daily_price_basis: object = None,
+    ) -> DailyBasis:
+        """Freeze the day's anchor/ATR/grid from daily bars (design §9–§11).
 
         Anchor = VWAP20, falling back to EMA20 when VWAP20 cannot be computed
         (insufficient bars or zero volume).  ATR14 and ATR% drive the adaptive
         grid G.  ``previous_close`` is the last daily bar's close (volatility
         halt reference, §28).  Returns the frozen :class:`DailyBasis`.
+
+        Basis discipline (NODEA-001): the daily bars are the *indicator*
+        history (normally ADJUSTED).  When ``daily_price_basis`` is ADJUSTED,
+        an explicit same-day ``adjusted_to_raw_factor`` must be supplied; the
+        price-like basis fields (anchor, previous_close) are transformed to the
+        RAW trading domain so comparisons against RAW 5m closes are consistent.
+        If the factor is missing the engine fails closed rather than guessing.
         """
         _require_nonempty_str(trade_date, "trade_date")
         if daily_bars is None or isinstance(daily_bars, (str, bytes)) or not hasattr(daily_bars, "__len__"):
@@ -237,6 +262,12 @@ class AccumulateStrategy:
             raise StrategyInputError("daily_bars must not be empty")
         for bar in bars:
             _require_exact(bar, Bar, "daily bar")
+
+        basis_label = daily_price_basis if daily_price_basis is not None else "RAW"
+        if type(basis_label) is not str or basis_label not in ("RAW", "ADJUSTED"):
+            raise StrategyInputError(
+                "daily_price_basis must be 'RAW' or 'ADJUSTED'"
+            )
 
         anchor = None
         method = ""
@@ -260,6 +291,17 @@ class AccumulateStrategy:
             min_grid=self._symbol_config.min_grid,
             max_grid=self._symbol_config.max_grid,
         )
+
+        # NODEA-001: price-like basis values must live in the RAW trading
+        # domain.  ADJUSTED indicator history needs an explicit same-day
+        # factor; without it we fail closed instead of comparing ADJUSTED
+        # values against RAW execution prices.
+        factor = 1.0
+        if basis_label == "ADJUSTED":
+            factor = to_raw_domain_factor(adjusted_to_raw_factor)
+            anchor = to_raw_domain(anchor, factor)
+            close = to_raw_domain(close, factor)
+
         self._basis = DailyBasis(
             trade_date=trade_date,
             anchor=anchor,
@@ -268,6 +310,7 @@ class AccumulateStrategy:
             atr_pct=atr_pct_value,
             grid_g=g,
             previous_close=close,
+            adjusted_to_raw_factor=factor,
         )
         self._day_halts = set()
         self._quality = DataQualityGuard(

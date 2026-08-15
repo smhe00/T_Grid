@@ -82,16 +82,25 @@ def _m5(day, minute, close, volume=1000):
     )
 
 
-def _run_scenario(symbol_cfg, core_qty, *, held, can_use, label, out_name):
+def _run_scenario(symbol_cfg, core_qty, *, held, can_use, strategic_extra,
+                  label, out_name):
+    """Run one scenario.
+
+    ``held``/``can_use`` are the REAL broker quantities; ``strategic_extra``
+    is an INDEPENDENTLY supplied local-state component (NODEA-004): it is
+    never inferred from ``held - core``.  ``core_qty`` is the symbol's Core
+    from configuration.  The reconciliation decomposition is therefore
+    trusted local state, not a broker-residual guess.
+    """
     strategy = AccumulateStrategy(symbol_cfg, _global(), session_window=SESSION)
     policy = SettlementPolicy(symbol="510300.SH", rule=SETTLE_T1)
     shadow = ShadowEngine(
         strategy, symbol="510300.SH", settlement_policy=policy, core_qty=core_qty,
     )
-    shadow.begin_day(_daily_bars(), trade_date="2026-08-12")
-
-    # Real strategic extra = held - core (only when held exceeds core).
-    strategic_extra = max(0, held - core_qty)
+    shadow.begin_day(
+        _daily_bars(), trade_date="2026-08-12",
+        adjusted_to_raw_factor=1.0, daily_price_basis="ADJUSTED",
+    )
 
     # Day 1: buy at the dip (T+1 locks the shares).  Gap 433 vs 440 is 1.6%,
     # below 2G (2.4%), so no volatility halt; 433 < Buy_1 (434.7) triggers.
@@ -114,7 +123,10 @@ def _run_scenario(symbol_cfg, core_qty, *, held, can_use, label, out_name):
     )
     # Day 2: shares released (T+1); rebound may sell.  can_use gains the
     # released shadow shares; broker total stays the real holding.
-    shadow.begin_day(_daily_bars(), trade_date="2026-08-13")
+    shadow.begin_day(
+        _daily_bars(), trade_date="2026-08-13",
+        adjusted_to_raw_factor=1.0, daily_price_basis="ADJUSTED",
+    )
     shadow.on_bar(
         _m5("2026-08-13", 600, 436.0), now="2026-08-13T10:00:00",
         broker_position=held, can_use_qty=can_use,
@@ -160,16 +172,20 @@ def _run_scenario(symbol_cfg, core_qty, *, held, can_use, label, out_name):
 
 
 def main() -> int:
-    # Scenario 1: zero real position (core 0, nothing held).
+    # Scenario 1: zero real position (core 0, nothing held, no strategic).
     _run_scenario(
         _symbol(core_qty=0, target_qty=100000), core_qty=0,
-        held=0, can_use=0, label="zero-real-position", out_name="zero-position",
+        held=0, can_use=0, strategic_extra=0,
+        label="zero-real-position", out_name="zero-position",
     )
-    # Scenario 2: non-zero real/Core position (core 600, 700 held, 600 can_use).
+    # Scenario 2: non-zero real position with an INDEPENDENTLY supplied local
+    # decomposition: core 600 (config) + strategic 100 (known local state) =
+    # broker 700.  strategic_extra=100 is trusted local state, NOT inferred
+    # from the broker residual (NODEA-004 / INV-006).
     _run_scenario(
         _symbol(), core_qty=600,
-        held=700, can_use=600, label="non-zero-real-core-position",
-        out_name="nonzero-core-position",
+        held=700, can_use=600, strategic_extra=100,
+        label="non-zero-real-core-position", out_name="nonzero-core-position",
     )
     print(f"[evidence] wrote sanitized evidence to {OUT}")
     return 0

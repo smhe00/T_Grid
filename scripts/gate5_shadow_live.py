@@ -50,32 +50,35 @@ def _load_symbol_and_global(config_path: str, code: str):
 
     root = load_config(config_path)
     symbol_cfg = root.symbols.get(code)
-    if symbol_cfg is not None:
-        return symbol_cfg, root.global_config
-    # Fall back to a conservative default shape for the target symbol (the
-    # design never hard-codes securities; this is only a demo fallback).
-    from tgrid.models import SymbolConfig
-
-    fallback = SymbolConfig(
-        enabled=True, mode="ACCUMULATE", core_qty=0, target_qty=100000,
-        t_unit=100, lot_size=100, price_tick=0.001, max_t_lots=2,
-        max_t_capital=500000.0, anchor="VWAP20", atr_period=14, atr_k=1.2,
-        min_grid=0.004, max_grid=0.012, exit_multiple=1.15,
-    )
-    return fallback, root.global_config
+    if symbol_cfg is None:
+        # NODEA-003: an unknown/unconfigured symbol must FAIL CLOSED in the
+        # real-QMT runner.  A synthetic permissive SymbolConfig would let the
+        # engine trade a symbol with no trusted parameters; that is forbidden.
+        raise SystemExit(
+            f"[fail-closed] symbol {code!r} is not configured; refusing to "
+            "run the real-QMT shadow strategy without trusted per-symbol "
+            "parameters"
+        )
+    return symbol_cfg, root.global_config
 
 
 def _settlement_rule_for(code: str) -> str:
-    """Explicit settlement rule per symbol (AUD-R1-002).
+    """Explicit settlement rule per symbol (AUD-R1-002, NODEA-003).
 
     A-share (SH/SZ equities and A-share ETFs) settle T+1; HK same-day.  The
-    rule is explicit per symbol; unknown patterns fail closed in
-    SettlementPolicy.  This mapping is the documented default and is
-    overridable via ``--settlement``.
+    rule must be explicit per symbol; an unknown/unsupported pattern fails
+    closed in SettlementPolicy rather than guessing.  The runner prefers an
+    explicit ``--settlement`` argument; this default is only a documented
+    mapping and is validated by SettlementPolicy before any strategy run.
     """
     if code.endswith(".HK"):
         return "T0"
-    return SETTLE_T1
+    if code.endswith((".SH", ".SZ")):
+        return SETTLE_T1
+    raise SystemExit(
+        f"[fail-closed] no explicit settlement rule for {code!r}; pass "
+        "--settlement T0|T1"
+    )
 
 
 def main(argv=None) -> int:
@@ -89,6 +92,9 @@ def main(argv=None) -> int:
                         help="number of consecutive trading days to shadow (design 40: >= 5)")
     parser.add_argument("--settlement", default=None,
                         help="explicit settlement rule T0/T1 (default per symbol)")
+    parser.add_argument("--adjusted-to-raw-factor", type=float, default=1.0,
+                        help="same-day ADJUSTED->RAW factor for the daily "
+                             "indicator basis (NODEA-001); must be > 0")
     args = parser.parse_args(argv)
 
     from tgrid.integrations.qmt_gate1_runtime import (
@@ -192,7 +198,15 @@ def main(argv=None) -> int:
         trading_days = trading_days[-args.run_days:]
     for index, day in enumerate(trading_days, start=1):
         day_bars = daily[: len(daily) - (len(trading_days) - index)]
-        shadow.begin_day(day_bars, trade_date=day)
+        # NODEA-001: the daily indicator history is ADJUSTED; the same-day
+        # ADJUSTED->RAW factor is explicit (default 1.0 when no corporate
+        # action applies).  The engine converts price-like basis fields to the
+        # RAW trading domain before any comparison with RAW 5m closes.
+        shadow.begin_day(
+            day_bars, trade_date=day,
+            adjusted_to_raw_factor=args.adjusted_to_raw_factor,
+            daily_price_basis=daily_binding.price_basis,
+        )
         for bar in by_day[day]:
             shadow.on_bar(
                 bar,

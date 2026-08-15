@@ -182,14 +182,27 @@ class ShadowEngine:
 
     # ------------------------------------------------------------------ flow
 
-    def begin_day(self, daily_bars: object, *, trade_date: str) -> None:
+    def begin_day(
+        self,
+        daily_bars: object,
+        *,
+        trade_date: str,
+        adjusted_to_raw_factor: object = None,
+        daily_price_basis: object = None,
+    ) -> None:
         if self._settlement is not None and self._current_day is not None:
             if trade_date != self._current_day:
-                # Next trading session: release yesterday's locked buys (T1).
+                # Next trading session: release yesterday's locked buys (T1)
+                # into the persistent sellable balance (NODEA-002).
                 self._settlement.advance_trading_day(
                     self._current_day, trade_date
                 )
-        self._strategy.begin_day(daily_bars, trade_date=trade_date)
+        self._strategy.begin_day(
+            daily_bars,
+            trade_date=trade_date,
+            adjusted_to_raw_factor=adjusted_to_raw_factor,
+            daily_price_basis=daily_price_basis,
+        )
         if self._settlement is not None:
             self._current_day = trade_date
 
