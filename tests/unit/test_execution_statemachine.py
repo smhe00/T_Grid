@@ -29,6 +29,7 @@ from tgrid.execution.execution_journal import (
 from tgrid.execution.port import (
     BrokerDisconnectedError,
     BrokerError,
+    BrokerOrderRejectedError,
 )
 from tgrid.execution.simbroker import SimBroker
 from tgrid.execution.statemachine import (
@@ -197,26 +198,42 @@ class TestJournal(unittest.TestCase):
     def test_initialize_and_reload(self):
         path = _temp_path()
         j = ExecutionJournal(path, strategy="TGRID", trade_date="2026-08-15")
+        j.load_or_initialize()  # lazy: first touch loads/creates
         self.assertEqual(j.payload["schema_version"], 2)
         self.assertEqual(j.payload["strategy"], "TGRID")
         j.transition(TGridEvent.BEGIN, snapshot_to_payload(initial_snapshot()))
         j2 = ExecutionJournal(path, strategy="TGRID", trade_date="2026-08-15")
+        self.assertEqual(j2.machine["state"], "new")  # lazy touch loads
         self.assertEqual(j2.payload["event_count"], 1)
-        self.assertEqual(j2.machine["state"], "new")
+        os.remove(path)
+
+    def test_lazy_init_touches_nothing_before_first_use(self):
+        # SM9-002: construction must not read/write the journal; the caller
+        # acquires the execution mutex BEFORE the first touch.
+        path = _temp_path()
+        j = ExecutionJournal(path, strategy="TGRID", trade_date="2026-08-15")
+        self.assertFalse(os.path.exists(path))
+        self.assertEqual(j.payload, {})
+        j.load_or_initialize()
+        self.assertTrue(os.path.exists(path))
         os.remove(path)
 
     def test_strategy_mismatch_rejected(self):
         path = _temp_path()
-        ExecutionJournal(path, strategy="TGRID", trade_date="2026-08-15")
+        ExecutionJournal(path, strategy="TGRID",
+                         trade_date="2026-08-15").load_or_initialize()
         with self.assertRaises(JournalSchemaError):
-            ExecutionJournal(path, strategy="OTHER", trade_date="2026-08-15")
+            ExecutionJournal(path, strategy="OTHER",
+                             trade_date="2026-08-15").load_or_initialize()
         os.remove(path)
 
     def test_trade_date_mismatch_rejected(self):
         path = _temp_path()
-        ExecutionJournal(path, strategy="TGRID", trade_date="2026-08-15")
+        ExecutionJournal(path, strategy="TGRID",
+                         trade_date="2026-08-15").load_or_initialize()
         with self.assertRaises(JournalSchemaError):
-            ExecutionJournal(path, strategy="TGRID", trade_date="2026-08-16")
+            ExecutionJournal(path, strategy="TGRID",
+                             trade_date="2026-08-16").load_or_initialize()
         os.remove(path)
 
     def test_transition_history_bounded_and_sequenced(self):
@@ -250,14 +267,62 @@ class TestJournal(unittest.TestCase):
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("{not json")
         with self.assertRaises(JournalIntegrityError):
-            ExecutionJournal(path, strategy="TGRID", trade_date="2026-08-15")
+            ExecutionJournal(path, strategy="TGRID",
+                             trade_date="2026-08-15").load_or_initialize()
         os.remove(path)
+
+
+class TestSourceManifestIntegrity(unittest.TestCase):
+    """SM9-005: protected source manifest is complete and fail-closed."""
+
+    def test_manifest_covers_safety_critical_sources(self):
+        from tgrid.execution.statemachine import EXECUTION_SOURCE_FILES
+
+        required = {
+            # execution authority
+            "src/tgrid/execution/statemachine.py",
+            "src/tgrid/execution/execution_journal.py",
+            "src/tgrid/execution/execution_mutex.py",
+            "src/tgrid/execution/executor.py",
+            "src/tgrid/execution/recovery.py",
+            "src/tgrid/execution/store.py",
+            "src/tgrid/execution/models.py",
+            "src/tgrid/execution/port.py",
+            # production wiring + account/session construction
+            "src/tgrid/integrations/live_bootstrap.py",
+            "src/tgrid/integrations/live_session.py",
+            "src/tgrid/integrations/live_broker_adapter.py",
+            "src/tgrid/integrations/xtquant_bridge.py",
+            # durable daily exposure / exposure persistence
+            "src/tgrid/integrations/daily_exposure.py",
+            "src/tgrid/integrations/exposure_store.py",
+        }
+        self.assertTrue(
+            required <= set(EXECUTION_SOURCE_FILES),
+            f"manifest missing: {required - set(EXECUTION_SOURCE_FILES)}",
+        )
+
+    def test_missing_protected_file_fails_verification(self):
+        import tgrid.execution.statemachine as sm
+
+        original = sm.EXECUTION_SOURCE_FILES
+        try:
+            sm.EXECUTION_SOURCE_FILES = original + (
+                "src/tgrid/execution/__no_such_protected_file__.py",
+            )
+            with self.assertRaises(sm.ExecutionSourceIntegrityError):
+                sm.execution_source_sha256()
+            # verify_state_machines() propagates the integrity failure.
+            with self.assertRaises(sm.ExecutionSourceIntegrityError):
+                sm.verify_state_machines()
+        finally:
+            sm.EXECUTION_SOURCE_FILES = original
 
 
 class TestEngineStateMachineIntegration(unittest.TestCase):
     """State-machine + journal drive the ExecutionEngine order lifecycle."""
 
-    def _engine(self, path):
+    def _engine(self, path, broker=None):
         from tgrid.execution.executor import ExecutionEngine
         from tgrid.execution.execution_journal import ExecutionJournal
         from tgrid.execution.simbroker import SimBroker
@@ -266,7 +331,7 @@ class TestEngineStateMachineIntegration(unittest.TestCase):
 
         conn = initialize(path)
         store = ExecutionStore(conn)
-        broker = SimBroker()
+        broker = broker or SimBroker()
         journal = ExecutionJournal(
             _temp_path(), strategy="TGRID", trade_date="2026-08-15"
         )
@@ -399,6 +464,95 @@ class TestEngineStateMachineIntegration(unittest.TestCase):
         finally:
             conn.close()
             os.remove(path)
+
+    def test_send_requires_trusted_preflight(self):
+        """SM9-003A: send_* must NOT synthesize TRIGGER/SNAPSHOT_OK."""
+        from tgrid.execution.executor import ExecutionError
+
+        conn, store, broker, engine, journal = self._engine(_temp_path())
+        try:
+            # Machine at WAIT_TRIGGER only (BEGIN..RECOVERY_CLEAR).
+            for ev in (TGridEvent.BEGIN, TGridEvent.PREFLIGHT_OK,
+                       TGridEvent.RECOVERY_CLEAR):
+                engine._advance_machine(ev)
+            self.assertEqual(engine.machine.state.value, "wait_trigger")
+            with self.assertRaises(ExecutionError):
+                engine.send_buy(
+                    client_order_key="K1", symbol="0700.HK", qty=100,
+                    limit_price=420.0, order_remark="TG_0700_B01", now="t0",
+                    expected_available_cash=500000.0, reserved_cash=42000.0,
+                )
+            # No self-certified snapshot: the machine never moved to READY.
+            self.assertEqual(engine.machine.state.value, "wait_trigger")
+        finally:
+            conn.close()
+
+    def test_canceled_observed_from_order_active_uses_order_terminal(self):
+        """SM9-003B: a spontaneous broker CANCELED from ORDER_ACTIVE uses
+        ORDER_TERMINAL (CANCEL_TERMINAL is only valid from CANCEL_PENDING)."""
+        conn, store, broker, engine, journal = self._engine(_temp_path())
+        try:
+            self._run_to_ready(engine, journal)
+            result = engine.send_buy(
+                client_order_key="K1", symbol="0700.HK", qty=100,
+                limit_price=420.0, order_remark="TG_0700_B01", now="t0",
+                expected_available_cash=500000.0, reserved_cash=42000.0,
+            )
+            self.assertEqual(engine.machine.state.value, "order_active")
+            broker.get_order(result.broker_order_id).status = "CANCELED"
+            outcome = engine.poll_order("K1", now="t1")
+            self.assertEqual(outcome.status, "CANCELED")
+            self.assertEqual(engine.machine.state.value, "reconcile_terminal_order")
+        finally:
+            conn.close()
+
+    def test_poll_after_cancel_uses_cancel_pending_events(self):
+        """SM9-003B: while CANCEL_PENDING, pending outcomes map to
+        CANCEL_STILL_PENDING and terminal outcomes to CANCEL_TERMINAL."""
+        broker = _AsyncCancelBroker()
+        conn, store, broker, engine, journal = self._engine(_temp_path(), broker)
+        try:
+            self._run_to_ready(engine, journal)
+            result = engine.send_buy(
+                client_order_key="K1", symbol="0700.HK", qty=100,
+                limit_price=420.0, order_remark="TG_0700_B01", now="t0",
+                expected_available_cash=500000.0, reserved_cash=42000.0,
+            )
+            engine.timeout_order("K1", now="t1")  # async cancel: stays pending
+            self.assertEqual(engine.machine.state.value, "cancel_pending")
+            self.assertEqual(broker.get_order(result.broker_order_id).status,
+                             "CANCEL_REQUESTED")
+            # Cancel completes asynchronously -> CANCEL_TERMINAL -> RECONCILE.
+            broker.get_order(result.broker_order_id).status = "CANCELED"
+            outcome = engine.poll_order("K1", now="t2")
+            self.assertEqual(outcome.status, "CANCELED")
+            self.assertEqual(engine.machine.state.value, "reconcile_terminal_order")
+        finally:
+            conn.close()
+
+    def test_definitive_rejection_maps_submit_rejected(self):
+        """SM9-003D: a definitive rejection (BrokerOrderRejectedError) maps to
+        SUBMIT_REJECTED -> SAFE_HALT and closes the intent, never to the
+        ambiguous SUBMIT_EXCEPTION."""
+        from tgrid.execution.executor import OrderSendFailedError
+        from tgrid.execution.port import BrokerOrderRejectedError
+
+        broker = _RejectingBroker()
+        conn, store, broker, engine, journal = self._engine(_temp_path(), broker)
+        try:
+            self._run_to_ready(engine, journal)
+            with self.assertRaises(OrderSendFailedError):
+                engine.send_buy(
+                    client_order_key="K1", symbol="0700.HK", qty=100,
+                    limit_price=420.0, order_remark="TG_0700_B01", now="t0",
+                    expected_available_cash=500000.0, reserved_cash=42000.0,
+                )
+            self.assertEqual(engine.machine.state.value, "safe_halt")
+            self.assertEqual(store.get_intent("K1").status, "REJECTED")
+            # Definitive rejection released the reservation.
+            self.assertEqual(tuple(store.list_active_reservations()), ())
+        finally:
+            conn.close()
 
 
 class TestUnknownSubmissionRecovery(unittest.TestCase):
@@ -580,6 +734,22 @@ class TestUnknownSubmissionRecovery(unittest.TestCase):
         finally:
             conn.close()
 
+    def test_recovery_has_no_caller_remark_override(self):
+        """SM9-004: the persisted intent remark is the SOLE recovery identity;
+        a caller-supplied remark selector no longer exists."""
+        conn, store, broker, engine, journal = self._engine(
+            _FailAfterPlaceBroker()
+        )
+        try:
+            self._run_to_ready(engine)
+            self._failed_send(engine)
+            with self.assertRaises(TypeError):
+                engine.recover_unknown_submission(
+                    "K1", now="t1", remark="ATTACKER_CHOSEN_REMARK"
+                )
+        finally:
+            conn.close()
+
 
 class _FailAfterPlaceBroker(SimBroker):
     """SimBroker that records the order, then raises (post-send ambiguity)."""
@@ -601,6 +771,23 @@ class _FailAfterPlaceBroker(SimBroker):
         if self.status_override is not None:
             order.status = self.status_override
         raise BrokerDisconnectedError("simulated post-send failure")
+
+
+class _AsyncCancelBroker(SimBroker):
+    """cancel_order marks CANCEL_REQUESTED; the order stays pending (async)."""
+
+    def cancel_order(self, order_id: str) -> None:
+        order = self.get_order(order_id)
+        if order.status in ("FILLED", "CANCELED", "REJECTED"):
+            raise BrokerError("cannot cancel a terminal order")
+        order.status = "CANCEL_REQUESTED"
+
+
+class _RejectingBroker(SimBroker):
+    """place_order always returns a definitive broker rejection."""
+
+    def place_order(self, **kwargs):
+        raise BrokerOrderRejectedError("broker rejected the order at send time")
 
 
 if __name__ == "__main__":

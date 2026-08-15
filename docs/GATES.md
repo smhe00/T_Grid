@@ -26,7 +26,15 @@
 > **journal 驱动崩溃恢复**（reload 中继机器 → RESTART→RECOVERY，启动对账后按
 > reconcile 结果驱动 RECOVERY_ACTIVE/CANCEL_PENDING/TERMINAL/CLEAR；终态
 > journal 拒绝重复激活 fail-closed）。
-> 回归 **998 tests OK**。
+> **Iteration 10（REVIEW_READY）**：独立审计 Iteration 9（`5403829`）判定
+> NODEB-SM9-001..005 CHANGES_REQUIRED，已全部修复（SELF_CERTIFIED）：
+> `build_live_session` 生产路径无条件绑定 journal+互斥锁（无静默 opt-out）；
+> journal 惰性初始化 + 锁先于 journal（输者不触碰共享 journal）；释放锁后
+> `block_permanently` 永久禁用新订单；可信 preflight `prepare_snapshot(evidence)`
+> 结构化绑定证据；poll/cancel 事件按状态族分派；恢复多重/混合未决 fail-closed；
+> 确定性拒绝（`BrokerRejectedError`）→ SUBMIT_REJECTED；持久化 remark 为唯一
+> 恢复权威；验证源 manifest 扩展至 14 个安全关键文件且缺文件即失败。
+> 回归 **1009 tests OK**；verifier 39/115/0/0/0 不变。
 > `live_trading_allowed=false`；真实资金 Gate 6/7 仍 BLOCKED，须用户另行显式授权。
 
 | Gate | 内容 | 当前状态 | 说明 / 验收证据 |
@@ -45,7 +53,7 @@
 ## 当前测试证据（SELF_CERTIFIED）
 
 ```text
-python -m unittest discover -s tests -p "test_*.py"   # 998 tests OK
+python -m unittest discover -s tests -p "test_*.py"   # 1009 tests OK
 python -m compileall -q src tests                      # exit 0
 src AST 扫描（assert / xtquant import / 桥外 order_stock/cancel_order_stock）: 0 命中
 capability_scan: 真实 order/cancel 调用点仅限 xtquant_bridge.py（桥内 2、桥外 0）

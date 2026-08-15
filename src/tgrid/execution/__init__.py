@@ -28,6 +28,7 @@ from tgrid.execution.port import (
     BrokerOrder,
     BrokerOrderRejectedError,
     BrokerPort,
+    BrokerRejectedError,
     BrokerTrade,
 )
 from tgrid.execution.simbroker import (
@@ -51,6 +52,7 @@ from tgrid.execution.execution_mutex import (
     ExecutionMutex,
 )
 from tgrid.execution.statemachine import (
+    ExecutionSourceIntegrityError,
     InvariantViolation,
     InvalidTransition,
     MachineSnapshot,
@@ -101,6 +103,7 @@ __all__ = [
     "BrokerDisconnectedError",
     "BrokerOrderRejectedError",
     "BrokerCancelFailedError",
+    "BrokerRejectedError",
     "SimBroker",
     "SimOrder",
     "SimFill",
@@ -129,6 +132,7 @@ __all__ = [
     "verify_state_machines",
     "InvalidTransition",
     "InvariantViolation",
+    "ExecutionSourceIntegrityError",
     "ExecutionJournal",
     "ExecutionJournalError",
     "JournalSchemaError",

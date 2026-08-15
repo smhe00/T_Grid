@@ -2,19 +2,58 @@
 
 ## Status
 
-`AUDIT_READY_PRELIVE (ITERATION 9)` — Node B Iteration-6 复审（`9b664d8`，
-`work/gates/GATE_5_5/NODE_B_REVIEW_ITER6_20260815.md`）判定 `CHANGES_REQUIRED`；
-**NODEB-RR6-001..003 已全部修复（SELF_CERTIFIED）**，Audit Node B 已
-**FINAL PASS_PRELIVE**（`e252847`，2026-08-15）。Iteration 8–9 为
-**reverse_repo 状态机 + 形式验证器移植（用户授权的新能力，SELF_CERTIFIED）**，
-不改变、不取代 PASS_PRELIVE 结论。**本任务未调用任何真实 order/cancel；
-`live_trading_allowed=false` 保持。**
+`REVIEW_READY (ITERATION 10)` — Audit Node B 对状态机移植扩展的复审
+（`NODE_B_STATE_MACHINE_PORT_REVIEW_ITER9_20260815.md`，audit commit `5403829`）
+判定 **CHANGES_REQUIRED（NODEB-SM9-001..005，均 P0/P1）**，Iteration 10 已全部
+修复（SELF_CERTIFIED），按审计要求移交 `AUDIT_NODE_B_STATE_MACHINE_PORT` 复审。
+**基线 Gate 5.5 PASS_PRELIVE（`e252847`）保持接受**；本任务未调用任何真实
+order/cancel；`live_trading_allowed=false` 保持。
 
 授权来源：Gate 5 Node A PASS（`4c1cc8c`）+ Audit Node B FINAL PASS_PRELIVE
-（`e252847`）+ 用户 2026-08-15 显式授权移植 reverse_repo 完整状态机 + 形式验证器。
+（`e252847`）+ 用户 2026-08-15 显式授权移植 reverse_repo 完整状态机 + 形式验证器
++ 独立审计 Iteration 9 修复要求（`5403829`）。
 
 参考实现（QMT 行为基线）：`https://github.com/smhe00/reverse_repo`
 pinned commit `c9ecc701d9b1c47d6a8d03539b482368741204a3`。
+
+## Iteration 10 — NODEB-SM9-001..005 修复（SELF_CERTIFIED）
+
+| # | 级别 | 修复 |
+|---|------|------|
+| SM9-001 | P0 | **状态机/journal/互斥锁接入可信生产工厂**：`build_live_session()` 从校验后的数据库路径派生 journal（`tgrid-execution-<trade_date>.json`）与执行锁（`tgrid-execution.lock`）并**无条件**传入 `build_live_stack`；构造后校验 `stack.journal`/`stack.execution_lock` 非空（无静默 opt-out，缺失即 `LiveSessionError`）。双环境生产形态 fake 测试（simulation + live）证明栈携带完整执行权威 |
+| SM9-002 | P0 | **锁先于 journal 生命周期 + 释放后永久禁用**：`ExecutionJournal` 改为**惰性初始化**（构造不读不写）；`LiveStack.activate()` 先获取执行锁，再 `load_or_initialize` + `_attach_execution_authority`，输者进程**绝不触碰共享 journal**（跨进程 FI：journal 字节不变）；`release_execution_lock()` 释放后调用 `engine.block_permanently()` —— 永久块**不可被 reconcile 清除**（FI：释放后新订单被拒、对账后仍被拒） |
+| SM9-003 | P0 | **实现-模型事件精化**：(A) `send_*` 不再自产 TRIGGER/SNAPSHOT_OK——新增 `LiveStack.prepare_snapshot(evidence=...)` 可信 preflight API，证据**结构化绑定**进 journal 转移（`details.evidence`），未 READY 拒发（FI）；(B) poll/cancel 事件**按机器状态族分派**——CANCEL_PENDING 下 pending→`CANCEL_STILL_PENDING`、终态→`CANCEL_TERMINAL`，ORDER_ACTIVE 下（含自发撤单）终态→`ORDER_TERMINAL`（FI）；(C) `_advance_recovery_outcome` 对**多重/混合未决** fail-closed（>1 非终态匹配或 >1 故事族 → RECOVERY_AMBIGUOUS → SAFE_HALT + SAFE_MODE，FI）；(D) **区分 `SUBMIT_REJECTED`（确定性拒绝）与 `SUBMIT_EXCEPTION`（歧义）**：新增 `BrokerRejectedError`（port），`LiveBrokerError` 与 `BrokerOrderRejectedError` 归入其下；确定拒绝 → SUBMIT_REJECTED → SAFE_HALT + intent REJECTED + reservation 释放（FI） |
+| SM9-004 | P0 | **持久化 intent remark 为唯一恢复权威**：`recover_unknown_submission` **移除 caller remark 覆盖参数**（FI：传入 remark 抛 TypeError；恢复只按 `intent.order_remark` 反查） |
+| SM9-005 | P1 | **验证源绑定 fail-closed + 完整 manifest**：`execution_source_sha256()` 对缺失保护文件**抛 `ExecutionSourceIntegrityError`**（不再跳过）；manifest 扩展至 **14 个安全关键源**（+store/models/port/live_session/live_broker_adapter/daily_exposure/exposure_store）；manifest 完整性 FI（缺失/删除文件 → 验证失败；必需文件集合断言） |
+
+### 验证产物（可复算）
+
+```text
+verify_state_machines():
+  reachable_abstract_states : 39   (不变 — 机器语义未被本轮改动)
+  reachable_transitions     : 115
+  unreachable_states        : 0 / unreachable_transitions: 0
+  states_without_terminal_path : 0 / invariant_violations: 0
+  transition_spec_sha256    : 7d9959dd323745e2...  (不变)
+  execution_source_sha256   : 0f5d3ca63e287eac...  (14 个保护源文件真实内容绑定)
+  execution_source_commit   : None (运行树无 .git；内容哈希为持久完整性锚)
+```
+
+### Evidence
+
+- 回归：`python -m unittest discover -s tests -p "test_*.py"` → **1009 tests OK**
+  （较 998 新增 11：manifest 完整性 2、remark 权威 1、可信 preflight 1、
+  poll/cancel 状态族 2、确定性拒绝 1、锁先于 journal 1、释放后永久禁用 1、
+  恢复多重 fail-closed 1、惰性 journal 1）。
+- `python -m compileall -q src tests scripts` → exit 0。
+- 修改：`port.py`（BrokerRejectedError）、`live_broker_adapter.py`、
+  `executor.py`、`live_bootstrap.py`、`live_session.py`、`execution_journal.py`、
+  `statemachine.py`（manifest + ExecutionSourceIntegrityError）、
+  `execution/__init__.py`、`tgrid/__init__.py`、`test_execution_statemachine.py`、
+  `test_live_bootstrap.py`。
+- 诚实声明：Iteration 10 修复为 SELF_CERTIFIED，按审计要求移交
+  `AUDIT_NODE_B_STATE_MACHINE_PORT` 独立复审；未获独立 PASS 前不声称扩展通过；
+  真实资金 Gate 6/7 仍 BLOCKED。
 
 ## Iteration 9 — ExecutionMutex + SUBMIT_UNKNOWN remark 反查恢复（SELF_CERTIFIED）
 
@@ -137,16 +176,19 @@ verify_state_machines():
 
 ## Evidence
 
-- 回归（Iteration 9，最新）：`python -m unittest discover -s tests -p "test_*.py"`
-  → **998 tests OK**；`python -m compileall -q src tests scripts` → exit 0。
-- Iteration 8：**980 tests OK**；Iteration 7（RR6 关闭）：**957 tests OK**；
-  capability 扫描：真实 `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处
-  （白名单）、桥外 0 处**；`RESULT: PASS`。
+- 回归（Iteration 10，最新）：`python -m unittest discover -s tests -p "test_*.py"`
+  → **1009 tests OK**；`python -m compileall -q src tests scripts` → exit 0。
+- Iteration 9：**998 tests OK**；Iteration 8：**980 tests OK**；
+  Iteration 7（RR6 关闭）：**957 tests OK**；capability 扫描：真实
+  `order_stock`/`cancel_order_stock` 调用点 **桥内 2 处（白名单）、桥外 0 处**；
+  `RESULT: PASS`。
 - 测试文件：`test_xtquant_bridge.py`（account-health FI）、`test_live_bootstrap.py`
   （SAFE_MODE 伪造结果 FI、LiveStack 状态机 + fail-closed journal 绑定 +
-  执行锁串行化）、`test_execution_mutex.py`（ExecutionMutex 跨进程互斥）、
+  执行锁串行化 + 锁先于 journal + 释放后永久禁用 + 恢复多重 fail-closed +
+  生产 session 执行权威）、`test_execution_mutex.py`（ExecutionMutex 跨进程互斥）、
   `test_execution_statemachine.py`（形式验证器/快照/journal/engine 集成 +
-  SUBMIT_UNKNOWN remark 反查恢复）、`test_execution_live_chain.py`、
+  SUBMIT_UNKNOWN remark 反查恢复 + 可信 preflight + poll/cancel 状态族 +
+  确定性拒绝 + manifest 完整性）、`test_execution_live_chain.py`、
   `test_execution.py`。
 - 既有 AST 扫描（assert / xtquant import / 桥外 order call）保持 PASS。
 
@@ -155,10 +197,10 @@ verify_state_machines():
 - 本任务**绝不 invoke** 真实 order/cancel；所有 broker 调用经注入 fake/bridge。
 - 未实现/未授权：真实资金运行、Gate 6、live-soak。
 - `live_trading_allowed=false`；Gate 6/7 BLOCKED。
-- 授权令牌：`AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER`。
+- 授权令牌：`AUDIT_NODE_B_STATE_MACHINE_PORT`（迭代 10 移交）。
 
 ## Recommendation
 
-`AUDIT_READY_PRELIVE`（Iteration 9）——Audit Node B FINAL PASS_PRELIVE
-（`e252847`）已接受；reverse_repo 状态机移植为**新能力**，建议在首笔真实订单前
-纳入 Node B 复审；首笔真实订单须 Node B PASS + 用户显式授权。
+`REVIEW_READY`（Iteration 10）——NODEB-SM9-001..005 已修复（SELF_CERTIFIED），
+按审计要求移交 **AUDIT_NODE_B_STATE_MACHINE_PORT** 独立复审；独立 PASS 前不
+声称状态机扩展通过；首笔真实订单须 Node B PASS + 用户显式授权。

@@ -764,7 +764,14 @@ class TestLiveSessionBinding(unittest.TestCase):
         kwargs = self._full_factory_kwargs(gate1=gate1, root=root)
         stack = build_live_session(**kwargs)
         try:
+            # SM9-001: the production simulation path always carries the
+            # execution authority (journal + mutex) — no silent opt-out.
+            self.assertIsNotNone(stack.journal)
+            self.assertIsNotNone(stack.execution_lock)
             stack.activate(token="startup-token")
+            self.assertIsNotNone(stack.engine.machine)
+            self.assertEqual(stack.engine.machine.state.value, "wait_trigger")
+            stack.prepare_snapshot(evidence={"trading_day": True})
             result = stack.engine.send_buy(
                 client_order_key="K1", symbol="510300.SH", qty=100,
                 limit_price=4.6, order_remark="TG_510300SH_B001",
@@ -806,7 +813,14 @@ class TestLiveSessionBinding(unittest.TestCase):
         kwargs["environment"] = "live"
         stack = build_live_session(**kwargs)
         try:
+            # SM9-001: the production LIVE path also always carries the
+            # execution authority (journal + mutex).
+            self.assertIsNotNone(stack.journal)
+            self.assertIsNotNone(stack.execution_lock)
             stack.activate(token="startup-token")
+            self.assertIsNotNone(stack.engine.machine)
+            self.assertEqual(stack.engine.machine.state.value, "wait_trigger")
+            stack.prepare_snapshot(evidence={"trading_day": True})
             result = stack.engine.send_buy(
                 client_order_key="K1", symbol="510300.SH", qty=100,
                 limit_price=4.6, order_remark="TG_510300SH_B001",
@@ -1062,6 +1076,16 @@ class TestLiveStackStateMachine(unittest.TestCase):
             # -> RECOVERY_CLEAR -> WAIT_TRIGGER.
             stack.activate(token="startup-token")
             self.assertEqual(stack.engine.machine.state.value, "wait_trigger")
+            # SM9-003A: only the trusted preflight layer advances the machine
+            # to READY (TRIGGER + SNAPSHOT_OK with bound evidence); send_* must
+            # never manufacture snapshot facts itself.
+            stack.prepare_snapshot(evidence={
+                "trading_day": True,
+                "execution_window": "09:30-11:28",
+                "broker_cash": 100000.0,
+                "quote_fresh": True,
+            })
+            self.assertEqual(stack.engine.machine.state.value, "ready")
             # send_buy drives INTENT -> SUBMIT_ACCEPTED -> ORDER_ACTIVE.
             result = stack.engine.send_buy(
                 client_order_key="K1", symbol="510300.SH", qty=100,
@@ -1071,12 +1095,22 @@ class TestLiveStackStateMachine(unittest.TestCase):
             )
             self.assertEqual(result.status, OrderStatus.SUBMITTED)
             self.assertEqual(stack.engine.machine.state.value, "order_active")
-            # Journal persisted the machine; reload restores it.
+            # Journal persisted the machine + snapshot evidence; reload
+            # restores both.
             from tgrid.execution.execution_journal import ExecutionJournal
 
             reloaded = ExecutionJournal(journal_path, strategy="TGRID",
                                         trade_date="2026-08-15")
             self.assertEqual(reloaded.machine["state"], "order_active")
+            evidence_entries = [
+                h for h in reloaded.payload["history"]
+                if h.get("event") == "snapshot_ok"
+            ]
+            self.assertTrue(evidence_entries)
+            self.assertEqual(
+                evidence_entries[-1]["details"]["evidence"]["trading_day"],
+                True,
+            )
         finally:
             queue.stop()
             queue.join(timeout=1.0)
@@ -1227,6 +1261,7 @@ class TestLiveStackStateMachine(unittest.TestCase):
                 config_live_enabled=True, journal_path=journal_path,
             )
             stack_a.activate(token="startup-token")
+            stack_a.prepare_snapshot(evidence={"trading_day": True})
             result = stack_a.engine.send_buy(
                 client_order_key="K1", symbol="510300.SH", qty=100,
                 limit_price=4.6, order_remark="TG_510300SH_B001", now="t0",
@@ -1304,6 +1339,153 @@ class TestLiveStackStateMachine(unittest.TestCase):
             # DONE has no outgoing transitions: re-activation fails closed.
             with self.assertRaises(LiveBootstrapError):
                 stack.activate(token="startup-token")
+        finally:
+            queue.stop()
+            queue.join(timeout=1.0)
+            conn.close()
+            if os.path.exists(journal_path):
+                os.remove(journal_path)
+
+    def test_losing_session_cannot_touch_journal(self):
+        """SM9-002: the mutex is acquired BEFORE journal load/create; the
+        losing process cannot create or overwrite the shared journal."""
+        import tempfile as _tf
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-journal.json")
+        lock_path = os.path.join(_tf.mkdtemp(), "tgrid-exec.lock")
+        queue_a = EventQueue(lambda e: None, maxsize=100)
+        queue_b = EventQueue(lambda e: None, maxsize=100)
+        try:
+            store_a = ExecutionStore(conn)
+            stack_a = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store_a,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue_a, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                journal_path=journal_path, execution_lock_path=lock_path,
+            )
+            stack_a.activate(token="startup-token")
+            with open(journal_path, "rb") as handle:
+                before = handle.read()
+            self.assertTrue(before)  # the winner created the journal under lock
+            store_b = ExecutionStore(conn)
+            stack_b = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store_b,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue_b, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                journal_path=journal_path, execution_lock_path=lock_path,
+            )
+            with self.assertRaises(LiveBootstrapError):
+                stack_b.activate(token="startup-token")
+            with open(journal_path, "rb") as handle:
+                after = handle.read()
+            self.assertEqual(before, after)  # losing process never touched it
+            stack_a.release_execution_lock()
+        finally:
+            queue_a.stop()
+            queue_a.join(timeout=1.0)
+            queue_b.stop()
+            queue_b.join(timeout=1.0)
+            conn.close()
+            for path in (journal_path, lock_path):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    def test_post_release_orders_blocked_permanently(self):
+        """SM9-002: after release_execution_lock the stack is IRREVERSIBLY
+        closed for new orders (permanent block; reconciliation cannot clear)."""
+        import tempfile as _tf
+
+        from tgrid.execution.executor import ExecutionError
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-release.json")
+        lock_path = os.path.join(_tf.mkdtemp(), "tgrid-exec.lock")
+        queue = EventQueue(lambda e: None, maxsize=100)
+        try:
+            store = ExecutionStore(conn)
+            stack = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                config_live_enabled=True, journal_path=journal_path,
+                execution_lock_path=lock_path,
+            )
+            stack.activate(token="startup-token")
+            stack.prepare_snapshot(evidence={"trading_day": True})
+            stack.engine.send_buy(
+                client_order_key="K1", symbol="510300.SH", qty=100,
+                limit_price=4.6, order_remark="TG_510300SH_B001", now="t0",
+                expected_available_cash=100000.0, reserved_cash=460.0,
+            )
+            stack.release_execution_lock()
+            with self.assertRaises(ExecutionError):
+                stack.engine.send_buy(
+                    client_order_key="K2", symbol="510300.SH", qty=100,
+                    limit_price=4.6, order_remark="TG_510300SH_B002", now="t1",
+                    expected_available_cash=100000.0, reserved_cash=460.0,
+                )
+            # Reconciliation cannot clear the permanent block.
+            stack.engine.reconcile_and_clear_safe_mode()
+            with self.assertRaises(ExecutionError):
+                stack.engine.send_buy(
+                    client_order_key="K2", symbol="510300.SH", qty=100,
+                    limit_price=4.6, order_remark="TG_510300SH_B002", now="t1",
+                    expected_available_cash=100000.0, reserved_cash=460.0,
+                )
+        finally:
+            queue.stop()
+            queue.join(timeout=1.0)
+            conn.close()
+            for path in (journal_path, lock_path):
+                if os.path.exists(path):
+                    os.remove(path)
+
+    def test_recovery_multiple_active_fails_closed(self):
+        """SM9-003C: multiple simultaneously-unresolved matched orders are NOT
+        representable by the single machine -> RECOVERY_AMBIGUOUS -> SAFE_HALT."""
+        import tempfile as _tf
+
+        from tgrid.integrations.xtquant_bridge import STOCK_BUY
+
+        trader = _FakeXtQuantTrader()
+        conn = initialize(_temp_db_path())
+        journal_path = os.path.join(_tf.mkdtemp(), "tgrid-multi.json")
+        queue = EventQueue(lambda e: None, maxsize=100)
+        try:
+            store = ExecutionStore(conn)
+            store.create_intent_with_reservation(
+                client_order_key="K1", symbol="510300.SH", side=BUY, qty=100,
+                limit_price=4.6, strategy_name="TGRID",
+                order_remark="TG_510300SH_B001", created_at="t0",
+                cash_amount=460.0,
+            )
+            store.create_intent_with_reservation(
+                client_order_key="K2", symbol="510300.SH", side=BUY, qty=100,
+                limit_price=4.6, strategy_name="TGRID",
+                order_remark="TG_510300SH_B002", created_at="t0",
+                cash_amount=460.0,
+            )
+            # Two SUBMITTED broker orders matching the two intents by remark.
+            for remark in ("TG_510300SH_B001", "TG_510300SH_B002"):
+                trader.order_stock(_FakeAccount(), "510300.SH", STOCK_BUY, 100,
+                                   11, 4.6, "TGRID", remark)
+            stack = build_live_stack(
+                trader=trader, account=_FakeAccount(), store=store,
+                policy=_policy(), exposure_store=_DictStore(),
+                event_queue=queue, trade_date="2026-08-15",
+                runtime_confirmation_token="startup-token",
+                journal_path=journal_path,
+            )
+            with self.assertRaises(LiveBootstrapError):
+                stack.activate(token="startup-token")
+            self.assertEqual(stack.engine.machine.state.value, "safe_halt")
+            self.assertTrue(stack.engine.safe_mode)
         finally:
             queue.stop()
             queue.join(timeout=1.0)

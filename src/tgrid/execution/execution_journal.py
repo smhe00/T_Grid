@@ -71,17 +71,29 @@ class ExecutionJournal:
         self.trade_date = trade_date
         self.payload: dict = {}
         self._exists = False
-        self.load_or_initialize()
+        self._loaded = False
+        # SM9-002: journal load/create is LAZY — nothing is read or written in
+        # the constructor.  The caller must acquire the cross-process execution
+        # mutex BEFORE the first journal touch (LiveStack.activate does this),
+        # so a losing process can never create/overwrite the shared journal.
+
+    def _ensure_loaded(self) -> None:
+        if not self._loaded:
+            self.load_or_initialize()
 
     @property
     def machine(self) -> dict:
+        self._ensure_loaded()
         return dict(self.payload.get("machine") or {})
 
     @property
     def data(self) -> dict:
+        self._ensure_loaded()
         return dict(self.payload.get("data") or {})
 
     def load_or_initialize(self) -> tuple[dict, bool]:
+        if self._loaded:
+            return self.payload, self._exists
         if self.path.exists():
             try:
                 payload = json.loads(self.path.read_text(encoding="utf-8"))
@@ -107,6 +119,7 @@ class ExecutionJournal:
                 )
             self.payload = payload
             self._exists = True
+            self._loaded = True
             return payload, True
         self.payload = {
             "schema_version": JOURNAL_SCHEMA_VERSION,
@@ -119,6 +132,7 @@ class ExecutionJournal:
             "history": [],
             "data": {},
         }
+        self._loaded = True  # before write(): avoid _ensure_loaded recursion
         self.write()
         self._exists = False
         return self.payload, False
@@ -132,6 +146,7 @@ class ExecutionJournal:
         data_updates: Mapping | None = None,
     ) -> dict:
         """Atomically record one machine transition (reverse_repo semantics)."""
+        self._ensure_loaded()
         record = {
             "sequence": int(self.payload.get("event_count", 0)) + 1,
             "at": datetime.now().astimezone().isoformat(),
@@ -153,6 +168,7 @@ class ExecutionJournal:
         return record
 
     def update_data(self, **updates) -> None:
+        self._ensure_loaded()
         data = dict(self.payload.get("data") or {})
         data.update(updates)
         self.payload["data"] = data
@@ -160,6 +176,7 @@ class ExecutionJournal:
         self.write()
 
     def write(self) -> None:
+        self._ensure_loaded()
         self._atomic_write_json(self.payload)
 
     def _atomic_write_json(self, payload: dict) -> None:
@@ -195,6 +212,7 @@ class ExecutionJournal:
         verification: JournalVerification,
     ) -> bool:
         """True when this journal's bound hashes equal the current code's."""
+        self._ensure_loaded()
         formal = self.payload.get("data", {}).get("formal_verification")
         if not isinstance(formal, dict):
             return False

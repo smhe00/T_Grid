@@ -28,11 +28,22 @@ class BrokerError(TGridError):
     """Base class for broker port failures."""
 
 
+class BrokerRejectedError(BrokerError):
+    """DEFINITIVE order rejection (nothing was sent ambiguously).
+
+    Subsumes both pre-broker local refusals (allowlist / caps / double-enable
+    / kill switch — raised by :class:`LiveBrokerAdapter`) and broker-side
+    rejections (:class:`BrokerOrderRejectedError`).  The engine maps it to the
+    model's ``SUBMIT_REJECTED`` (a resolved outcome), never to the ambiguous
+    ``SUBMIT_EXCEPTION``.
+    """
+
+
 class BrokerDisconnectedError(BrokerError):
     """The broker is disconnected (network failure, design §23)."""
 
 
-class BrokerOrderRejectedError(BrokerError):
+class BrokerOrderRejectedError(BrokerRejectedError):
     """The broker rejected the order at send time."""
 
 

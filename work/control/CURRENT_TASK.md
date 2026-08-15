@@ -2,97 +2,93 @@
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — implementation + self-review. Self-review evidence must remain labelled `SELF_CERTIFIED`.
+`DSH (DeepSeek Harness)` — implementation + self-review. Self-review evidence
+must remain labelled `SELF_CERTIFIED`.
 
 ## Status
 
-`CHANGES_REQUIRED`
+`REVIEW_READY` — Iteration 10 fixes complete (SELF_CERTIFIED), handed off for
+**AUDIT_NODE_B_STATE_MACHINE_PORT** independent review per the Iteration-9
+fix request (`FIX_REQUEST_STATE_MACHINE_ITER10_20260815.md`).
 
-The user-authorized reverse_repo state-machine + explicit-state verifier direction is accepted. The previously independent Gate 5.5 baseline remains `PASS_PRELIVE` at:
+Baseline Gate 5.5 remains accepted:
 
 ```text
-e252847ecab2c5cb122af23091cd41680f901ccd
+baseline PASS_PRELIVE: e252847ecab2c5cb122af23091cd41680f901ccd
 ```
 
-The current extension is not yet accepted for first real-money execution.
+The state-machine extension is NOT cleared for first real-money execution until
+its independent review passes. `live_trading_allowed=false`; no real-money or
+QMT-simulation order/cancel was invoked during this fix.
 
-## Audit target
+## Audit target / fix request
 
 ```text
-main: bf261835f70cbd56fa75b1ea2dc86447d22dcadb
-implementation: f1e918ed474c9c107b03ab7ddcd3ad101783cce7
-reference: smhe00/reverse_repo@c9ecc701d9b1c47d6a8d03539b482368741204a3
+main: 54038292d6f83f3df61da64bbde6f85a23df600d
 review: work/gates/GATE_5_5/NODE_B_STATE_MACHINE_PORT_REVIEW_ITER9_20260815.md
-fix: work/gates/GATE_5_5/FIX_REQUEST_STATE_MACHINE_ITER10_20260815.md
+fix:    work/gates/GATE_5_5/FIX_REQUEST_STATE_MACHINE_ITER10_20260815.md
 ```
 
-## Objective
+## Iteration 10 closure (SELF_CERTIFIED)
 
-Turn the new abstract state machine / journal / mutex from an optional test-level capability into the authoritative, correctly refined production execution path without weakening the previously accepted Gate 5.5 safety boundary.
+1. **SM9-001 — production wiring**: `build_live_session()` derives the
+   execution journal (`<db_dir>/tgrid-execution-<trade_date>.json`) and
+   cross-process mutex (`<db_dir>/tgrid-execution.lock`) from the validated
+   database location and passes them unconditionally into `build_live_stack`;
+   a missing journal/mutex on the production stack raises `LiveSessionError`
+   (no silent opt-out). Production-shaped fake tests cover both
+   `environment="simulation"` and `"live"`.
+2. **SM9-002 — lock/journal lifetime**: `ExecutionJournal` is LAZY (no
+   read/write at construction); `LiveStack.activate()` acquires the mutex
+   BEFORE journal load/create and machine attachment
+   (`_attach_execution_authority`), so a losing process never touches the
+   shared journal (FI: journal bytes unchanged). `release_execution_lock()`
+   engages `engine.block_permanently()` — an irreversible block that
+   reconciliation cannot clear (FI: post-release orders rejected, even after
+   reconcile).
+3. **SM9-003 — implementation-to-model refinement**:
+   - (A) `send_*` no longer synthesizes TRIGGER/SNAPSHOT_OK; new
+     `LiveStack.prepare_snapshot(evidence=...)` emits them with the evidence
+     STRUCTURALLY bound in the journal transition (`details.evidence`);
+   - (B) poll/cancel events are state-aware: CANCEL_PENDING → pending
+     outcomes map to CANCEL_STILL_PENDING and terminal to CANCEL_TERMINAL;
+     ORDER_ACTIVE (incl. spontaneous cancel) → ORDER_TERMINAL;
+   - (C) recovery multiplicity: multiple/mixed unresolved matched orders →
+     RECOVERY_AMBIGUOUS → SAFE_HALT + SAFE_MODE (fail closed);
+   - (D) definitive rejection (new port-level `BrokerRejectedError`; the
+     adapter's `LiveBrokerError` family and `BrokerOrderRejectedError` now
+     inherit it) → SUBMIT_REJECTED → SAFE_HALT + intent REJECTED + reservation
+     release; ambiguous exceptions → SUBMIT_EXCEPTION → SUBMIT_UNKNOWN.
+4. **SM9-004 — durable remark authority**: `recover_unknown_submission()`
+   has NO caller remark override; the persisted `intent.order_remark` is the
+   sole recovery identity (FI: supplying a remark raises TypeError).
+5. **SM9-005 — verification source integrity**: `execution_source_sha256()`
+   raises `ExecutionSourceIntegrityError` on any missing protected file;
+   the manifest now binds **14 safety-critical sources** (execution authority,
+   production wiring/session/account, broker state mapping, daily exposure +
+   exposure persistence); manifest integrity FI covers omission.
 
-## Authorized work
+## Evidence
 
-Only the following findings are authorized:
+- Regression: `python -m unittest discover -s tests -p "test_*.py"`
+  → **1009 tests OK** (was 998; +11 for SM9-001..005 FIs).
+- `python -m compileall -q src tests scripts` → exit 0.
+- Verifier: `verify_state_machines()` = 39 reachable abstract states /
+  115 transitions / 0 unreachable / 0 violations;
+  `transition_spec_sha256=7d9959dd...` (unchanged),
+  `execution_source_sha256=0f5d3ca6...` (14 bound files).
+- Capability scan: real `order_stock`/`cancel_order_stock` call sites remain
+  bridge-only (2 whitelisted, 0 elsewhere); AST scans PASS.
+- No real order/cancel invoked; `live_trading_allowed=false`.
 
-1. `NODEB-SM9-001`: production `build_live_session()` must bind state machine + journal + execution mutex; no production bypass.
-2. `NODEB-SM9-002`: mutex must cover journal creation/load/write and remain an execution-health prerequisite for the lifetime of the active stack.
-3. `NODEB-SM9-003`: correct implementation-to-model refinement: trusted TRIGGER/SNAPSHOT_OK evidence, state-aware cancel/poll events, definitive rejection vs ambiguous submission, and fail-closed recovery multiplicity.
-4. `NODEB-SM9-004`: persisted intent remark is the sole unknown-submission recovery authority.
-5. `NODEB-SM9-005`: protected source hash is fail-closed and covers all safety-critical production execution sources.
-
-## Allowed implementation files
-
-- `src/tgrid/execution/statemachine.py`
-- `src/tgrid/execution/execution_journal.py`
-- `src/tgrid/execution/execution_mutex.py`
-- `src/tgrid/execution/executor.py`
-- `src/tgrid/execution/recovery.py` only for direct refinement fixes
-- `src/tgrid/execution/store.py` only if needed for protected-source/refinement wiring
-- `src/tgrid/integrations/live_bootstrap.py`
-- `src/tgrid/integrations/live_session.py`
-- `src/tgrid/integrations/live_broker_adapter.py` only if needed for verified snapshot/session-lock gating
-- `src/tgrid/integrations/daily_exposure.py` / `exposure_store.py` only if needed for source-manifest binding
-- relevant `tests/unit/`
-- `scripts/gate6_sim_live.py` only to wire the new authoritative path; do not invoke QMT during this fix
-- DSH-owned reports/control metadata for the handoff
-
-Do not modify unrelated strategy, Core-position, Gate-5 market-data or historical accepted behavior.
-
-## Required evidence
-
-- full unit regression;
-- `compileall`;
-- `verify_state_machines()` output;
-- protected execution-source manifest and hash;
-- FI for missing protected source;
-- engine-level refinement tests for submit accepted/rejected/ambiguous, poll active/terminal, cancel pending/terminal, recovery multiplicity and wrong recovery remark;
-- cross-process shared journal+lock race FI;
-- post-lock-release new-order rejection FI;
-- production-shaped fake `build_live_session()` for `simulation` and `live` proving machine+journal+mutex are mandatory;
-- capability scan proving real XtQuant order/cancel call sites remain confined to the accepted bridge.
-
-Execution counts remain `SELF_CERTIFIED` until independently re-run/verified.
-
-## Forbidden
-
-- no real-money order or cancel;
-- no QMT simulation order/cancel during this fix iteration;
-- no `live_trading_allowed=true` in canonical state;
-- no widening symbol allowlists, qty/cash caps, Core floor or trading authorization;
-- no force push/history rewrite;
-- no claim that the abstract verifier alone proves the Python implementation.
-
-## Stop / Handoff
-
-After the fixes are pushed normally to `main`:
+## Required handoff (after fixes)
 
 ```text
-state: REVIEW_READY
-owner: architect
-iteration: 10
-authorized_next:
-  - AUDIT_NODE_B_STATE_MACHINE_PORT
-live_trading_allowed: false
+state = REVIEW_READY
+owner = architect
+iteration = 10
+authorized_next = [AUDIT_NODE_B_STATE_MACHINE_PORT]
+live_trading_allowed = false
 ```
 
-Then STOP. Do not run the next trading-hours Gate 6 simulation FILL/CANCEL verification until the state-machine extension receives independent acceptance.
+Do not claim PASS before independent review.

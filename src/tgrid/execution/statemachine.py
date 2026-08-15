@@ -42,15 +42,29 @@ from pathlib import Path
 from typing import Generic, TypeVar
 
 # Files whose content is bound into execution_source_sha256 (mirror of
-# reverse_repo EXECUTION_SOURCE_FILES, adapted to the TGrid tree).
+# reverse_repo EXECUTION_SOURCE_FILES, adapted to the TGrid tree).  SM9-005:
+# the manifest covers EVERY safety-critical source that can alter pre-submit
+# authorization, durable intent/reservation, account binding, broker state
+# mapping, recovery, exposure, state transitions or journal/mutex behaviour;
+# a MISSING protected file fails verification instead of being skipped.
 EXECUTION_SOURCE_FILES = (
+    # execution authority: state machine / journal / mutex / engine
     "src/tgrid/execution/statemachine.py",
     "src/tgrid/execution/execution_journal.py",
     "src/tgrid/execution/execution_mutex.py",
     "src/tgrid/execution/executor.py",
     "src/tgrid/execution/recovery.py",
+    "src/tgrid/execution/store.py",
+    "src/tgrid/execution/models.py",
+    "src/tgrid/execution/port.py",
+    # production wiring + account/session construction
     "src/tgrid/integrations/live_bootstrap.py",
+    "src/tgrid/integrations/live_session.py",
+    "src/tgrid/integrations/live_broker_adapter.py",
     "src/tgrid/integrations/xtquant_bridge.py",
+    # durable daily exposure / exposure persistence
+    "src/tgrid/integrations/daily_exposure.py",
+    "src/tgrid/integrations/exposure_store.py",
 )
 
 
@@ -60,6 +74,10 @@ class InvalidTransition(RuntimeError):
 
 class InvariantViolation(RuntimeError):
     """Raised when a machine state violates a safety invariant."""
+
+
+class ExecutionSourceIntegrityError(RuntimeError):
+    """A protected execution source file is missing (SM9-005, fail closed)."""
 
 
 class TGridState(str, Enum):
@@ -421,7 +439,13 @@ def execution_source_sha256() -> str:
     for name in EXECUTION_SOURCE_FILES:
         path = root / name
         if not path.exists():
-            continue
+            # SM9-005: a missing protected source changes the trusted source
+            # set silently; the reference reverse_repo reads every declared
+            # file, so verification FAILS CLOSED here instead of skipping.
+            raise ExecutionSourceIntegrityError(
+                f"protected execution source is missing: {name!r} "
+                f"(looked under {root})"
+            )
         digest.update(name.encode("utf-8"))
         digest.update(b"\0")
         digest.update(_normalize_source_bytes(path.read_bytes()))

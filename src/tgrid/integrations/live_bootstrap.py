@@ -60,6 +60,7 @@ class LiveStack:
     event_queue: EventQueue
     strategy_name: str
     execution_lock: ExecutionMutex | None = None
+    journal: object | None = None
     _lock_held: bool = False
 
     def activate(
@@ -76,12 +77,13 @@ class LiveStack:
         ``INTENT_ONLY`` outcomes fail closed.  Runtime confirmation happens
         only after recovery completes.
 
-        When the stack was built with ``execution_lock_path``, the
-        cross-process execution lock (reverse_repo ``ExecutionMutex``) is
-        acquired FIRST — before any state is touched — so at most one process
-        runs this trade date; contention raises :class:`LiveBootstrapError`.
-        The lock is held for the session and released via
-        :meth:`release_execution_lock` (or by the OS on process exit).
+        Ordering (SM9-002): the cross-process execution mutex (when
+        configured) is acquired FIRST; the journal is then loaded/created and
+        the machine attached — so a losing process never touches the shared
+        journal and no machine transition happens without lock ownership.
+        Contention raises :class:`LiveBootstrapError`.  The lock is held for
+        the session and released via :meth:`release_execution_lock` (or by the
+        OS on process exit); release IRREVERSIBLY disables new orders.
         """
         if self.execution_lock is not None and not self._lock_held:
             try:
@@ -92,6 +94,22 @@ class LiveStack:
                     "another process holds the execution lock for this "
                     "trade date; refusing to start a second session"
                 ) from exc
+        # SM9-002: journal load/create and machine attachment happen ONLY
+        # under lock ownership (lazy journal; nothing was touched at build).
+        if self.journal is not None:
+            from tgrid.execution.statemachine import (
+                initial_snapshot,
+                snapshot_from_payload,
+            )
+
+            self.journal.load_or_initialize()
+            machine_payload = self.journal.machine
+            machine = (
+                snapshot_from_payload(machine_payload)
+                if machine_payload
+                else initial_snapshot()
+            )
+            self.engine._attach_execution_authority(machine, self.journal)
         if self.event_queue.state.value != "RUNNING":
             self.event_queue.start()
         if session_date is not None:
@@ -165,7 +183,12 @@ class LiveStack:
         (RECOVERY_ACTIVE / RECOVERY_CANCEL_PENDING), a reconciled terminal
         order lands in RECONCILE (RECOVERY_TERMINAL), and a clean recovery
         (nothing unresolved) lands in WAIT_TRIGGER (RECOVERY_CLEAR).
-        Blocked/ambiguous outcomes were already raised by the caller.
+
+        SM9-003C: the single machine represents ONE order cycle, so multiple
+        or mixed simultaneously-unresolved matched orders (two+ distinct
+        families, or more than one non-terminal match) FAIL CLOSED into
+        RECOVERY_AMBIGUOUS -> SAFE_HALT + SAFE_MODE instead of being collapsed
+        into a single boolean state.
         """
         from tgrid.execution.statemachine import TGridEvent
 
@@ -185,6 +208,20 @@ class LiveStack:
             and getattr(r, "broker_status", None)
             in ("FILLED", "CANCELED", "REJECTED")
         ]
+        stories = (1 if active else 0) + (1 if cancel_pending else 0) + (1 if terminal else 0)
+        nonterminal_matches = len(active) + len(cancel_pending)
+        if nonterminal_matches > 1 or stories > 1:
+            # Multiple/mixed unresolved orders are NOT representable by the
+            # single machine: fail closed (SM9-003C).
+            self.engine._advance_machine(TGridEvent.RECOVERY_AMBIGUOUS)
+            self.engine.engage_safe_mode(
+                "recovery found multiple/mixed unresolved broker orders not "
+                "representable by the single state machine"
+            )
+            raise LiveBootstrapError(
+                "recovery found multiple/mixed unresolved broker orders; "
+                "SAFE_MODE — manual review required"
+            )
         if active:
             self.engine._advance_machine(TGridEvent.RECOVERY_ACTIVE)
         elif cancel_pending:
@@ -194,6 +231,38 @@ class LiveStack:
         else:
             self.engine._advance_machine(TGridEvent.RECOVERY_CLEAR)
 
+    def prepare_snapshot(self, *, evidence: object = None) -> None:
+        """Trusted preflight: emit TRIGGER + SNAPSHOT_OK with bound evidence.
+
+        reverse_repo semantics (SM9-003A): the machine is advanced to READY
+        ONLY by verified preflight/snapshot results — never self-certified
+        inside ``send_*``.  The caller (trusted orchestrator) must have
+        verified the trading day/window, authoritative broker snapshot/cash
+        and quote freshness; the ``evidence`` mapping is persisted into the
+        journal transition so the verification is STRUCTURALLY bound to the
+        snapshot facts, not merely performed elsewhere in a script.
+        """
+        if self.engine.machine is None:
+            raise LiveBootstrapError(
+                "prepare_snapshot requires state-machine mode (journal_path)"
+            )
+        from tgrid.execution.statemachine import TGridEvent, TGridState
+
+        state = self.engine.machine.state
+        if state is TGridState.WAIT_TRIGGER:
+            self.engine._advance_machine(TGridEvent.TRIGGER)
+        if self.engine.machine.state is not TGridState.SNAPSHOT:
+            raise LiveBootstrapError(
+                "prepare_snapshot requires the machine at WAIT_TRIGGER/SNAPSHOT; "
+                f"current state is {self.engine.machine.state.value}"
+            )
+        if evidence is not None and not isinstance(evidence, dict):
+            raise LiveBootstrapError("preflight evidence must be a dict or None")
+        self.engine._advance_machine(
+            TGridEvent.SNAPSHOT_OK,
+            details={"evidence": dict(evidence or {})},
+        )
+
     def bind_machine_verification(self) -> None:
         """Bind the journal to the current transition-spec + source hashes.
 
@@ -201,7 +270,7 @@ class LiveStack:
         longer trusted unless its bound hashes match the current build.
         No-op when the stack was built without a journal.
         """
-        journal = getattr(self.engine, "_journal", None)
+        journal = getattr(self, "journal", None)
         if journal is None:
             return
         from tgrid.execution.execution_journal import JournalVerification
@@ -226,7 +295,7 @@ class LiveStack:
         instead of being silently re-bound — the operator must review and
         explicitly re-bind via :meth:`bind_machine_verification`.
         """
-        journal = getattr(self.engine, "_journal", None)
+        journal = getattr(self, "journal", None)
         if journal is None:
             return
         from tgrid.execution.execution_journal import JournalVerification
@@ -256,16 +325,22 @@ class LiveStack:
         self.engine._advance_machine(event)
 
     def release_execution_lock(self) -> None:
-        """Release the session execution lock (idempotent).
+        """Release the session execution lock and IRREVERSIBLY disable orders.
 
-        Safe to call more than once; a stack built without
-        ``execution_lock_path`` is a no-op.  The OS also releases the lock
-        automatically when the owning process exits.
+        SM9-002: once an execution-capable stack releases its lock it is
+        permanently closed for new orders (``block_permanently`` — neither
+        SAFE_MODE reconciliation nor re-acquisition can re-enable it), so no
+        order path remains usable while another process could hold the lock.
+        Idempotent; a stack built without ``execution_lock_path`` is a no-op.
         """
-        if self.execution_lock is None or not self._lock_held:
+        if self.execution_lock is None:
             return
-        self.execution_lock.release()
-        self._lock_held = False
+        if self._lock_held:
+            self.execution_lock.release()
+            self._lock_held = False
+        self.engine.block_permanently(
+            "execution lock released; stack disabled for new orders"
+        )
 
     def reconcile_and_resume(self, *, token: str, session_date: str | None = None) -> None:
         """Reconciliation-driven SAFE_MODE release (RR-003 / RR4-002 / RR5-002).
@@ -362,14 +437,18 @@ def build_live_stack(
     (NODEB-RR6-002).
 
     ``journal_path`` (optional) enables the formally-verified state machine:
-    when provided, an :class:`ExecutionJournal` is loaded (strategy +
-    trade-date bound, strict schema) and the engine is driven through the
-    reverse_repo-ported machine, persisting every transition atomically.
+    when provided, an :class:`ExecutionJournal` is created (strategy +
+    trade-date bound, strict schema) and attached by :meth:`LiveStack.activate`
+    under the execution lock — journal load/create is LAZY (SM9-002), so the
+    engine is constructed in plain mode and only becomes state-machine-driven
+    once activate attaches the machine + journal.
 
     ``execution_lock_path`` (optional) enables the reverse_repo
     :class:`ExecutionMutex` cross-process lock: :meth:`LiveStack.activate`
-    acquires it before touching any state so at most one process runs the
-    trade date; contention fails closed with :class:`LiveBootstrapError`.
+    acquires it before touching the journal or any state so at most one
+    process runs the trade date; contention fails closed with
+    :class:`LiveBootstrapError`.  Releasing the lock permanently disables the
+    stack for new orders (SM9-002).
     """
     bridge = XtQuantBrokerBridge(
         trader, account, strategy_name=strategy_name, event_sink=event_queue,
@@ -383,28 +462,22 @@ def build_live_stack(
         runtime_confirmation_token=runtime_confirmation_token,
     )
     adapter.apply_config_enable(config_live_enabled)
-    machine = None
+    # SM9-002: the journal is created WITHOUT loading/writing anything — the
+    # first load/create happens in activate() strictly under the execution
+    # lock.  The engine is built in plain mode; activate() attaches the
+    # machine + journal via _attach_execution_authority.
     journal = None
     if journal_path:
         from tgrid.execution.execution_journal import ExecutionJournal
-        from tgrid.execution.statemachine import (
-            initial_snapshot,
-            snapshot_from_payload,
-        )
 
+        if type(journal_path) is not str or journal_path == "":
+            raise LiveBootstrapError("journal_path must be a non-empty string")
         journal = ExecutionJournal(
             journal_path, strategy=strategy_name, trade_date=trade_date,
-        )
-        machine_payload = journal.machine
-        machine = (
-            snapshot_from_payload(machine_payload)
-            if machine_payload
-            else initial_snapshot()
         )
     engine = ExecutionEngine(
         store, adapter, strategy_name=strategy_name,
         order_timeout_seconds=order_timeout_seconds,
-        machine=machine, journal=journal,
     )
     lock = None
     if execution_lock_path:
@@ -418,5 +491,5 @@ def build_live_stack(
     return LiveStack(
         engine=engine, adapter=adapter, bridge=bridge,
         event_queue=event_queue, strategy_name=strategy_name,
-        execution_lock=lock,
+        execution_lock=lock, journal=journal,
     )

@@ -44,18 +44,23 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from tgrid.execution.port import BrokerPort
+from tgrid.execution.port import BrokerPort, BrokerRejectedError
 from tgrid.integrations.daily_exposure import (
     DailyExposureError,
     DailyExposureLedger,
     ExposureDateError,
     _validate_iso_date,
 )
-from tgrid.risk.exceptions import TGridError
 
 
-class LiveBrokerError(TGridError):
-    """Base class for live broker adapter failures."""
+class LiveBrokerError(BrokerRejectedError):
+    """Base class for live broker adapter failures.
+
+    Extends :class:`~tgrid.execution.port.BrokerRejectedError` (SM9-003D):
+    every adapter refusal is a DEFINITIVE pre-broker/local rejection (nothing
+    was sent ambiguously), so the engine maps it to the model's
+    ``SUBMIT_REJECTED`` rather than the ambiguous ``SUBMIT_EXCEPTION``.
+    """
 
 
 class LiveTradingDisabledError(LiveBrokerError):

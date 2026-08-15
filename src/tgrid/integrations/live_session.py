@@ -233,6 +233,11 @@ def build_live_session(
     Dependency-injected ``trader_factory`` / ``xtconstant_values`` /
     ``stock_account_factory`` are test-only (fake XtQuant); production uses
     the real XtQuant imports (lazy, as in Gate 1).
+
+    SM9-001: the reverse_repo execution authority (state machine + journal +
+    cross-process mutex) is ALWAYS wired on this trusted path — journal and
+    lock paths are derived from the validated database location and there is
+    no silent opt-out that returns an order-capable stack without them.
     """
     if not isinstance(root_config, RootConfig):
         raise LiveSessionError("root_config must be a validated RootConfig")
@@ -306,6 +311,15 @@ def build_live_session(
     )
     from tgrid.execution.store import ExecutionStore
 
+    # SM9-001: the state-machine extension is part of the TRUSTED production
+    # factory — never a silent opt-out.  The execution journal + cross-process
+    # mutex are derived from the validated database location and enabled
+    # unconditionally, so a production simulation/live stack always carries
+    # the execution authority.
+    db_dir = Path(db_path).resolve().parent
+    journal_path = str(db_dir / f"tgrid-execution-{trade_date}.json")
+    lock_path = str(db_dir / "tgrid-execution.lock")
+
     stack = build_live_stack(
         trader=trader, account=stock_account, store=ExecutionStore(conn),
         policy=policy, exposure_store=exposure_store, event_queue=event_queue,
@@ -315,7 +329,17 @@ def build_live_session(
         config_live_enabled=global_cfg.live_trading,
         security_account_type=int(security_type),
         account_status_ok=int(status_ok),
+        journal_path=journal_path,
+        execution_lock_path=lock_path,
     )
+    # No silent opt-out (SM9-001): an order-capable production stack must
+    # carry the journal + mutex before it can ever be activated.
+    if stack.journal is None or stack.execution_lock is None:
+        _attempt_stop(trader)
+        raise LiveSessionError(
+            "production stack missing state-machine authority "
+            "(journal/mutex)"
+        )
     # attach the opened connection so the caller can close it after teardown
     stack._db_conn = conn  # test/internal convenience only
     return stack

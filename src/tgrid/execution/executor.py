@@ -36,6 +36,7 @@ from tgrid.execution.port import (
     BrokerDisconnectedError,
     BrokerError,
     BrokerPort,
+    BrokerRejectedError,
 )
 from tgrid.execution.statemachine import TGridEvent
 from tgrid.execution.store import (
@@ -133,6 +134,7 @@ class ExecutionEngine:
         self._order_timeout_seconds = order_timeout_seconds
         self._max_reprice_attempts = max_reprice_attempts
         self._safe_mode_reason: str | None = None
+        self._permanent_block_reason: str | None = None
         self._machine = machine
         self._journal = journal
         if (machine is None) != (journal is None):
@@ -160,6 +162,32 @@ class ExecutionEngine:
         if type(reason) is not str or reason == "":
             raise ExecutionInputError("safe-mode reason must be a non-empty string")
         self._safe_mode_reason = reason
+
+    def block_permanently(self, reason: str) -> None:
+        """IRREVERSIBLY disable new orders on this engine (SM9-002).
+
+        Distinct from :meth:`engage_safe_mode`: :meth:`reconcile_and_clear_safe_mode`
+        cannot clear this block, so once an execution-capable stack loses its
+        cross-process lock ownership no order path remains usable.
+        """
+        if type(reason) is not str or reason == "":
+            raise ExecutionInputError("block reason must be a non-empty string")
+        self._permanent_block_reason = reason
+
+    def _attach_execution_authority(self, machine, journal) -> None:
+        """Internal: bind the execution state machine + journal at activate.
+
+        The journal is loaded and the machine snapshot is built ONLY after the
+        cross-process execution mutex has been acquired (SM9-002), so a losing
+        process never touches the shared journal.  Both must be provided
+        together (mirrors the constructor guard).
+        """
+        if (machine is None) != (journal is None):
+            raise ExecutionInputError(
+                "machine and journal must be provided together (state-machine mode)"
+            )
+        self._machine = machine
+        self._journal = journal
 
     # ------------------------------------------------------ state machine
 
@@ -199,12 +227,15 @@ class ExecutionEngine:
         return self._machine.state in states
 
     def _drive_machine_to_submission(self):
-        """Advance a pre-READY machine to READY before an order submission.
+        """Gate a submission on the machine already being READY (SM9-003A).
 
-        In state-machine mode, when the strategy triggers a submission the
-        machine must first pass WAIT_TRIGGER -> SNAPSHOT -> READY (reverse_repo
-        semantics).  If the machine is already at READY/INTENT this is a
-        no-op; a machine at SAFE_HALT/DONE cannot submit.
+        In state-machine mode, ``TRIGGER`` and ``SNAPSHOT_OK`` are ONLY ever
+        emitted by the trusted preflight layer (``LiveStack.prepare_snapshot``)
+        after the real trading-day/window, broker snapshot/cash and quote
+        checks succeed — never self-certified inside ``send_*``.  If the
+        machine is already at READY/INTENT this is a no-op; a machine at
+        WAIT_TRIGGER/SNAPSHOT (preflight not completed) or any other state is
+        refused.
         """
         if self._machine is None:
             return
@@ -212,15 +243,18 @@ class ExecutionEngine:
 
         if self._machine.state in (TGridState.READY, TGridState.INTENT):
             return
-        if self._machine.state is TGridState.WAIT_TRIGGER:
-            self._advance_machine(TGridEvent.TRIGGER)
-            self._advance_machine(TGridEvent.SNAPSHOT_OK)
-            return
         if self._machine.state in (TGridState.SAFE_HALT, TGridState.DONE,
                                    TGridState.SKIPPED):
             raise ExecutionError(
                 f"machine is in terminal state {self._machine.state.value}; "
                 "cannot submit"
+            )
+        if self._machine.state in (TGridState.WAIT_TRIGGER,
+                                   TGridState.SNAPSHOT):
+            raise ExecutionError(
+                "machine preflight is incomplete; the trusted preflight layer "
+                "must emit TRIGGER + SNAPSHOT_OK (with verified evidence) "
+                "before submission"
             )
         # Any other state (NEW/PREFLIGHT/RECOVERY/ORDER_ACTIVE/CANCEL_PENDING/
         # RECONCILE/SUBMIT_UNKNOWN) is not ready to submit.
@@ -257,6 +291,10 @@ class ExecutionEngine:
         self._safe_mode_reason = reason
 
     def _require_not_safe_mode(self) -> None:
+        if self._permanent_block_reason is not None:
+            raise ExecutionError(
+                f"execution disabled: {self._permanent_block_reason}"
+            )
         if self._safe_mode_reason is not None:
             raise ExecutionError(
                 f"SAFE_MODE: {self._safe_mode_reason}; "
@@ -453,6 +491,22 @@ class ExecutionEngine:
                 symbol=symbol, side=side, qty=qty, limit_price=limit_price,
                 client_order_key=client_order_key, order_remark=order_remark,
             )
+        except BrokerRejectedError as exc:
+            # SM9-003D: a DEFINITIVE rejection (pre-broker local refusal such
+            # as allowlist/caps/double-enable, or a broker-side rejection with
+            # a non-positive id) means nothing was sent ambiguously.  Map to
+            # SUBMIT_REJECTED -> SAFE_HALT and close the intent/reservation
+            # definitively — never to the ambiguous SUBMIT_EXCEPTION.
+            self._advance_machine(TGridEvent.SUBMIT_REJECTED)
+            try:
+                self._store.update_intent_status(
+                    client_order_key, status=OrderStatus.REJECTED,
+                    updated_at=now,
+                )
+            except ExecutionStoreError:
+                pass  # surface the original rejection error
+            self._release(client_order_key, now=now)
+            raise OrderSendFailedError("order rejected definitively") from exc
         except BrokerDisconnectedError as exc:
             self._advance_machine(TGridEvent.SUBMIT_EXCEPTION)
             raise OrderSendFailedError("broker disconnected before send") from exc
@@ -487,14 +541,16 @@ class ExecutionEngine:
         client_order_key: str,
         *,
         now: str,
-        remark: str | None = None,
     ) -> ExecutionResult:
         """reverse_repo ``_recover_unknown_submission`` (SUBMIT_UNKNOWN recovery).
 
         Called after :meth:`send_buy` raised with the machine in
         ``SUBMIT_UNKNOWN`` (broker exception after the durable intent was
-        persisted).  The durable intent's remark is re-queried against ALL
-        broker orders (strict query — ``None`` never means empty success):
+        persisted).  The **persisted intent's order_remark is the SOLE
+        recovery authority** (SM9-004): there is no caller-supplied remark
+        selector, so a caller can never associate the intent with a different
+        broker order.  All broker orders are re-queried (strict query — ``None``
+        never means empty success) and matched by that durable remark:
 
         * exactly one matching order with matching symbol/side is classified
           by broker status: ``SUBMITTED``/``PARTIAL`` -> ``RECOVERED_ACTIVE``,
@@ -528,8 +584,9 @@ class ExecutionEngine:
                 f"{self._machine.state.value}"
             )
         intent = self._store.get_intent(client_order_key)
-        if remark is None:
-            remark = intent.order_remark
+        # SM9-004: the persisted intent remark is the ONLY recovery identity;
+        # no caller-provided remark selector exists.
+        remark = intent.order_remark
         if type(remark) is not str or remark == "":
             raise ExecutionError(
                 "recovery needs a durable order remark to re-query by"
@@ -614,7 +671,15 @@ class ExecutionEngine:
         Partial fills are applied against the recorded intent qty; when the
         order reaches FILLED the reservation is released.  No simulation hook
         is used here — broker state is read through the port only.
+
+        Event emission is state-aware (SM9-003B): while the machine is in
+        CANCEL_PENDING, pending/active broker outcomes map to
+        ``CANCEL_STILL_PENDING`` and terminal outcomes to ``CANCEL_TERMINAL``;
+        in ORDER_ACTIVE (including a spontaneous broker-side cancel) the
+        terminal outcome maps to ``ORDER_TERMINAL``.
         """
+        from tgrid.execution.statemachine import TGridState
+
         intent = self._store.get_intent(client_order_key)
         if intent.status in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN"):
             return ExecutionResult(
@@ -635,6 +700,18 @@ class ExecutionEngine:
         except BrokerError as exc:
             raise OrderReconciliationError("broker query failed during poll") from exc
 
+        in_cancel_pending = self._machine_state_is(TGridState.CANCEL_PENDING)
+        # SM9-003B: terminal/pending outcomes select the event family by the
+        # machine state the order is being observed from.
+        terminal_event = (
+            TGridEvent.CANCEL_TERMINAL if in_cancel_pending
+            else TGridEvent.ORDER_TERMINAL
+        )
+        still_active_event = (
+            TGridEvent.CANCEL_STILL_PENDING if in_cancel_pending
+            else TGridEvent.ORDER_STILL_ACTIVE
+        )
+
         # NODEB-I2-002: any status outside the known state machine is an
         # explicit unresolved outcome, never a silent downgrade to SUBMITTED.
         # The reservation is preserved and the run must be treated as unsafe.
@@ -648,7 +725,7 @@ class ExecutionEngine:
             )
 
         if order.status == "REJECTED":
-            self._advance_machine(TGridEvent.ORDER_TERMINAL)
+            self._advance_machine(terminal_event)
             self._store.update_intent_status(
                 client_order_key, status=OrderStatus.REJECTED, updated_at=now,
             )
@@ -660,7 +737,7 @@ class ExecutionEngine:
                 message="broker rejected the order",
             )
         if order.status == "CANCELED":
-            self._advance_machine(TGridEvent.CANCEL_TERMINAL)
+            self._advance_machine(terminal_event)
             self._store.update_intent_status(
                 client_order_key, status=OrderStatus.CANCELED, updated_at=now,
             )
@@ -677,9 +754,9 @@ class ExecutionEngine:
             OrderStatus.PARTIAL if order.status == "PARTIAL" else intent.status
         )
         if new_status == OrderStatus.FILLED:
-            self._advance_machine(TGridEvent.ORDER_TERMINAL)
+            self._advance_machine(terminal_event)
         else:
-            self._advance_machine(TGridEvent.ORDER_STILL_ACTIVE)
+            self._advance_machine(still_active_event)
         if new_status != intent.status:
             self._store.update_intent_status(
                 client_order_key, status=new_status, updated_at=now,
@@ -707,14 +784,28 @@ class ExecutionEngine:
 
     def timeout_order(self, client_order_key: str, *, now: str) -> ExecutionResult:
         """Design §25: cancel -> re-query -> reconcile; never assume unfilled."""
+        from tgrid.execution.statemachine import TGridState
+
         intent = self._store.get_intent(client_order_key)
         if intent.broker_order_id is None:
             raise OrderReconciliationError("intent has no broker_order_id")
         # reverse_repo: the durable cancel intent precedes the side effect.
-        self._advance_machine(TGridEvent.CANCEL_REQUESTED)
+        # SM9-003B: only ORDER_ACTIVE may enter CANCEL_PENDING; a repeated
+        # cancel while already CANCEL_PENDING must not re-fire the transition.
+        if self._machine is not None:
+            if self._machine_state_is(TGridState.CANCEL_PENDING):
+                pass  # already canceling; proceed to cancel + re-query
+            elif self._machine_state_is(TGridState.ORDER_ACTIVE):
+                self._advance_machine(TGridEvent.CANCEL_REQUESTED)
+            else:
+                raise OrderReconciliationError(
+                    f"cannot cancel from machine state {self._machine.state.value}"
+                )
         try:
             self._broker.cancel_order(intent.broker_order_id)
         except BrokerCancelFailedError as exc:
+            # CANCEL_REQUESTED already moved the machine to CANCEL_PENDING, so
+            # CANCEL_REJECTED is the valid fail-closed exit.
             self._advance_machine(TGridEvent.CANCEL_REJECTED)
             raise CancelFailedError("cancel failed; order must be re-queried") from exc
         except BrokerError as exc:
