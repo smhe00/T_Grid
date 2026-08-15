@@ -40,6 +40,15 @@ class BrokerCancelFailedError(BrokerError):
     """The broker failed to cancel the order (design §25)."""
 
 
+class BrokerQueryAmbiguous(BrokerError):
+    """A broker query remained ambiguous after bounded retries (NODEB-RR-002).
+
+    Mirrors ``reverse_repo``'s strict-query contract: exceptions and ``None``
+    are retried; a ``None`` result NEVER means empty success; after the bounded
+    attempts the query fails closed with this typed ambiguity error.
+    """
+
+
 @dataclass(frozen=True)
 class BrokerOrder:
     """TGrid-owned typed broker order snapshot (never a raw XtQuant object).

@@ -108,12 +108,15 @@ class DailyExposureLedger:
     def reconstruct_from_orders(self, orders: tuple, *, remark_prefix: str = "TG_") -> None:
         """Conservatively rebuild today's exposure from managed broker orders.
 
-        Managed = BUY orders tagged with ``remark_prefix`` whose broker-reported
-        ``order_time`` falls on the current ``trade_date`` (orders without a
-        timestamp are counted conservatively).  **Terminal same-day orders are
-        included** (I2-004): the "submitted BUY notional is never removed" rule
-        means a filled/canceled/rejected same-day order still consumed the cap.
-        The exposure becomes the maximum of the persisted value and the sum.
+        Managed = BUY orders tagged with ``remark_prefix`` that belong to the
+        current ``trade_date``.  The date is taken from the order's
+        **durable intent/journal timestamp** when present (``order_time`` in the
+        native QMT representation is NOT assumed — RR-004: do not key
+        safety-critical same-day reconstruction on a raw broker timestamp
+        format).  Orders carrying no durable date are counted conservatively.
+        **Terminal same-day orders are included** (I2-004): the "submitted BUY
+        notional is never removed" rule means a filled/canceled/rejected
+        same-day order still consumed the cap.
         """
         total = 0.0
         for order in orders:
@@ -124,8 +127,11 @@ class DailyExposureLedger:
                 continue
             order_time = getattr(order, "order_time", "")
             if isinstance(order_time, str) and order_time and self._trade_date:
+                # Accept the ISO date prefix of the journal timestamp; raw
+                # QMT formats are not assumed, so an unrecognized value makes
+                # the order count conservatively rather than being dropped.
                 if not order_time.startswith(self._trade_date):
-                    continue  # not a same-day managed BUY order
+                    continue
             qty = getattr(order, "qty", 0)
             price = getattr(order, "limit_price", 0.0)
             if type(qty) is not int or qty <= 0:

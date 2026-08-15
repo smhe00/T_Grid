@@ -275,11 +275,16 @@ class TestAllowlistAndLimits(unittest.TestCase):
         adapter = self._ready(max_cash_per_day=500.0)
         adapter.place_order(symbol="510300.SH", side="BUY", qty=100,
                             limit_price=4.6)
+        # NODEB-RR-004: session_date is required on the reset path.
         with self.assertRaises(LiveBrokerError):
-            adapter.roll_day("2026-08-15")  # same day
+            adapter.roll_day("2026-08-17")
         with self.assertRaises(LiveBrokerError):
-            adapter.roll_day("2026-08-14")  # backwards
-        adapter.roll_day("2026-08-17")  # forward: resets and re-reconstructs
+            adapter.roll_day("2026-08-15", session_date="2026-08-15")  # same day
+        with self.assertRaises(LiveBrokerError):
+            adapter.roll_day("2026-08-14", session_date="2026-08-14")  # backwards
+        with self.assertRaises(LiveBrokerError):
+            adapter.roll_day("2026-08-17", session_date="2026-08-16")  # mismatch
+        adapter.roll_day("2026-08-17", session_date="2026-08-17")  # forward
         self.assertAlmostEqual(adapter.daily_cash_used, 0.0)
 
     def test_no_public_unconditional_reset(self):

@@ -78,6 +78,12 @@ from tgrid.integrations.live_bootstrap import (
     LiveStack,
     build_live_stack,
 )
+from tgrid.integrations.live_session import (
+    LiveSessionAccountError,
+    LiveSessionError,
+    build_live_session,
+)
+from tgrid.integrations.exposure_store import SqliteExposureStore
 from tgrid.integrations.xtquant_bridge import (
     BrokerAccountStatusEvent,
     BrokerCancelErrorEvent,
@@ -324,6 +330,10 @@ __all__ = [
     "LiveBootstrapError",
     "LiveStack",
     "build_live_stack",
+    "LiveSessionError",
+    "LiveSessionAccountError",
+    "build_live_session",
+    "SqliteExposureStore",
     "XtQuantBrokerBridge",
     "XtQuantCallbackHandler",
     "BrokerOrderEvent",

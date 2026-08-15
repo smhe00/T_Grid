@@ -1,4 +1,4 @@
-"""The ONE concrete XtQuant broker bridge (NODEB-001, I2-001, I2-003).
+"""The ONE concrete XtQuant broker bridge (NODEB-001, I2-001, I2-003, RR-002).
 
 This module is the only place in the repository allowed to call the real XtQuant
 order/cancel surface (``order_stock`` / ``cancel_order_stock``); the capability
@@ -11,23 +11,30 @@ The bridge maps the shared :class:`~tgrid.execution.port.BrokerPort` contract to
 * ``place_order``  -> ``trader.order_stock(account, symbol, order_type,
   volume, price_type, price, strategy_name, order_remark)``;
 * ``cancel_order`` -> ``trader.cancel_order_stock(account, order_id)``;
-* reads           -> ``query_stock_orders`` / ``query_stock_trades``.
+* reads           -> strict bounded-retry queries (NODEB-RR-002).
+
+Query semantics follow the pinned ``reverse_repo`` reference
+(``repo_execution_core.strict_query``): exceptions and ``None`` are retried;
+``None`` NEVER means empty success; after bounded attempts the query raises
+:class:`~tgrid.execution.port.BrokerQueryAmbiguous`.  ``query_order`` prefers
+the native exact-order query ``query_stock_order(account, int_order_id)`` when
+the trader exposes it, falling back to a strict unique-match all-orders scan
+otherwise (RR-002).
 
 Native order-id contract (NODEB-I2-001): the official XtQuant interface uses
-positive **int** order ids (``order_stock`` returns int, ``cancel_order_stock``
-takes int, ``XtOrder.order_id``/``XtTrade.order_id`` are int).  The TGrid
-persistent DTO/store serializes ids as strings, so the bridge performs ONE
-audited, validated conversion at its boundary: ``place_order`` returns
-``str(native_int)`` and every cancel/query converts the string back with
-:meth:`_to_native_order_id` (plain decimal only, fail closed).  Round-tripping
-``str(int)`` is lossless, so query/order/trade mapping stays deterministic.
+positive **int** order ids.  The TGrid persistent DTO/store serializes ids as
+strings, so the bridge performs ONE audited, validated conversion at its
+boundary: ``place_order`` returns ``str(native_int)`` and every cancel/query
+converts the string back with :meth:`_to_native_order_id` (plain decimal only,
+fail closed).
 
 Broker callback payloads are converted by the bridge-owned
 :class:`XtQuantCallbackHandler` into immutable data-only events that are ONLY
 enqueued onto the real TGrid EventQueue (or a narrow enqueue/put adapter,
 NODEB-I2-003).  Disconnect / account-status / order-error / cancel-error are
 real events, never silently dropped; a queue-full/stopped/failed condition
-flips ``execution_healthy`` false so the adapter refuses new orders.
+flips ``execution_healthy`` false so the adapter refuses new orders.  A broker
+disconnect also marks the channel unhealthy immediately (NODEB-RR-005).
 
 The bridge never constructs XtQuantTrader itself and never trades on its own:
 production wires a real ``XtQuantTrader`` + ``StockAccount`` in; tests wire
@@ -36,6 +43,7 @@ fakes.  No real order/cancel is invoked before Audit Node B PASS.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 
 from tgrid.execution.models import BUY, SELL, OrderStatus
@@ -46,6 +54,7 @@ from tgrid.execution.port import (
     BrokerOrder,
     BrokerOrderRejectedError,
     BrokerPort,
+    BrokerQueryAmbiguous,
     BrokerTrade,
 )
 
@@ -177,6 +186,14 @@ class XtQuantCallbackHandler:
         except Exception:  # noqa: BLE001 - queue full/stopped/failed boundary
             self._healthy = False
 
+    def _mark_unhealthy(self) -> None:
+        """Immediate health flip for critical signals (NODEB-RR-005).
+
+        Broker disconnect marks the execution channel unhealthy right away;
+        explicit reconnection/recovery is required before new orders resume.
+        """
+        self._healthy = False
+
     # -- XtQuantTraderCallback-compatible entry points ---------------------
 
     def on_stock_order(self, order) -> None:
@@ -216,7 +233,11 @@ class XtQuantCallbackHandler:
         pass
 
     def on_disconnected(self) -> None:
+        # NODEB-RR-005: disconnect marks the execution channel unhealthy
+        # immediately (not just an informational event); recovery must be
+        # explicit before new orders resume.
         self._emit(BrokerDisconnectEvent())
+        self._mark_unhealthy()
 
     def on_account_status(self, status) -> None:
         self._emit(
@@ -268,6 +289,7 @@ class XtQuantBrokerBridge(BrokerPort):
         self._trader = trader
         self._account = account
         self._strategy_name = strategy_name
+        self._event_sink = event_sink
         self._handler = XtQuantCallbackHandler(event_sink) if event_sink is not None else None
         if self._handler is not None and hasattr(trader, "register_callback"):
             trader.register_callback(self._handler)
@@ -279,16 +301,33 @@ class XtQuantBrokerBridge(BrokerPort):
 
     @property
     def execution_healthy(self) -> bool:
-        """False when a callback enqueue failed (queue full/stopped/failed).
+        """False when a callback enqueue failed or the event channel is down.
 
-        The adapter consults this before permitting new orders (I2-003): a
-        broker execution-health signal must never be silently lost.
+        NODEB-RR-005: reads the ACTUAL EventQueue lifecycle state (FAILED /
+        STOPPING / STOPPED reject new orders immediately, even without another
+        callback) in addition to callback-handler enqueue health.  A broker
+        disconnect also flips health false until explicit recovery.
         """
         if self._handler is not None and not self._handler.healthy:
             return False
+        queue_state = getattr(self._event_sink, "state", None)
+        if queue_state is not None:
+            state_value = getattr(queue_state, "value", None)
+            if state_value in ("FAILED", "STOPPING", "STOPPED"):
+                return False
         return True
 
-    # ------------------------------------------------- native-id conversion
+    def mark_connected(self) -> None:
+        """Explicit recovery: clear the disconnect-unhealthy flag.
+
+        NODEB-RR-005: reconnection/recovery must be explicit before new orders
+        resume.  The handler health is restored only after a successful
+        reconnection; the event queue must itself be RUNNING.
+        """
+        if self._handler is not None:
+            self._handler._healthy = True
+
+    # ------------------------------------------------------- native-id conversion
 
     @staticmethod
     def _to_native_order_id(order_id: str) -> int:
@@ -304,7 +343,85 @@ class XtQuantBrokerBridge(BrokerPort):
             raise BrokerError("order_id must be a plain decimal integer string")
         return int(order_id)
 
-    # ------------------------------------------------------- order surface
+    # ------------------------------------------------- strict-query contract
+
+    def _strict_query(self, operation, *, name: str, attempts: int = 3) -> object:
+        """Bounded retry matching ``reverse_repo.strict_query`` (NODEB-RR-002).
+
+        Exceptions and ``None`` are retried up to ``attempts`` times; ``None``
+        NEVER means empty success; after the bounded attempts a typed
+        :class:`BrokerQueryAmbiguous` is raised.  A short delay between
+        attempts keeps the bounded loop deterministic in tests.
+        """
+        if type(attempts) is not int or attempts < 1:
+            raise BrokerError("attempts must be a positive int")
+        errors: list = []
+        for attempt in range(1, attempts + 1):
+            try:
+                result = operation()
+            except BrokerError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - broker boundary, retried
+                errors.append(f"{type(exc).__name__}: {exc}")
+            else:
+                if result is not None:
+                    return result
+                errors.append("None")
+            if attempt < attempts:
+                time.sleep(0.15)
+        raise BrokerQueryAmbiguous(
+            f"{name} remained ambiguous after {attempts} attempts: "
+            + " | ".join(errors)
+        )
+
+    # --------------------------------------------------------- read surface
+
+    def query_order(self, order_id: str) -> BrokerOrder:
+        native_id = self._to_native_order_id(order_id)
+        # NODEB-RR-002: prefer the native exact-order query when available;
+        # otherwise fall back to a strict unique-match all-orders scan.
+        exact = getattr(self._trader, "query_stock_order", None)
+        if callable(exact):
+            raw = self._strict_query(
+                lambda: exact(self._account, native_id),
+                name=f"query_stock_order({native_id})",
+            )
+            return self._map_order(raw)
+        orders = self._query_all_orders()
+        matches = [o for o in orders if int(o.order_id) == native_id]
+        if len(matches) != 1:
+            raise BrokerQueryAmbiguous(
+                f"broker order {order_id!r} is not uniquely matched"
+            )
+        return matches[0]
+
+    def query_trades(self, order_id: str) -> tuple:
+        native_id = self._to_native_order_id(order_id)
+        raw = self._strict_query(
+            lambda: self._trader.query_stock_trades(self._account),
+            name="query_stock_trades",
+        )
+        return tuple(
+            self._map_trade(t)
+            for t in raw
+            if int(getattr(t, "order_id", 0) or 0) == native_id
+        )
+
+    def query_orders(self, *, symbol: str | None = None) -> tuple:
+        if symbol is not None and type(symbol) is not str:
+            raise BrokerError("symbol must be a string or None")
+        orders = self._query_all_orders()
+        if symbol is None:
+            return orders
+        return tuple(o for o in orders if o.symbol == symbol)
+
+    def _query_all_orders(self) -> tuple:
+        """Strict all-orders query (RR-002): None never means empty success."""
+        raw = self._strict_query(
+            lambda: self._trader.query_stock_orders(self._account, False),
+            name="query_stock_orders(all)",
+        )
+        return tuple(self._map_order(o) for o in raw)
 
     def place_order(
         self,
@@ -357,50 +474,6 @@ class XtQuantBrokerBridge(BrokerPort):
         cancel_result = getattr(result, "cancel_result", result)
         if cancel_result != 0:
             raise BrokerCancelFailedError("XtQuantTrader failed to cancel the order")
-
-    # --------------------------------------------------------- read surface
-
-    def query_order(self, order_id: str) -> BrokerOrder:
-        native_id = self._to_native_order_id(order_id)
-        try:
-            orders = self._trader.query_stock_orders(self._account)
-        except BrokerError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - broker boundary, fail closed
-            raise BrokerDisconnectedError("broker query failed") from exc
-        for raw in orders:
-            if int(getattr(raw, "order_id", 0) or 0) == native_id:
-                return self._map_order(raw)
-        raise BrokerError(f"broker has no order {order_id!r}")
-
-    def query_trades(self, order_id: str) -> tuple:
-        native_id = self._to_native_order_id(order_id)
-        try:
-            trades = self._trader.query_stock_trades(self._account)
-        except BrokerError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - broker boundary, fail closed
-            raise BrokerDisconnectedError("broker query failed") from exc
-        return tuple(
-            self._map_trade(raw)
-            for raw in trades
-            if int(getattr(raw, "order_id", 0) or 0) == native_id
-        )
-
-    def query_orders(self, *, symbol: str | None = None) -> tuple:
-        if symbol is not None and type(symbol) is not str:
-            raise BrokerError("symbol must be a string or None")
-        try:
-            orders = self._trader.query_stock_orders(self._account)
-        except BrokerError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - broker boundary, fail closed
-            raise BrokerDisconnectedError("broker query failed") from exc
-        return tuple(
-            self._map_order(raw)
-            for raw in orders
-            if symbol is None or getattr(raw, "stock_code", None) == symbol
-        )
 
     # --------------------------------------------------------------- mapping
 

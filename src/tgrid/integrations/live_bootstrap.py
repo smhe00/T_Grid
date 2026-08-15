@@ -1,4 +1,4 @@
-"""Single production-shaped live-stack bootstrap (NODEB-I2-006).
+"""Single production-shaped live-stack bootstrap (NODEB-I2-006, NODEB-RR-003).
 
 One audited construction path binds the whole pre-live stack in a safe order:
 
@@ -10,16 +10,21 @@ One audited construction path binds the whole pre-live stack in a safe order:
     -> real TGrid EventQueue
     -> XtQuantBrokerBridge
     -> LiveBrokerAdapter
-    -> startup recovery / exposure reconciliation
+    -> mandatory startup order/intent recovery   (RR-003)
     -> separate non-persisted runtime confirmation
     -> ExecutionEngine
 
-:func:`build_live_stack` returns a :class:`LiveStack` whose
-:meth:`LiveStack.activate` performs startup reconciliation (exposure
-reconstruction + optional order/intent reconciliation) and token-gated runtime
-confirmation; the returned engine cannot place a new order until both steps
-complete (the adapter's ``exposure_ready`` / ``runtime_confirmed`` gates
-enforce it).  Tests use fake XtQuant only; no real order/cancel is invoked.
+:func:`build_live_stack` returns a :class:`LiveStack`.  Production activation
+(NODEB-RR-003) ALWAYS performs order/intent recovery — it does NOT accept a
+``None`` recovery path — and runtime confirmation happens only after recovery
+is complete.  ``UNKNOWN`` statuses, duplicate/ambiguous matches,
+``UNMATCHED_BROKER_ORDER``, and unresolved ``INTENT_ONLY`` intents block
+activation until explicitly reconciled.  SAFE_MODE is cleared only through the
+reconciliation-driven :meth:`LiveStack.reconcile_and_resume` transition, never
+by flipping a naked flag (the engine's public ``clear_safe_mode`` remains a
+low-level unit hook; the production path uses the driven transition).
+
+Tests use fake XtQuant only; no real order/cancel is invoked.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from dataclasses import dataclass
 
 from tgrid.events import EventQueue
 from tgrid.execution.executor import ExecutionEngine
+from tgrid.execution.recovery import reconcile_open_intents
 from tgrid.execution.store import ExecutionStore
 from tgrid.integrations.live_broker_adapter import (
     LiveBrokerAdapter,
@@ -54,35 +60,61 @@ class LiveStack:
         self,
         *,
         token: str,
-        reconcile_open_intents=None,
         session_date: str | None = None,
     ) -> None:
-        """Perform startup reconciliation + runtime confirmation.
+        """Perform MANDATORY startup recovery + runtime confirmation (RR-003).
 
-        ``reconcile_open_intents`` (optional) is the recovery entry point
-        (``reconcile_open_intents(store, broker)``); when provided, an
-        unresolved/ambiguous result raises and activation fails closed.
-        Exposure reconstruction always runs first; the token-gated runtime
-        confirmation happens last, so a fresh process cannot place a new order
-        until the whole bootstrap completes.
+        Startup order/intent recovery is never optional: every non-terminal
+        local intent is reconciled against the broker; ``UNKNOWN`` statuses,
+        duplicate/ambiguous matches, ``UNMATCHED_BROKER_ORDER`` and unresolved
+        ``INTENT_ONLY`` outcomes fail closed.  Runtime confirmation happens
+        only after recovery completes.
         """
         if self.event_queue.state.value != "RUNNING":
             self.event_queue.start()
         if session_date is not None:
-            self.adapter.roll_day(session_date)
+            self.adapter.roll_day(session_date, session_date=session_date)
         # 1) Startup exposure reconstruction (mandatory readiness gate).
         self.adapter.reconstruct_daily_exposure()
-        # 2) Optional startup order/intent reconciliation (fail closed).
-        if reconcile_open_intents is not None:
-            results = reconcile_open_intents(self.engine.store, self.adapter)
-            # NODEB-I2-002 #5: an unmatched tagged broker order is a
-            # duplicate-order risk (SAFE_MODE); activation must fail closed.
-            if any(r.outcome == "UNMATCHED_BROKER_ORDER" for r in results):
-                raise LiveBootstrapError(
-                    "startup reconciliation found unmatched tagged broker "
-                    "orders; refusing to activate (SAFE_MODE)"
-                )
+        # 2) MANDATORY startup order/intent recovery (RR-003): the recovery
+        #    entry point is never None on the production path.
+        results = reconcile_open_intents(self.engine.store, self.adapter)
+        blocked = [
+            r for r in results
+            if r.outcome in ("UNMATCHED_BROKER_ORDER", "INTENT_ONLY")
+        ]
+        if blocked:
+            self.engine.engage_safe_mode(
+                "startup recovery found unresolved intents"
+            )
+            raise LiveBootstrapError(
+                "startup recovery found unresolved intents: "
+                + ", ".join(f"{r.outcome}:{r.client_order_key}" for r in blocked)
+                + "; refusing to activate (SAFE_MODE)"
+            )
         # 3) Separate, non-persisted runtime confirmation.
+        self.adapter.confirm_runtime(token)
+
+    def reconcile_and_resume(self, *, token: str, session_date: str | None = None) -> None:
+        """Reconciliation-driven SAFE_MODE release (RR-003).
+
+        Clears the engine SAFE_MODE only after a successful authoritative
+        broker/local reconciliation — never by flipping a naked boolean.
+        Re-runs mandatory recovery; on success, resumes new-order capability.
+        """
+        if session_date is not None:
+            self.adapter.roll_day(session_date, session_date=session_date)
+        self.adapter.reconstruct_daily_exposure()
+        results = reconcile_open_intents(self.engine.store, self.adapter)
+        blocked = [
+            r for r in results
+            if r.outcome in ("UNMATCHED_BROKER_ORDER", "INTENT_ONLY")
+        ]
+        if blocked:
+            raise LiveBootstrapError(
+                "reconciliation still unresolved; SAFE_MODE retained"
+            )
+        self.engine.clear_safe_mode()
         self.adapter.confirm_runtime(token)
 
 

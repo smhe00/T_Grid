@@ -37,6 +37,7 @@ from tgrid.integrations.xtquant_bridge import (
     XtQuantBrokerBridge,
     XtQuantCallbackHandler,
 )
+from tgrid.execution.port import BrokerQueryAmbiguous
 
 
 class _FakeAccount:
@@ -109,7 +110,7 @@ class _FakeTrader:
         order.order_status = 54  # 已撤
         return 0
 
-    def query_stock_orders(self, account):
+    def query_stock_orders(self, account, cancelable_only=False):
         return list(self.orders.values())
 
     def query_stock_trades(self, account):
@@ -267,6 +268,88 @@ class TestStatusMapping(unittest.TestCase):
         self.assertEqual(trades[0].price, 4.6)
 
 
+class TestStrictQuery(unittest.TestCase):
+    """NODEB-RR-002: bounded-retry strict queries; None never means empty."""
+
+    def test_none_never_empty_success(self):
+        trader = _FakeTrader()
+
+        def returns_none(*a, **k):
+            return None
+
+        trader.query_stock_orders = returns_none
+        bridge = XtQuantBrokerBridge(trader, _FakeAccount())
+        with self.assertRaises(BrokerQueryAmbiguous):
+            bridge.query_orders()
+
+    def test_transient_exception_then_success(self):
+        trader = _FakeTrader()
+        calls = {"n": 0}
+
+        def flaky(*a, **k):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise RuntimeError("transient")
+            return list(trader.orders.values())
+
+        trader.query_stock_orders = flaky
+        bridge = XtQuantBrokerBridge(trader, _FakeAccount())
+        bridge.place_order(symbol="510300.SH", side=BUY, qty=100,
+                           limit_price=4.6)
+        orders = bridge.query_orders()
+        self.assertEqual(len(orders), 1)
+        self.assertGreaterEqual(calls["n"], 2)
+
+    def test_persistent_exception_fails_closed(self):
+        trader = _FakeTrader()
+
+        def always_fails(*a, **k):
+            raise RuntimeError("persistent")
+
+        trader.query_stock_orders = always_fails
+        bridge = XtQuantBrokerBridge(trader, _FakeAccount())
+        with self.assertRaises(BrokerQueryAmbiguous):
+            bridge.query_orders()
+
+    def test_empty_list_is_legit_success(self):
+        trader = _FakeTrader()
+        bridge = XtQuantBrokerBridge(trader, _FakeAccount())
+        orders = bridge.query_orders()
+        self.assertEqual(orders, ())  # empty success, not ambiguous
+
+    def test_duplicate_match_fails_closed(self):
+        # Native query_stock_order present: duplicates can't arise; force the
+        # scan fallback by removing the exact-order method and duplicating ids.
+        trader = _FakeTrader()
+        bridge = XtQuantBrokerBridge(trader, _FakeAccount())
+        o1 = bridge.place_order(symbol="510300.SH", side=BUY, qty=100,
+                                limit_price=4.6)
+        o2 = bridge.place_order(symbol="510300.SH", side=BUY, qty=100,
+                                limit_price=4.6)
+        # Duplicate the first order id inside the trader book.
+        trader.orders[int(o2)] = trader.orders[int(o1)]
+        trader.query_stock_order = None  # force all-orders scan fallback
+        with self.assertRaises(BrokerQueryAmbiguous):
+            bridge.query_order(o1)
+
+    def test_query_order_prefers_native_exact_query(self):
+        trader = _FakeTrader()
+        seen = []
+
+        def exact(account, order_id):
+            seen.append(order_id)
+            return trader.orders[order_id]
+
+        trader.query_stock_order = exact
+        bridge = XtQuantBrokerBridge(trader, _FakeAccount())
+        oid = bridge.place_order(symbol="510300.SH", side=BUY, qty=100,
+                                 limit_price=4.6)
+        dto = bridge.query_order(oid)
+        self.assertEqual(dto.order_id, oid)
+        # The native exact-order query was used with the native INT id.
+        self.assertEqual(seen, [int(oid)])
+
+
 class TestCallbackIsolation(unittest.TestCase):
     """NODEB-004 / I2-003: concrete handler only enqueues immutable events."""
 
@@ -302,19 +385,32 @@ class TestCallbackIsolation(unittest.TestCase):
     def test_critical_callbacks_are_not_dropped(self):
         sink = _Sink()
         handler = XtQuantCallbackHandler(sink)
-        handler.on_disconnected()
         handler.on_account_status(type("S", (), {"status": 1})())
         handler.on_order_error(type("E", (), {"order_id": 7, "error_msg": "bad"})())
         handler.on_cancel_error(type("C", (), {"order_id": 8, "error_msg": "nope"})())
         kinds = [e.kind for e in sink.events]
         self.assertEqual(kinds, [
-            "BROKER_DISCONNECT", "BROKER_ACCOUNT_STATUS",
-            "BROKER_ORDER_ERROR", "BROKER_CANCEL_ERROR",
+            "BROKER_ACCOUNT_STATUS",
+            "BROKER_ORDER_ERROR",
+            "BROKER_CANCEL_ERROR",
         ])
+        self.assertIsInstance(sink.events[0], BrokerAccountStatusEvent)
+        self.assertIsInstance(sink.events[1], BrokerOrderErrorEvent)
+        self.assertIsInstance(sink.events[2], BrokerCancelErrorEvent)
+
+    def test_disconnect_marks_unhealthy_immediately(self):
+        # NODEB-RR-005: on_disconnected emits the event AND flips health false
+        # right away; subsequent enqueues are blocked.
+        sink = _Sink()
+        handler = XtQuantCallbackHandler(sink)
+        self.assertTrue(handler.healthy)
+        handler.on_disconnected()
+        self.assertEqual(len(sink.events), 1)
         self.assertIsInstance(sink.events[0], BrokerDisconnectEvent)
-        self.assertIsInstance(sink.events[1], BrokerAccountStatusEvent)
-        self.assertIsInstance(sink.events[2], BrokerOrderErrorEvent)
-        self.assertIsInstance(sink.events[3], BrokerCancelErrorEvent)
+        self.assertFalse(handler.healthy)
+        # A later callback cannot enqueue anything.
+        handler.on_account_status(type("S", (), {"status": 1})())
+        self.assertEqual(len(sink.events), 1)
 
     def test_handler_holds_no_engine_or_store_references(self):
         sink = _Sink()

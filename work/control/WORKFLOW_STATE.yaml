@@ -5,32 +5,28 @@ remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
 handoff_seq: 22
-handoff_id: "NODEB-RR-CONFORMANCE-FIX-20260815-022"
-authorized_next:
-  - "NODEB-PRELIVE-REFERENCE-CONFORMANCE-FIX"
+handoff_id: "NODEB-RR-REMEDIATION-DONE-20260815-022"
+authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
 design_version: "1.1"
 gate: 5.5
-task_id: "NODEB-PRELIVE-REFERENCE-CONFORMANCE-FIX"
-state: "CHANGES_REQUIRED"
+task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
+state: "AUDIT_READY_PRELIVE"
 owner: "dsh"
 iteration: 4
-last_actor: "independent_auditor"
-last_update: "2026-08-15T14:48:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-15T15:00:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_ITER3_REFERENCE_20260815.md"
-git_base_commit: "2146f09e689ed2fc07c943e2bf7cd2a7609a8a2e"
-git_head_commit: "2146f09e689ed2fc07c943e2bf7cd2a7609a8a2e"
-audit_target_commit: "2146f09e689ed2fc07c943e2bf7cd2a7609a8a2e"
-reviewed_implementation_commit: "469116c83ca94d4b93a0f0aefb50ec687450d15d"
-previous_independent_audit_commit: "cb7aeb600661811673b873171b76957aa5af1f07"
-accepted_gate5_implementation_commit: "5a2e2fd32e21328badd1ceb2c92b973436c4c95a"
+git_base_commit: "3b0d53fd8c9613266a93582c2b5774d3ff4eae06"
+git_head_commit: "PENDING_PUSH"
+implementation_commit: "PENDING_PUSH"
 reference_repository: "https://github.com/smhe00/reverse_repo"
 reference_commit: "c9ecc701d9b1c47d6a8d03539b482368741204a3"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_AFTER_REFERENCE_CONFORMANCE_FIXES"
+next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Audit Node B Iteration 3 verdict CHANGES_REQUIRED after user identified smhe00/reverse_repo as the production miniQMT reference. This supersedes any broader partial-review speculation and narrows the final remediation to reference-conformance only. Accepted/frozen: BrokerPort/live chain, native int order-id boundary, UNKNOWN->SAFE_MODE, multiple-match rejection, immutable EventQueue callbacks, kill-switch cancel behavior, reservation+idempotency, pre-send BUY exposure reservation, executor/adapter NaN/Inf hardening, legacy Core guard, single real XtQuant call bridge. Remaining only NODEB-RR-001..006: production account/environment/QMT-path binding must reuse Gate1/reverse_repo; strict query None/retry semantics; mandatory startup recovery and reconciliation-only SAFE_MODE release; concrete durable exposure journal + trusted session rollover; actual EventQueue/disconnect health gating; exact metadata SHA. reverse_repo commit c9ecc701d9b1c47d6a8d03539b482368741204a3 is the QMT golden reference. Gate 6/7 BLOCKED; live_trading_allowed=false; no real TGrid order/cancel authorized."
+notes: "Node B Iteration-3 reference-conformance audit 3b0d53f = CHANGES_REQUIRED (NODEB-RR-001..006, baseline = reverse_repo pinned c9ecc70). Iteration 4 remediation complete (SELF_CERTIFIED): RR-001 production live-session factory build_live_session reusing Gate-1/reverse_repo account-env-QMT-path binding (strict normal-account selection, opaque token, order capability unreachable on failure/ambiguity); RR-002 strict-query bounded-retry contract in bridge (None never empty success, BrokerQueryAmbiguous after attempts, query_order prefers native query_stock_order, unique-match fallback); RR-003 mandatory startup order/intent recovery in LiveStack.activate (never None; UNMATCHED/INTENT_ONLY block activation) + reconciliation-driven reconcile_and_resume for SAFE_MODE release (no naked flag clear on production path); RR-004 concrete SqliteExposureStore durable journal built by production bootstrap (callers cannot substitute fake), session_date required on roll_day reset path, reconstruction not keyed on raw QMT order_time format; RR-005 execution_healthy reads actual EventQueue lifecycle (FAILED/STOPPING/STOPPED reject orders even without callback) + on_disconnected marks unhealthy immediately + explicit mark_connected recovery; RR-006 fixed git_base_commit SHA typo (cb7aeb6006... not cb7aeb6606...) and recorded pinned reference repo/commit. 9xx tests OK (final count in report); compileall 0; capability scan PASS. No real order/cancel invoked. State AUDIT_READY_PRELIVE, awaiting independent Audit Node B re-review; Gate 6/7 BLOCKED; live_trading_allowed=false."

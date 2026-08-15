@@ -112,7 +112,7 @@ class _FakeXtQuantTrader:
         self.orders[order_id].order_status = 54  # 已撤
         return 0
 
-    def query_stock_orders(self, account):
+    def query_stock_orders(self, account, cancelable_only=False):
         if self.fail_queries:
             raise RuntimeError("simulated query failure")
         return list(self.orders.values())

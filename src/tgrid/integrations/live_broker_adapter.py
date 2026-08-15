@@ -357,31 +357,34 @@ class LiveBrokerAdapter(BrokerPort):
             raise LiveBrokerError(str(exc)) from exc
         self.exposure_ready = True
 
-    def roll_day(self, new_trade_date: str, *, session_date: str | None = None) -> None:
+    def roll_day(self, new_trade_date: str, *, session_date: str = "") -> None:
         """Advance the trading day (monotonic ISO transition only, I2-004).
 
-        ``session_date`` optionally binds the rollover to a trusted current
-        trading session: when provided, ``new_trade_date`` must equal it, so an
-        arbitrary caller-provided future string cannot reset the hard cap.
+        NODEB-RR-004: ``session_date`` is REQUIRED on the reset-capable
+        production path.  Day rollover/reset is derived from the trusted
+        current session/trading date: ``new_trade_date`` must equal
+        ``session_date``, so an arbitrary caller-provided future string can
+        never reset the hard cap.
         """
         if type(new_trade_date) is not str or new_trade_date == "":
             raise LiveBrokerError("new_trade_date must be a non-empty string")
+        if type(session_date) is not str or session_date == "":
+            raise LiveBrokerError(
+                "session_date is required for day rollover (production reset path)"
+            )
         try:
             _validate_iso_date(new_trade_date)
         except DailyExposureError as exc:
             raise LiveBrokerError(str(exc)) from exc
-        if session_date is not None:
-            if type(session_date) is not str or session_date == "":
-                raise LiveBrokerError("session_date must be a non-empty string")
-            try:
-                _validate_iso_date(session_date)
-            except DailyExposureError as exc:
-                raise LiveBrokerError(str(exc)) from exc
-            if new_trade_date != session_date:
-                raise LiveBrokerError(
-                    f"day roll must bind to the trusted session date: "
-                    f"new {new_trade_date!r} != session {session_date!r}"
-                )
+        try:
+            _validate_iso_date(session_date)
+        except DailyExposureError as exc:
+            raise LiveBrokerError(str(exc)) from exc
+        if new_trade_date != session_date:
+            raise LiveBrokerError(
+                f"day roll must bind to the trusted session date: "
+                f"new {new_trade_date!r} != session {session_date!r}"
+            )
         try:
             self._ledger.roll_day(new_trade_date)
         except DailyExposureError as exc:
