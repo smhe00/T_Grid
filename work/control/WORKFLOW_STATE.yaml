@@ -1,26 +1,30 @@
 project: TGrid
 collaboration_transport: "single-agent"
 transport_protocol_file: ""
-remote_repository: ""
+remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 12
-handoff_id: "GATE5-LIVE-20260815-012"
-authorized_next: ["GATE_6_MANUAL", "GATE_7_MANUAL"]
+handoff_seq: 13
+handoff_id: "AUD-R1-GATE5-REMEDIATION-20260815-013"
+authorized_next:
+  - "AUD-R1-GATE5-REMEDIATION"
 design_version: "1.1"
 gate: 5
-task_id: "GATE_5"
-state: "LIVE_VERIFIED"
-owner: "architect+programmer"
-iteration: 2
-last_actor: "architect"
-last_update: "2026-08-15T09:45:00+08:00"
+task_id: "AUD-R1-GATE5-REMEDIATION"
+state: "CHANGES_REQUIRED"
+owner: "dsh"
+iteration: 1
+last_actor: "independent_auditor"
+last_update: "2026-08-15T10:03:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-git_base_commit: "8d5c8b2"
-git_head_commit: "8d5c8b2"
+audit_file: "work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md"
+git_base_commit: "2f4957b215beec9f6b6e40054cc6a0375198c29d"
+git_head_commit: "2f4957b215beec9f6b6e40054cc6a0375198c29d"
 live_trading_allowed: false
-user_escalation_required: true
-user_escalation_reason: "GATE 6/7 require real MiniQMT environment and real funds; manual checklists delivered (work/gates/GATE_6/GATE67_MANUAL_CHECKLIST.md)."
-notes: "GATE 5 LIVE VERIFIED on real MiniQMT (simulation env, 2026-08-15). 10 consecutive trading days shadowed on 510300.SH: 4 WOULD orders (2 buys on dips, 2 LIFO sells on rebound), realized shadow PnL +13.3, reconciliation shadow=0 vs broker=0 delta=0, no halts. Live run surfaced and fixed: (1) get_trading_calendar unimplemented by this QMT build -> use get_trading_dates; (2) data-quality guard flagged A-share lunch recess as missing bar -> SessionWindow-aware gap check (new tests); (3) shadow must freeze daily basis per trading day (design 9); (4) effective-position model (real broker + shadow fills) for INV-005 decomposition; (5) violations only count risk/invariant failures. 799 tests OK, compileall 0. scripts/gate5_shadow_live.py added. live_trading_allowed=false, no real orders ever sent."
+user_escalation_required: false
+user_escalation_reason: ""
+next_independent_audit: "AUDIT_NODE_A_AFTER_GATE5_REMEDIATION"
+pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
+notes: "Independent stage audit retains Gate 2-4 implementation as provisional/self-certified, sets Gate 5 to CHANGES_REQUIRED, and blocks Gate 6/7. DSH is authorized only to execute the Gate-5 remediation in CURRENT_TASK / INDEPENDENT_AUDIT_20260815. Mandatory fixes cover explicit RAW/ADJUSTED basis, settlement/T+1-aware sellability, real-vs-shadow reconciliation semantics, evidence classification, repo/runtime-data sanitation, and control-plane consistency. No real order/cancel path may be invoked; live_trading_allowed=false. After remediation DSH must set AUDIT_READY and STOP for Audit Node A. A later Audit Node B is mandatory after real broker capability implementation and before any real order invocation."
