@@ -4,26 +4,27 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 14
-handoff_id: "AUD-R1-GATE5-REMEDIATION-DONE-20260815-014"
-authorized_next: ["AUDIT_NODE_A"]
+handoff_seq: 15
+handoff_id: "AUD-NODEA-GATE5-FIX-20260815-015"
+authorized_next:
+  - "AUD-NODEA-GATE5-FIX"
 design_version: "1.1"
 gate: 5
-task_id: "AUD-R1-GATE5-REMEDIATION"
-state: "AUDIT_READY"
+task_id: "AUD-NODEA-GATE5-FIX"
+state: "CHANGES_REQUIRED"
 owner: "dsh"
-iteration: 2
-last_actor: "dsh"
-last_update: "2026-08-15T11:00:00+08:00"
+iteration: 3
+last_actor: "independent_auditor"
+last_update: "2026-08-15T10:51:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md"
-git_base_commit: "2f4957b215beec9f6b6e40054cc6a0375198c29d"
-git_head_commit: "PENDING_PUSH"
+audit_file: "work/gates/GATE_5/NODE_A_REVIEW_20260815.md"
+git_base_commit: "910a727d3ef66c262abfd9dea45b092106f6d4a6"
+git_head_commit: "910a727d3ef66c262abfd9dea45b092106f6d4a6"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_A_AFTER_GATE5_REMEDIATION"
+next_independent_audit: "AUDIT_NODE_A_AFTER_ITERATION_3_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "AUD-R1-001..007 remediation complete (SELF_CERTIFIED), state AUDIT_READY, awaiting independent audit NODE A. Fixed: explicit RAW/ADJUSTED basis (tgrid.shadow.marketdata), settlement/T+1 sellable model (tgrid.shadow.settlement), real-vs-shadow reconciliation separation, evidence classification (REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT), repo hygiene (_tmp/ + .gitignore + sanitized reports), control-plane consistency (SELF_CERTIFIED labels, Gate 6/7 BLOCKED), ExecutionEngine exact-type hardening (AUD-R1-007 closed). 818 tests OK, compileall 0, src AST scan 46 files 0 hits. Live shadow evidence refresh requires the MiniQMT client to be running (was not running at remediation time); the offline unit evidence is complete. Gate 5.5 NOT AUTHORIZED; no real order/cancel path; live_trading_allowed=false."
+notes: "Audit Node A verdict CHANGES_REQUIRED. DSH is authorized only for six Gate-5 fixes in NODE_A_REVIEW_20260815/CURRENT_TASK: basis-domain normalization between ADJUSTED indicators and RAW trading prices; multi-day settlement sellable carry-forward; explicit settlement/symbol fail-closed policy; reconciliation evidence without broker-residual reclassification; removal of tracked _tmp from current HEAD; canonical/evidence consistency. Explicit dividend_type plumbing, reconciliation-vs-shadow structural separation, AUD-R1-007 executor hardening and no-live-order boundary are retained. Gate 5.5/6/7 remain blocked; live_trading_allowed=false."

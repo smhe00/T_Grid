@@ -1,67 +1,40 @@
 # TGrid Gate 体系状态
 
-> **Independent audit override — 2026-08-15:** 最新单 Agent（DSH）提交保留，但其 Gate 2–5
-> 的 `Architect Review` 属于 `SELF_CERTIFIED`，不等同于独立验收。独立阶段审计已将 Gate 5
-> 调整为 `CHANGES_REQUIRED`，Gate 6/7 在后续独立审计前保持 `BLOCKED`。详细要求见
-> `work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md`。
->
-> **2026-08-15 修复后状态：** Gate 5 修复（AUD-R1-001..007）已完成并自证
-> （`SELF_CERTIFIED`），状态置 `AUDIT_READY`，等待独立审计 NODE A。
+> **Independent Audit Node A — 2026-08-15:** DSH Gate-5 remediation is retained but did not pass independent audit. Gate 5 returns to `CHANGES_REQUIRED`; Gate 5.5 / Gate 6 / Gate 7 remain blocked. See `work/gates/GATE_5/NODE_A_REVIEW_20260815.md`.
 
 | Gate | 内容 | 当前状态 | 说明 / 验收证据 |
 |------|------|----------|-----------------|
-| G0 | 项目骨架：配置/模型/风险异常/日志/CLI/Event Queue/SQLite | PASS | 历史 Gate 证据 `work/gates/GATE_0/` |
-| G1 | QMT 只读接入：Trader/MarketData/QuoteSubscription Adapter + 探针 + Runtime Bridge | PASS | 只读边界；真实交易能力仍禁止 |
-| G2 | Position + Ledger + Reconciliation | **PROVISIONAL / SELF_CERTIFIED** | G2-T005 已有独立历史验收；G2-T006 与汇总 Gate 2 由 DSH self-certify，保留实现，后续抽审 |
-| G3 | 策略算法离线模拟 | **PROVISIONAL / SELF_CERTIFIED** | 保留现有实现与测试；等待周期性独立抽审 |
-| G4 | Execution Dry Run：OrderIntent/Reservation、SimBroker、Executor、恢复 | **PROVISIONAL / SELF_CERTIFIED** | 架构方向保留；AUD-R1-007 exact-type hardening 已在本次修复关闭 |
-| G5 | Shadow 模式：REAL market/broker query + WOULD orders | **AUDIT_READY**（修复后） | 独立审计 `work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md`；修复证据 `work/gates/GATE_5/REMEDIATION_REPORT.md` |
-| G5.5 | Real Broker Adapter / pre-live capability | **NOT AUTHORIZED / BLOCKED** | 仅 Gate 5 Audit Node A 独立 PASS 后另行授权；实现完成后必须 Audit Node B |
-| G6 | 极小真实资金验证 | **BLOCKED** | Audit Node B 独立 PASS + 用户显式授权前禁止开始 |
+| G0 | 项目骨架 | PASS | 历史 Gate 证据 |
+| G1 | QMT 只读接入 | PASS | 只读边界 |
+| G2 | Position + Ledger + Reconciliation | PROVISIONAL / SELF_CERTIFIED | G2-T005 有独立历史验收；其余保留并周期抽审 |
+| G3 | 策略算法离线模拟 | PROVISIONAL / SELF_CERTIFIED | 保留现有实现与测试 |
+| G4 | Execution Dry Run | PROVISIONAL / SELF_CERTIFIED | AUD-R1-007 exact-type hardening本轮可接受 |
+| G5 | Shadow：REAL market/broker query + WOULD orders | **CHANGES_REQUIRED — NODE A** | `work/gates/GATE_5/NODE_A_REVIEW_20260815.md` |
+| G5.5 | Real Broker Adapter / pre-live capability | **NOT AUTHORIZED / BLOCKED** | 仅 Node A independent PASS 后另行授权；实现后必须 Node B |
+| G6 | 极小真实资金验证 | **BLOCKED** | Node B independent PASS + 用户显式授权前禁止开始 |
 | G7 | V1 正式运行 | **BLOCKED** | Gate 6 完成并独立通过前禁止开始 |
 
-## 当前测试证据（SELF_CERTIFIED）
+## 最新 DSH 自证基线
 
-```text
-python -m unittest discover -s tests -p "test_*.py"   # 818 tests OK
-python -m compileall -q src tests                      # exit 0
-src AST 扫描（assert / order_stock / cancel_order_stock / xtquant import）: 0 命中
-```
+Latest remediation commit `910a727d3ef66c262abfd9dea45b092106f6d4a6` claims **820 tests OK** and `live_trading_allowed=false`. This is SELF_CERTIFIED evidence; it is not an independent PASS.
 
-这些是 **SELF_CERTIFIED evidence**，不自动构成 independent Gate PASS。
+## Node A 未关闭问题
 
-## Gate 5 修复摘要（AUD-R1-001..007）
+1. ADJUSTED daily basis仍直接与RAW 5m价格比较，缺少corporate-action basis-domain normalization。
+2. settlement released quantity不能跨多个后续交易日持续可卖。
+3. settlement规则/未知symbol仍存在默认猜测；真实QMT runner必须显式策略并fail closed。
+4. 非零reconciliation合成证据用 `held-core` 自动推Strategic，违反No Silent Reconcile；真实期望分解必须来自独立可信本地状态。
+5. `_tmp/` 虽已加入 `.gitignore`，但仍被GitHub当前HEAD跟踪。
+6. canonical state/task/docs/test count/evidence status仍不一致（含 `PENDING_PUSH`、818 vs 820、`LIVE VERIFIED`措辞）。
 
-- **AUD-R1-001**：`tgrid.shadow.marketdata` 显式 RAW/ADJUSTED 复权绑定（`dividend_type`
-  显式传给底层调用，bar 携带 basis 元数据，未知模式 fail closed，测试断言精确参数）。
-- **AUD-R1-002**：`tgrid.shadow.settlement` T+1 结算策略（总持仓 vs 可卖分离；同日买入
-  锁定，次交易日释放；T0/T1 显式规则；同场反弹不可卖 / 次日可卖测试）。
-- **AUD-R1-003**：真实对账（real broker vs Core+Strategic+OpenT）与影子假设 delta 分离；
-  `reconciliation` + `shadow_delta` 两组独立报告，禁止静默重分类。
-- **AUD-R1-004**：证据分类 `REAL_QMT_HISTORICAL_REPLAY + REAL_BROKER_SNAPSHOT`，
-  运行器输出 `evidence.json`。
-- **AUD-R1-005**：`_tmp/` 清理 + .gitignore 完善（`*.local.json` 全局排除）；报告脱敏
-  （路径/端口/资金/持仓不提交）。
-- **AUD-R1-006**：控制面统一；DSH 自审标注 `SELF_CERTIFIED`；Gate 6/7 `BLOCKED`。
-- **AUD-R1-007**：`ExecutionEngine` exact-type 校验先于算术（拒绝 untrusted
-  int()/float() 强制转换）+ 测试。
+## 已接受的本轮修复
 
-## 关键不变量（§34）
-
-INV-001 Core Floor / INV-002 T Capacity / INV-003 Target Ceiling / INV-004 单方向单挂单 /
-INV-005 Broker Authority / INV-006 禁止静默对账 / INV-007 禁止自动止损 / INV-008 禁止退出
-Core/Strategic / INV-009 Live Default OFF / INV-010 Fail Closed / INV-011 禁止 assert 安全 /
-INV-012 Reservation 先行 / INV-013 订单意图幂等 / INV-014 Callback 隔离 / INV-015 Corporate
-Action HALT / INV-016 人工变化检测 / INV-017 数据新鲜度。
-
-全部以自动化测试承载（`tests/unit/`）。
+- XtQuant `dividend_type` 显式透传（front/none）；
+- `reconciliation` 与 `shadow_delta` 数据结构分离；
+- 历史回放与continuous live soak的证据类别开始区分；
+- ExecutionEngine capacity exact-type hardening；
+- 没有新增真实 order/cancel capability，Live仍默认关闭。
 
 ## 下一独立审计节点
 
-1. **AUDIT NODE A**：DSH 已完成 Gate 5 remediation 并 push `main`，状态 `AUDIT_READY`，
-   等待 ChatGPT 独立审计实际 diff/测试/实机证据。
-2. **AUDIT NODE B**：Node A PASS 后，未来 Gate 5.5 实现真实 Broker capability；在首次
-   真实订单调用前再次停止并独立审计。
-
-详细执行清单以 `work/control/CURRENT_TASK.md` 和
-`work/gates/GATE_5/INDEPENDENT_AUDIT_20260815.md` 为准。
+DSH 只执行 `work/control/CURRENT_TASK.md` 的 Node-A Iteration 3 修复。完成后设置 `AUDIT_READY` 并停止。Gate 5.5 仍不得开始。
