@@ -4,27 +4,30 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 19
-handoff_id: "GATE5.5-IMPL-DONE-20260815-019"
-authorized_next: ["AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"]
+handoff_seq: 20
+handoff_id: "NODEB-PRELIVE-FIX-20260815-020"
+authorized_next:
+  - "NODEB-PRELIVE-FIX"
 design_version: "1.1"
 gate: 5.5
-task_id: "GATE5.5-LIVE-BROKER-ADAPTER"
-state: "AUDIT_READY_PRELIVE"
+task_id: "NODEB-PRELIVE-FIX"
+state: "CHANGES_REQUIRED"
 owner: "dsh"
-iteration: 1
-last_actor: "dsh"
+iteration: 2
+last_actor: "independent_auditor"
 last_update: "2026-08-15T12:45:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/GATE_5_5/CLAUDE_REPORT.md"
-git_base_commit: "4c1cc8cfc32b3a99eefbb17482c92fda04347a2f"
-git_head_commit: "249aa061842eac114d224b384164541619628edc"
-implementation_commit: "249aa061842eac114d224b384164541619628edc"
+audit_file: "work/gates/GATE_5_5/NODE_B_REVIEW_20260815.md"
+git_base_commit: "9319465e5b2aa38a2a713dca3e25b93c69d4412f"
+git_head_commit: "9319465e5b2aa38a2a713dca3e25b93c69d4412f"
+audit_target_commit: "9319465e5b2aa38a2a713dca3e25b93c69d4412f"
+reviewed_implementation_commit: "249aa061842eac114d224b384164541619628edc"
+accepted_gate5_implementation_commit: "5a2e2fd32e21328badd1ceb2c92b973436c4c95a"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
+next_independent_audit: "AUDIT_NODE_B_AFTER_ITERATION_2_FIXES"
 pre_live_independent_audit: "AUDIT_NODE_B_BEFORE_FIRST_REAL_ORDER"
-notes: "Gate 5 Node A PASS (4c1cc8c). Gate 5.5 LiveBrokerAdapter implemented pre-live only (SELF_CERTIFIED): double-enable, symbol allowlist, per-order qty/cash caps, daily cash exposure cap, kill switch, callback isolation, exact-type validation, cancel->re-query semantics, idempotent OrderIntent+Reservation before send. NODEB-P0-001 closed: legacy reconciliation core_qty preserved by loader, exact-equality-checked before discard, mismatch fails closed. 865 tests OK; compileall 0; capability scan 0 real order/cancel call sites; report work/gates/GATE_5_5/CLAUDE_REPORT.md. No real order/cancel invoked; live_trading_allowed=false. State AUDIT_READY_PRELIVE: awaiting independent Audit Node B before ANY real order; Gate 6/7 BLOCKED until Node B PASS + explicit user authorization."
+notes: "Audit Node B Iteration 1 verdict CHANGES_REQUIRED. Gate 5 remains PASS. Accepted: NODEB-P0-001 legacy Core guard; no real order/cancel invoked. Blocking pre-live findings: execution chain is not connected (ExecutionEngine still SimBroker-only and no concrete XtQuant execution bridge); Gate-4 reservation/idempotency/partial-fill/recovery are not integrated with LiveBrokerAdapter; kill switch incorrectly blocks cancel; callback isolation is not structural; daily cash exposure is volatile/resettable and bypassed by restart; NaN/Inf numeric limits are not fail-closed; production double-enable/bootstrap needs trusted config + non-persistent runtime confirmation. Gate 6/7 remain BLOCKED; live_trading_allowed=false; no real order/cancel invocation authorized."
