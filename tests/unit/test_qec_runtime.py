@@ -23,7 +23,10 @@ from tgrid.execution.models import BUY, OrderStatus
 from tgrid.execution.store import ExecutionStore
 from tgrid.integrations.daily_exposure import DailyExposureLedger
 from tgrid.integrations.live_broker_adapter import LiveBrokerPolicy
-from tgrid.integrations.qec_adapter import apply_snapshot
+from tgrid.integrations.qec_adapter import (
+    TGridEvidenceSource,
+    apply_snapshot,
+)
 from tgrid.integrations.qec_runtime import QecRuntimeError, build_qec_runtime
 from tgrid.persistence import initialize
 
@@ -156,7 +159,7 @@ def _now() -> str:
 
 
 class TestBuildQecRuntime(unittest.TestCase):
-    def _runtime(self):
+    def _runtime(self, evidence=None):
         self.tmp = tempfile.mkdtemp()
         self.qmt = os.path.join(self.tmp, "qmt")
         os.makedirs(self.qmt, exist_ok=True)
@@ -171,6 +174,22 @@ class TestBuildQecRuntime(unittest.TestCase):
         self.store = ExecutionStore(self.conn)
         self.exposure = DailyExposureLedger(trade_date="2026-08-16", store=_DictStore())
         self.trader = FakeTrader()
+        if evidence is None:
+
+            def _ok():
+                return True
+
+            evidence = TGridEvidenceSource(
+                environment_verified=_ok,
+                account_verified=_ok,
+                broker_snapshot_verified=_ok,
+                position_verified=_ok,
+                cash_verified=_ok,
+                quote_verified=_ok,
+                kill_switch_active=lambda: False,
+                exposure_ready=_ok,
+                exposure_used=lambda: 0.0,
+            )
         runtime = build_qec_runtime(
             environment="simulation",
             qmt_path=self.qmt,
@@ -183,6 +202,7 @@ class TestBuildQecRuntime(unittest.TestCase):
             exposure=self.exposure,
             policy=_policy(),
             now=_now,
+            evidence=evidence,
             trader_factory=lambda path, sid: self.trader,
             stock_account_factory=lambda account_id: SimpleNamespace(account_id=account_id),
             xtconstant=XtConstant,
@@ -245,10 +265,117 @@ class TestBuildQecRuntime(unittest.TestCase):
                     store=ExecutionStore(conn),
                     exposure=DailyExposureLedger(trade_date="2026-08-16"),
                     policy=_policy(), now=_now,
+                    evidence=TGridEvidenceSource(
+                        environment_verified=lambda: True,
+                        account_verified=lambda: True,
+                        broker_snapshot_verified=lambda: True,
+                        position_verified=lambda: True,
+                        cash_verified=lambda: True,
+                        quote_verified=lambda: True,
+                        kill_switch_active=lambda: False,
+                        exposure_ready=lambda: True,
+                        exposure_used=lambda: 0.0,
+                    ),
                 )
         finally:
             conn.close()
             os.remove(db)
+
+    def test_builder_refuses_missing_evidence_source(self):
+        # P1-1: production construction fails closed without a live evidence
+        # source (no self-certified defaults).
+        db = _temp_db_path()
+        conn = initialize(db)
+        try:
+            with self.assertRaises(QecRuntimeError):
+                build_qec_runtime(
+                    environment="simulation",
+                    qmt_path="x", binding_path="x", journal_path="x", lock_path="x",
+                    strategy_name="TGRID", trade_date="2026-08-16",
+                    store=ExecutionStore(conn),
+                    exposure=DailyExposureLedger(trade_date="2026-08-16"),
+                    policy=_policy(), now=_now,
+                    # evidence omitted -> must fail closed
+                )
+        finally:
+            conn.close()
+            os.remove(db)
+
+    def test_evidence_false_blocks_submit_before_side_effects(self):
+        # P1-1 negative: each critical false/unavailable evidence blocks the
+        # order path BEFORE the TGrid sidecar / broker side effects.
+        def _ok():
+            return True
+
+        # Session-level evidence: false -> the runtime session cannot even
+        # open (fail closed at activation).
+        for flag in ("environment_verified", "account_verified"):
+            with self.subTest(flag=flag):
+                kwargs = dict(
+                    environment_verified=_ok, account_verified=_ok,
+                    broker_snapshot_verified=_ok, position_verified=_ok,
+                    cash_verified=_ok, quote_verified=_ok,
+                    kill_switch_active=lambda: False, exposure_ready=_ok,
+                    exposure_used=lambda: 0.0,
+                )
+                kwargs[flag] = lambda: False
+                with self.assertRaises(Exception):
+                    self._runtime(evidence=TGridEvidenceSource(**kwargs))
+
+        # Precheck-level evidence: open succeeds, submit is rejected BEFORE
+        # the sidecar persists anything and before any broker call.
+        for flag in ("broker_snapshot_verified", "position_verified",
+                     "cash_verified", "quote_verified", "exposure_ready"):
+            with self.subTest(flag=flag):
+                kwargs = dict(
+                    environment_verified=_ok, account_verified=_ok,
+                    broker_snapshot_verified=_ok, position_verified=_ok,
+                    cash_verified=_ok, quote_verified=_ok,
+                    kill_switch_active=lambda: False, exposure_ready=_ok,
+                    exposure_used=lambda: 0.0,
+                )
+                kwargs[flag] = lambda: False
+                runtime = self._runtime(evidence=TGridEvidenceSource(**kwargs))
+                try:
+                    request = ExecutionRequest(
+                        client_order_id="K1", symbol="510300.SH", side=Side.BUY,
+                        qty=100, limit_price=4.7, strategy_id="TGRID",
+                        order_remark="TG_510300SH_B001",
+                    )
+                    snap = runtime.submit(request)
+                    self.assertEqual(snap.state.value, "rejected", flag)
+                    self.assertEqual(self.trader.place_calls, 0, flag)
+                    with self.assertRaises(Exception):
+                        self.store.get_intent("K1")  # sidecar never ran
+                finally:
+                    runtime.close()
+                    self.conn.close()
+                    if os.path.exists(self.db_path):
+                        os.remove(self.db_path)
+
+    def test_kill_switch_blocks_submit_before_side_effects(self):
+        runtime = self._runtime(evidence=TGridEvidenceSource(
+            environment_verified=lambda: True, account_verified=lambda: True,
+            broker_snapshot_verified=lambda: True, position_verified=lambda: True,
+            cash_verified=lambda: True, quote_verified=lambda: True,
+            kill_switch_active=lambda: True, exposure_ready=lambda: True,
+            exposure_used=lambda: 0.0,
+        ))
+        try:
+            request = ExecutionRequest(
+                client_order_id="K1", symbol="510300.SH", side=Side.BUY, qty=100,
+                limit_price=4.7, strategy_id="TGRID", order_remark="TG_510300SH_B001",
+            )
+            snap = runtime.submit(request)
+            self.assertEqual(snap.state.value, "rejected")
+            self.assertEqual(self.trader.place_calls, 0)
+            with self.assertRaises(Exception):
+                self.store.get_intent("K1")
+        finally:
+            runtime.close()
+            self.conn.close()
+            if os.path.exists(self.db_path):
+                os.remove(self.db_path)
 
 
 if __name__ == "__main__":

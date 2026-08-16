@@ -107,6 +107,9 @@ class _ScriptBroker:
             order_remark=request.order_remark,
             client_order_id=request.client_order_id,
         )
+        if self.submit_mode == "ambiguous_after":
+            # Broker accepted the order, then the transport went ambiguous.
+            raise BrokerSubmissionAmbiguous("ambiguous after broker accepted")
         return oid
 
     def cancel_order(self, order_id: int) -> CancelRequestResult:
@@ -476,6 +479,41 @@ class TestQecEquivalenceMatrix(unittest.TestCase):
             out = h.session.open()
             self.assertEqual(out.state, TradeState.FAILED)
             self.assertEqual(h.broker.place_calls, 0)
+        finally:
+            h.close()
+
+    def test_transient_unknown_recovery_reaches_filled(self):
+        # P1-2 dedicated regression (acceptance gate 6):
+        # SUBMITTED -> public UNKNOWN (recoverable) -> authoritative recovery
+        # WORKING -> FILLED.  The TGrid intent must NEVER terminalize at
+        # UNKNOWN, later observations must update the SAME intent, the
+        # reservation releases only on FILLED, and there is NO second submit.
+        h = _Harness(broker=_ScriptBroker())
+        h.broker.submit_mode = "ambiguous_after"
+        try:
+            snap = h.submit()  # broker accepted, then ambiguous -> UNKNOWN
+            self.assertEqual(snap.state, TradeState.UNKNOWN)
+            self.assertEqual(h.broker.place_calls, 1)
+            # Transient UNKNOWN must not terminalize the TGrid intent.
+            apply_snapshot(h.store, snap, client_order_key="K1", now=_now())
+            self.assertNotEqual(h.store.get_intent("K1").status, OrderStatus.UNKNOWN)
+            # Authoritative recovery finds the broker order by durable remark.
+            out = h.session.poll()
+            self.assertEqual(out.state, TradeState.WORKING)
+            self.assertIsNotNone(out.broker_order_id)
+            apply_snapshot(h.store, out, client_order_key="K1", now=_now())
+            intent = h.store.get_intent("K1")
+            self.assertEqual(intent.status, OrderStatus.SUBMITTED)
+            self.assertEqual(intent.broker_order_id, str(out.broker_order_id))
+            # Broker fills -> FILLED -> reservation released; no second submit.
+            h.broker._set_status(out.broker_order_id, BrokerOrderStatus.FILLED,
+                                 filled=100, price=4.69)
+            filled = h.session.poll()
+            self.assertEqual(filled.state, TradeState.FILLED)
+            apply_snapshot(h.store, filled, client_order_key="K1", now=_now())
+            self.assertEqual(h.store.get_intent("K1").status, OrderStatus.FILLED)
+            self.assertEqual(tuple(h.store.list_active_reservations()), ())
+            self.assertEqual(h.broker.place_calls, 1)
         finally:
             h.close()
 

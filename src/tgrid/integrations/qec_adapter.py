@@ -29,6 +29,7 @@ their decimal strings in TGrid's SQLite ledger (existing TGrid convention).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Callable
 
 from qmt_execution_core.domain import (
@@ -44,6 +45,26 @@ from tgrid.execution.models import OrderStatus
 from tgrid.execution.store import ExecutionStore
 from tgrid.integrations.daily_exposure import DailyExposureLedger
 from tgrid.integrations.live_broker_adapter import LiveBrokerPolicy
+
+
+@dataclass(frozen=True)
+class TGridEvidenceSource:
+    """Live evidence suppliers for the production guard (iteration 14, P1-1).
+
+    The production cutover builder REQUIRES every supplier (no permissive
+    default): a missing or unhealthy evidence source must fail closed.  Fake
+    tests may pass explicit ``lambda: True`` suppliers.
+    """
+
+    environment_verified: Callable[[], bool]
+    account_verified: Callable[[], bool]
+    broker_snapshot_verified: Callable[[], bool]
+    position_verified: Callable[[], bool]
+    cash_verified: Callable[[], bool]
+    quote_verified: Callable[[], bool]
+    kill_switch_active: Callable[[], bool]
+    exposure_ready: Callable[[], bool]
+    exposure_used: Callable[[], float]
 
 
 def make_execution_request(
@@ -258,11 +279,30 @@ def apply_snapshot(
 
     Updates the TGrid intent's status and broker_order_id (stored as the
     decimal string of the native int, TGrid convention) and releases active
-    reservations on a terminal FILLED outcome.  A terminal intent is never
-    re-transitioned.
+    reservations on true terminal outcomes (FILLED / CANCELED / REJECTED).
+
+    Transient-UNKNOWN semantics (iteration 14, P1-2): public
+    ``TradeState.UNKNOWN`` is a RECOVERABLE state, so it must NOT irreversibly
+    terminalize the TGrid business intent.  While UNKNOWN, the last durable
+    pending TGrid status is KEPT (e.g. SUBMITTED / PARTIAL / CANCEL_REQUESTED)
+    so a later authoritative public recovery (WORKING / PARTIALLY_FILLED /
+    FILLED / CANCELLED) can still update the same intent.  Only a terminal
+    public recovery failure (``TradeState.FAILED``) maps to the terminal
+    TGrid ``OrderStatus.UNKNOWN``.
     """
     intent = store.get_intent(client_order_key)
     if intent.status in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN"):
+        return
+    if snapshot.state is TradeState.UNKNOWN:
+        # Transient unresolved: keep the pending TGrid status; still persist
+        # a broker_order_id discovered by public recovery.
+        if snapshot.broker_order_id is not None:
+            store.update_intent_status(
+                client_order_key,
+                status=intent.status,
+                updated_at=now,
+                broker_order_id=str(snapshot.broker_order_id),
+            )
         return
     status = snapshot_status_to_tgrid(snapshot.state)
     broker_order_id = (
@@ -276,7 +316,7 @@ def apply_snapshot(
         updated_at=now,
         broker_order_id=broker_order_id,
     )
-    if status == OrderStatus.FILLED:
+    if status in (OrderStatus.FILLED, OrderStatus.CANCELED, OrderStatus.REJECTED):
         for reservation in store.list_active_reservations():
             if reservation.client_order_key == client_order_key:
                 store.release_reservation(reservation.id, released_at=now)
