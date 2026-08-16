@@ -4,17 +4,18 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 51
-handoff_id: "TGRID-ITER16-CORE-0.4.1-AUTHORITY-INTEGRATION-PASS-PRELIVE-20260816-051"
-authorized_next: []
+handoff_seq: 52
+handoff_id: "TGRID-GATE6-QEC-SIM-AUTHORIZED-20260817-052"
+authorized_next:
+  - "RUN_GATE6_QEC_SIMULATION_CLOSED_LOOP"
 design_version: "1.1"
-gate: 5.5
-task_id: "AWAIT-EXPLICIT-USER-AUTHORIZATION-FOR-GATE6-QEC"
-state: "PASS_PRELIVE"
-owner: "user"
-iteration: 16
-last_actor: "independent_auditor"
-last_update: "2026-08-16T17:17:00+08:00"
+gate: 6
+task_id: "GATE6-QEC-SIMULATION-CLOSED-LOOP"
+state: "AUTHORIZED"
+owner: "dsh"
+iteration: 17
+last_actor: "user"
+last_update: "2026-08-17T01:22:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
@@ -25,8 +26,8 @@ independent_audit_commit: "9fbbfb53c7b33200420ac4168f730994250fbce5"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
-user_escalation_required: true
-user_escalation_reason: "TGrid Iter16 Core 0.4.1 Runtime Authority integration passed independent audit. Any Gate-6 action that invokes simulation or live QMT order/cancel requires explicit user authorization; shorthand 'f' is fetch/audit only."
-next_independent_audit: ""
+user_escalation_required: false
+user_escalation_reason: ""
+next_independent_audit: "AUDIT_GATE6_QEC_SIMULATION_EVIDENCE"
 pre_live_independent_audit: "PASS_PRELIVE"
-notes: "Independent audit PASS_PRELIVE for TGrid implementation 1790812bb7ef7f6ceb35b2dcc18da49dabfc7451 against Core 0.4.1 merge SHA a68572decb799bcbbf1b2892fcf58ac321ce9636. Production shared composition is Authority-only: no coordination_path/authority_root selection and no coordinator=/authority= injection; Gate-6 --coordination-db removed. Core resolves canonical Runtime Authority and certified DB identity before trader construction/connect; missing/corrupt/replaced Authority/DB fails closed. Same-account different-symbol concurrency, same-symbol exclusion, shared cash, quarantine, journal integrity and one-session authority remain accepted. DSH self-certified 915 tests + compileall + Core verify; GitHub exposes no independent TGrid CI checks, so execution counts remain self-certified. Raw TGrid production code search found zero order_stock/cancel_order_stock call sites. No simulation or real QMT order/cancel is authorized or was invoked by this audit. Owner=user; authorized_next empty pending explicit Gate-6 authorization."
+notes: "User explicitly authorized Gate 6 on 2026-08-17. Authorization is deliberately scoped to one bounded QMT simulation closed-loop only: first verify/bootstrap the canonical Core 0.4.1 per-account Runtime Authority and run the negative-path matrix; only after those pass may the reviewed runner place at most one BUY of exactly 100 shares of 510300.SH with qty_cap<=200 and cash_cap<=5000 CNY during the existing exchange trading-day/execution-window checks, then bounded poll and cancel/reconcile if needed. No second BUY, alternate symbol, parameter expansion, automatic Authority/DB recreation, production code change, or live/real-money order/cancel is authorized. If any code change is required, stop before broker side effect and return for review. live_trading_allowed remains false."
