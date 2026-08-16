@@ -132,6 +132,7 @@ Evidence (self-certified until independent audit):
 ```text
 qmt-execution-core feature/0.4.1-runtime-authority @ d499254 (rev1)
 qmt-execution-core feature/0.4.1-runtime-authority @ 54b2cbe (rev2, after audit)
+qmt-execution-core feature/0.4.1-runtime-authority @ 689aa6c (rev3, PR #4)
 docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md
 ```
 
@@ -184,6 +185,26 @@ docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md
   crash recovery documented (fail-closed).
 - Revised gates all PASS (114 tests on 3.12 + 3.9, release verify unchanged
   PASS, bootstrap-authority CLI smoke PASS).
+
+### Audit revision rev3 (architect audit of rev2 54b2cbe: CHANGES_REQUIRED, PR #4)
+
+- P1 (canonical root non-overridable): `default_authority_root()` no longer
+  reads process environment — Windows `FOLDERID_LocalAppData` via
+  `SHGetKnownFolderPath` (ctypes), POSIX `pwd.getpwuid(os.getuid())`; both
+  fail closed (`RuntimeAuthorityError`) with no
+  LOCALAPPDATA/USERPROFILE/HOME/Path.home fallback.
+- P1 (bootstrap root override removed): production `bootstrap-authority` CLI
+  no longer exposes `--authority-root`; operator bootstrap and runtime share
+  the same module-level `default_authority_root()` resolver.
+- Regressions: Windows mutable LOCALAPPDATA → root unchanged (in-process +
+  two real processes with different LOCALAPPDATA); Known Folder failure and
+  POSIX user-db failure fail closed; bootstrap CLI has no --authority-root;
+  explicit bootstrap then normal runtime resolve the same canonical Authority
+  and verify with zero broker side effects.
+- Gates: full pytest 119 passed / 1 skipped (POSIX-only) on 3.12 and 3.9.13
+  wheel; compileall 0; wheel clean install + out-of-tree verify PASS; release
+  formal gate unchanged (433,489 / 4,461,994 / 0 violations); 3.9 parse NONE.
+- PR opened: qmt-execution-core #4 (head 689aa6c), awaiting independent audit.
 
 TGrid itself is UNCHANGED (pin stays `acf20d9`); the TGrid follow-up (pin
 reviewed 0.4.1 merge SHA, switch production composition to Authority
