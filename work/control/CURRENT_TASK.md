@@ -194,3 +194,35 @@ live_trading_allowed = false
 ```
 
 Provide exact implementation commit, test counts, changed production call sites, proof that Gate-6 no longer exposes DB selection, and confirmation that no real/simulation QMT order/cancel API was invoked.
+
+## Core 0.4.1 Runtime Authority final integration COMPLETE (2026-08-16)
+
+Evidence: `work/gates/QMT_EXECUTION_CORE/
+TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_INTEGRATION_EVIDENCE_20260816.md`.
+
+- **P1-1 pin**: `pyproject.toml` pins exactly
+  `a68572decb799bcbbf1b2892fcf58ac321ce9636` (Core 0.4.1 merge SHA).
+- **P1-2 production = Authority-only**: `build_qec_runtime` /
+  `build_tgrid_qec_stack` call `MiniQmtRuntime.connect` with no
+  `coordinator=` / `authority=` override and no `coordination_path` /
+  `authority_root`; shared mode resolves Core's OS-derived canonical
+  per-account Runtime Authority (verify-only).
+- **P1-3 removed DB-selection surface**: builder `coordination_path` /
+  `coordinator` params removed; Gate-6 `--coordination-db` removed from both
+  runners; no TGrid-specific Authority path/root replacement.
+- **P1-4 bootstrap prerequisite**: documented operator
+  `qmt-execution-core bootstrap-authority` first-use; normal TGrid runtime
+  never bootstraps/recreates and fails closed on missing/corrupt/replaced
+  Authority/DB.
+- **P1-5 responsibility split preserved**: Core owns coordination-domain
+  identity / symbol claims / shared BUY cash; TGrid keeps its business
+  ledger + risk; ordering coordinate -> TGrid sidecar -> broker unchanged.
+- **Acceptance 1-11** all PASS (fake XtQuant/BrokerPort only), incl.
+  startup-failure matrix (missing Authority; recreated DB at certified path)
+  and automatic same-account convergence.
+- **Gates**: full TGrid pytest 915 passed (17 subtests); compileall 0;
+  capability scan zero raw QMT order/cancel in `src/`; Gate-6
+  import/`--help` OK with `--coordination-db` gone; installed/pinned Core
+  `qmt-execution-core verify` PASS (433,489 states / 4,461,994 edges / 0);
+  3.9 ast parse NONE failed.
+- No real or simulation QMT order/cancel invoked; `live_trading_allowed=false`.

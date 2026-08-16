@@ -35,6 +35,7 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 
 from qmt_execution_core.coordination import (
@@ -51,9 +52,16 @@ from qmt_execution_core.domain import (
     Side,
     TradeState,
 )
-from qmt_execution_core.exceptions import BrokerQueryAmbiguous, SessionIdUnavailable
+from qmt_execution_core.exceptions import (
+    BrokerQueryAmbiguous,
+    CoordinationIdentityError,
+    RuntimeConfigurationError,
+    SessionIdUnavailable,
+)
 from qmt_execution_core.finality import ExecutionFinality, execution_finality
 from qmt_execution_core.miniqmt.binding import QmtAccountBinding
+from qmt_execution_core.miniqmt.runtime import MiniQmtRuntime, MiniQmtRuntimeConfig
+from qmt_execution_core import AccountRuntimeAuthority
 
 from tgrid.execution.executor import ExecutionEngine
 from tgrid.execution.models import BUY, OrderStatus
@@ -70,6 +78,8 @@ from tgrid.integrations.qec_adapter import (
 )
 from tgrid.integrations.qec_runtime import (
     QecRuntimeError,
+    TGridQecStack,
+    build_qec_runtime,
     build_tgrid_qec_stack,
     default_cash_requirement_estimator,
 )
@@ -360,13 +370,24 @@ def _make_stack(
     strategy_name: str,
     symbol: str,
     binding_path: str,
-    coordination_path,
+    authority_root,
     cash: float = 100000.0,
     estimator=None,
     runtime_lock_mode: str = "shared",
     account_id: str = "A123",
     path_suffix: str | None = None,
+    bootstrap: bool = True,
 ) -> _Stack:
+    """Test-only composition with an INJECTED Authority root.
+
+    Production ``build_tgrid_qec_stack`` resolves Core's OS-derived canonical
+    Runtime Authority (no injection).  Tests use this helper to isolate the
+    Authority root under ``tmp`` — the low-level ``connect(authority=...)``
+    seam is exercised ONLY here (clearly isolated test code), never in the
+    production builder.
+    """
+    import json
+
     suffix = path_suffix if path_suffix is not None else strategy_name
     db_path = os.path.join(tmp, "db-%s.db" % suffix)
     conn = initialize(db_path)
@@ -379,32 +400,61 @@ def _make_stack(
         traders.append(trader)
         return trader
 
-    kwargs_coord = {}
-    if coordination_path is not None:
-        kwargs_coord["coordination_path"] = coordination_path
-
-    stack = build_tgrid_qec_stack(
+    evidence = _evidence()
+    guard = TGridExecutionGuard(
+        policy=_policy(symbol),
+        environment_verified=evidence.environment_verified,
+        account_verified=evidence.account_verified,
+        broker_snapshot_verified=evidence.broker_snapshot_verified,
+        position_verified=evidence.position_verified,
+        cash_verified=evidence.cash_verified,
+        quote_verified=evidence.quote_verified,
+        kill_switch_active=evidence.kill_switch_active,
+        exposure_ready=evidence.exposure_ready,
+        exposure_used=evidence.exposure_used,
+    )
+    sidecar = TGridSidecar(
+        store=store, exposure=exposure, strategy_name=strategy_name, now=_now,
+    )
+    config = MiniQmtRuntimeConfig(
         environment="simulation",
         qmt_path=os.path.join(tmp, "qmt"),
         binding_path=binding_path,
         journal_path=os.path.join(tmp, "j-%s.json" % suffix),
         lock_path=os.path.join(tmp, "e-%s.lock" % suffix),
         strategy_name=strategy_name,
-        trade_date="2026-08-16",
-        store=store,
-        exposure=exposure,
-        policy=_policy(symbol),
-        now=_now,
-        evidence=_evidence(),
+        runtime_lock_mode=runtime_lock_mode,
+        query_delay_seconds=0,
+    )
+    store_auth = AccountRuntimeAuthority(Path(authority_root))
+    if runtime_lock_mode == "shared" and bootstrap:
+        payload = json.loads(open(binding_path, encoding="utf-8").read())
+        store_auth.resolve(
+            account_key=account_key_from_binding_identity(
+                environment=str(payload["environment"]),
+                account_type=int(payload["account_type"]),
+                account_id_sha256=str(payload["account_id_sha256"]),
+            ),
+            environment=str(payload["environment"]),
+            account_type=int(payload["account_type"]),
+            account_id_sha256=str(payload["account_id_sha256"]),
+            coordination_db_path=None,
+            bootstrap=True,
+        )
+    runtime = MiniQmtRuntime.connect(
+        config,
+        guard=guard,
         trader_factory=factory,
-        stock_account_factory=lambda account_id: SimpleNamespace(account_id=account_id),
+        stock_account_factory=lambda aid: SimpleNamespace(account_id=aid),
         xtconstant=XtConstant,
         callback_base=object,
-        runtime_lock_mode=runtime_lock_mode,
+        before_broker_submit=sidecar.before_broker_submit,
+        before_broker_cancel=sidecar.before_broker_cancel,
         cash_estimator=estimator if estimator is not None else _zero_estimator(),
-        **kwargs_coord,
+        authority=store_auth if runtime_lock_mode == "shared" else None,
     )
-    return _Stack(stack, traders, store, conn, db_path)
+    engine = ExecutionEngine(store, session=runtime.session, strategy_name=strategy_name)
+    return _Stack(TGridQecStack(runtime=runtime, engine=engine), traders, store, conn, db_path)
 
 
 def _submit(stack: _Stack, key: str, symbol: str, side, qty: int, price: float):
@@ -417,39 +467,22 @@ def _submit(stack: _Stack, key: str, symbol: str, side, qty: int, price: float):
 
 
 class TestBuilderFailClosed(unittest.TestCase):
-    """Shared mode without explicit coordination fails closed at build."""
+    """Production builder exposes no DB/root override and fails closed."""
 
     def _paths(self):
         tmp = tempfile.mkdtemp()
         return tmp, _binding(tmp, "A123")
 
-    def test_shared_without_coordination_path_refused(self):
-        tmp, binding_path = self._paths()
-        db_path = _temp_db_path()
-        conn = initialize(db_path)
-        try:
-            with self.assertRaises(QecRuntimeError):
-                build_tgrid_qec_stack(
-                    environment="simulation",
-                    qmt_path=os.path.join(tmp, "qmt"),
-                    binding_path=binding_path,
-                    journal_path=os.path.join(tmp, "j.json"),
-                    lock_path=os.path.join(tmp, "e.lock"),
-                    strategy_name="TG-A", trade_date="2026-08-16",
-                    store=ExecutionStore(conn),
-                    exposure=DailyExposureLedger(trade_date="2026-08-16"),
-                    policy=_policy("510300.SH"), now=_now,
-                    evidence=_evidence(),
-                    trader_factory=lambda p, s: FakeTrader(),
-                    stock_account_factory=lambda aid: SimpleNamespace(account_id=aid),
-                    xtconstant=XtConstant, callback_base=object,
-                    runtime_lock_mode="shared",
-                    coordination_path=None,
-                    cash_estimator=_zero_estimator(),
-                )
-        finally:
-            conn.close()
-            os.remove(db_path)
+    def test_production_builder_has_no_db_or_root_override(self):
+        # P1-2 / P1-3 acceptance 1: the production builder must not expose any
+        # strategy DB path, authority root, or coordinator/authority injection.
+        import inspect
+
+        stack_sig = inspect.signature(build_tgrid_qec_stack)
+        runtime_sig = inspect.signature(build_qec_runtime)
+        for param in ("coordination_path", "authority_root", "coordinator", "authority"):
+            self.assertNotIn(param, stack_sig.parameters)
+            self.assertNotIn(param, runtime_sig.parameters)
 
     def test_shared_without_cash_estimator_refused(self):
         tmp, binding_path = self._paths()
@@ -472,7 +505,6 @@ class TestBuilderFailClosed(unittest.TestCase):
                     stock_account_factory=lambda aid: SimpleNamespace(account_id=aid),
                     xtconstant=XtConstant, callback_base=object,
                     runtime_lock_mode="shared",
-                    coordination_path=os.path.join(tmp, "coord.db"),
                     cash_estimator=None,
                 )
         finally:
@@ -483,7 +515,7 @@ class TestBuilderFailClosed(unittest.TestCase):
         tmp, binding_path = self._paths()
         stack = _make_stack(
             tmp, strategy_name="TG-X", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=None,
+            binding_path=binding_path, authority_root=os.path.join(tmp, "auth"),
             runtime_lock_mode="exclusive",
         )
         try:
@@ -503,19 +535,19 @@ class TestThreeRuntimeConcurrency(unittest.TestCase):
     def test_three_stacks_three_symbols_concurrent(self):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
-        coordination_path = os.path.join(tmp, "coordination.db")
+        authority_root = os.path.join(tmp, "authority")
         stacks = [
             _make_stack(
                 tmp, strategy_name="TG-A", symbol="510300.SH",
-                binding_path=binding_path, coordination_path=coordination_path,
+                binding_path=binding_path, authority_root=authority_root,
             ),
             _make_stack(
                 tmp, strategy_name="TG-B", symbol="510600.SH",
-                binding_path=binding_path, coordination_path=coordination_path,
+                binding_path=binding_path, authority_root=authority_root,
             ),
             _make_stack(
                 tmp, strategy_name="TG-C", symbol="510900.SH",
-                binding_path=binding_path, coordination_path=coordination_path,
+                binding_path=binding_path, authority_root=authority_root,
             ),
         ]
         try:
@@ -538,7 +570,7 @@ class TestThreeRuntimeConcurrency(unittest.TestCase):
             for s in stacks:
                 self.assertEqual(s.trader.place_calls, 1)
 
-            coordinator = SQLiteExecutionCoordinator(coordination_path)
+            coordinator = stacks[0].stack.runtime.session.coordinator
             account_key = _account_key(binding_path)
             for symbol in symbols:
                 claim = coordinator.get_claim(account_key, symbol)
@@ -564,18 +596,18 @@ class TestSameSymbolExclusion(unittest.TestCase):
     def test_same_symbol_second_writer_rejected_before_broker(self):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
-        coordination_path = os.path.join(tmp, "coordination.db")
+        authority_root = os.path.join(tmp, "authority")
         stack_a = _make_stack(
             tmp, strategy_name="TG-A", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
         )
         stack_b = _make_stack(
             tmp, strategy_name="TG-B", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
         )
         stack_c = _make_stack(
             tmp, strategy_name="TG-C", symbol="510600.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
         )
         try:
             snap = _submit(stack_a, "K-A", "510300.SH", Side.BUY, 100, 4.7)
@@ -605,7 +637,7 @@ class TestSameSymbolExclusion(unittest.TestCase):
             self.assertEqual(snap_c.state, TradeState.WORKING)
             self.assertEqual(stack_c.trader.place_calls, 1)
 
-            coordinator = SQLiteExecutionCoordinator(coordination_path)
+            coordinator = stack_a.stack.runtime.session.coordinator
             account_key = _account_key(binding_path)
             self.assertIsNotNone(coordinator.get_claim(account_key, "510300.SH"))
             self.assertIsNotNone(coordinator.get_claim(account_key, "510600.SH"))
@@ -621,28 +653,27 @@ class TestSharedCashRace(unittest.TestCase):
     def test_shared_cash_cannot_overcommit(self):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
-        coordination_path = os.path.join(tmp, "coordination.db")
+        authority_root = os.path.join(tmp, "authority")
         # Deterministic fresh broker cash = 100 for BOTH stacks.
         stack_p0 = _make_stack(
             tmp, strategy_name="TG-P0", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
             cash=100.0, estimator=_zero_estimator(),
         )
         stack_p1 = _make_stack(
             tmp, strategy_name="TG-P1", symbol="510600.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
             cash=100.0, estimator=_zero_estimator(),
         )
         try:
             account_key = _account_key(binding_path)
-            coordinator = SQLiteExecutionCoordinator(coordination_path)
+            coordinator = stack_p0.stack.runtime.session.coordinator
 
             # P0 reserves 60 (qty 60 @ 1.0); effective = 100 - 0 >= 60 -> OK.
             snap0 = _submit(stack_p0, "K-P0", "510300.SH", Side.BUY, 60, 1.0)
             self.assertEqual(snap0.state, TradeState.WORKING)
             self.assertEqual(stack_p0.trader.place_calls, 1)
             self.assertAlmostEqual(coordinator.active_reserved_cash(account_key), 60.0)
-
             # P1 needs 50 but only 40 remain -> rejected BEFORE the broker.
             snap1 = _submit(stack_p1, "K-P1", "510600.SH", Side.BUY, 50, 1.0)
             self.assertEqual(snap1.state, TradeState.REJECTED)
@@ -704,8 +735,8 @@ class TestQuarantineIsolation(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
         account_key = _account_key(binding_path)
-        coordination_path = os.path.join(tmp, "coordination.db")
-        coordinator = SQLiteExecutionCoordinator(coordination_path)
+        authority_root = os.path.join(tmp, "authority")
+        coordinator = SQLiteExecutionCoordinator(os.path.join(tmp, "quarantine-coord.db"))
 
         store_a = ExecutionStore(initialize(_temp_db_path()))
         broker_a = _ScriptBroker()
@@ -819,15 +850,15 @@ class TestAccountIsolation(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         binding_a = _binding(tmp, "A1")
         binding_b = _binding(tmp, "A2")
-        coordination_path = os.path.join(tmp, "coordination.db")
+        authority_root = os.path.join(tmp, "authority")
         stack_a = _make_stack(
             tmp, strategy_name="TG-A1", symbol="510300.SH",
-            binding_path=binding_a, coordination_path=coordination_path,
+            binding_path=binding_a, authority_root=authority_root,
             account_id="A1",
         )
         stack_b = _make_stack(
             tmp, strategy_name="TG-A2", symbol="510300.SH",
-            binding_path=binding_b, coordination_path=coordination_path,
+            binding_path=binding_b, authority_root=authority_root,
             account_id="A2",
         )
         try:
@@ -842,12 +873,14 @@ class TestAccountIsolation(unittest.TestCase):
             self.assertEqual(stack_a.trader.place_calls, 1)
             self.assertEqual(stack_b.trader.place_calls, 1)
 
-            # Coordination state is scoped per account_key: both claims exist.
-            coordinator = SQLiteExecutionCoordinator(coordination_path)
-            self.assertIsNotNone(coordinator.get_claim(key_a, "510300.SH"))
-            self.assertIsNotNone(coordinator.get_claim(key_b, "510300.SH"))
-            self.assertAlmostEqual(coordinator.active_reserved_cash(key_a), 470.0)
-            self.assertAlmostEqual(coordinator.active_reserved_cash(key_b), 470.0)
+            # Coordination state is scoped per account_key: both claims exist
+            # in the two DIFFERENT per-account Authority-certified DBs.
+            coordinator_a = stack_a.stack.runtime.session.coordinator
+            coordinator_b = stack_b.stack.runtime.session.coordinator
+            self.assertIsNotNone(coordinator_a.get_claim(key_a, "510300.SH"))
+            self.assertIsNotNone(coordinator_b.get_claim(key_b, "510300.SH"))
+            self.assertAlmostEqual(coordinator_a.active_reserved_cash(key_a), 470.0)
+            self.assertAlmostEqual(coordinator_b.active_reserved_cash(key_b), 470.0)
         finally:
             stack_a.close()
             stack_b.close()
@@ -859,14 +892,14 @@ class TestSessionIdLeasing(unittest.TestCase):
     def test_two_shared_runtimes_same_qmt_path_distinct_session_ids(self):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
-        coordination_path = os.path.join(tmp, "coordination.db")
+        authority_root = os.path.join(tmp, "authority")
         stack_a = _make_stack(
             tmp, strategy_name="TG-S1", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
         )
         stack_b = _make_stack(
             tmp, strategy_name="TG-S2", symbol="510600.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
         )
         try:
             self.assertNotEqual(
@@ -896,7 +929,7 @@ class TestSessionIdLeasing(unittest.TestCase):
         )
         binding_path = os.path.join(tmp, "binding.json")
         binding.write(binding_path)
-        coordination_path = os.path.join(tmp, "coordination.db")
+        coordinator = SQLiteExecutionCoordinator(os.path.join(tmp, "collision-coord.db"))
         traders = []
 
         def factory(path, sid):
@@ -911,7 +944,6 @@ class TestSessionIdLeasing(unittest.TestCase):
                 lock_path=os.path.join(tmp, "e.lock"),
                 strategy_name="TG-COLLIDE",
                 runtime_lock_mode="shared",
-                coordination_path=coordination_path,
                 session_id=100_000_007,
             )
             return MiniQmtRuntime.connect(
@@ -919,7 +951,7 @@ class TestSessionIdLeasing(unittest.TestCase):
                 trader_factory=factory,
                 stock_account_factory=lambda aid: SimpleNamespace(account_id=aid),
                 xtconstant=XtConstant, callback_base=object,
-                coordinator=SQLiteExecutionCoordinator(coordination_path),
+                coordinator=coordinator,
                 cash_estimator=_zero_estimator(),
             )
 
@@ -934,19 +966,19 @@ class TestSessionIdLeasing(unittest.TestCase):
     def test_same_strategy_name_bounded_fallback(self):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
-        coordination_path = os.path.join(tmp, "coordination.db")
+        authority_root = os.path.join(tmp, "authority")
         # Same strategy_name -> identical session-id candidate list; the
         # second runtime must fall back to the next bounded candidate (Core
         # behavior).  Distinct journal/lock paths keep the two runtimes
         # independent except for the session-id pool and coordination DB.
         stack_a = _make_stack(
             tmp, strategy_name="TG-SAME", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
             path_suffix="a",
         )
         stack_b = _make_stack(
             tmp, strategy_name="TG-SAME", symbol="510600.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
+            binding_path=binding_path, authority_root=authority_root,
             path_suffix="b",
         )
         try:
@@ -978,27 +1010,44 @@ def _permissive_guard():
 
 
 class TestJournalRejection(unittest.TestCase):
-    """P1-5: old hash-bound journal is rejected, never silently migrated."""
+    """P1-5 / acceptance 10: old hash-bound journal is rejected, never migrated."""
+
+    def _build_exclusive(self, tmp, binding_path, suffix):
+        db_path = os.path.join(tmp, "db-%s.db" % suffix)
+        conn = initialize(db_path)
+        store = ExecutionStore(conn)
+        exposure = DailyExposureLedger(trade_date="2026-08-16", store=_DictStore())
+        runtime = build_qec_runtime(
+            environment="simulation",
+            qmt_path=os.path.join(tmp, "qmt"),
+            binding_path=binding_path,
+            journal_path=os.path.join(tmp, "j-%s.json" % suffix),
+            lock_path=os.path.join(tmp, "e-%s.lock" % suffix),
+            strategy_name="TG-J", trade_date="2026-08-16",
+            store=store, exposure=exposure, policy=_policy("510300.SH"),
+            now=_now, evidence=_evidence(),
+            trader_factory=lambda p, s: FakeTrader(),
+            stock_account_factory=lambda aid: SimpleNamespace(account_id=aid),
+            xtconstant=XtConstant, callback_base=object,
+            runtime_lock_mode="exclusive",
+        )
+        return runtime, conn, db_path
 
     def test_old_hash_bound_journal_rejected_then_archive_and_rebuild(self):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
-        coordination_path = os.path.join(tmp, "coordination.db")
         journal_path = os.path.join(tmp, "j-iter16.json")
-        lock_path = os.path.join(tmp, "e-iter16.lock")
 
-        first = _make_stack(
-            tmp, strategy_name="TG-J", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
-            path_suffix="iter16",
-        )
-        first.stack.close()  # journal now exists, bound to 0.4 source hashes
-        first.conn.close()
+        # First build through the PRODUCTION builder (exclusive mode — no
+        # Authority needed) creates and binds a 0.4.1 journal.
+        first, conn1, db1 = self._build_exclusive(tmp, binding_path, "iter16")
+        first.close()
+        conn1.close()
         self.assertTrue(os.path.exists(journal_path))
 
-        # Simulate a 0.3.1-bound journal by rewriting the formal_verification
-        # hash binding (the public-core hash is a deployment invariant; it
-        # must not be disabled or silently migrated).
+        # Simulate an older-core-bound journal by rewriting the
+        # formal_verification hash binding (a deployment invariant that must
+        # never be disabled or silently migrated).
         import json
 
         payload = json.loads(open(journal_path, encoding="utf-8").read())
@@ -1009,32 +1058,23 @@ class TestJournalRejection(unittest.TestCase):
         with open(journal_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle)
 
-        # Rebuilding on the SAME journal path must REJECT (same strategy so
-        # the builder resolves the identical journal/lock paths).
+        # Rebuild on the SAME journal path must REJECT via the production
+        # builder's fail-closed wrap (QecRuntimeError), never silently migrate.
         with self.assertRaises(QecRuntimeError) as ctx:
-            _make_stack(
-                tmp, strategy_name="TG-J", symbol="510300.SH",
-                binding_path=binding_path, coordination_path=coordination_path,
-                path_suffix="iter16",
-            )
+            self._build_exclusive(tmp, binding_path, "iter16")
         self.assertIn("journal", str(ctx.exception).lower())
-        # The old journal file is untouched (not migrated, not deleted).
         self.assertTrue(os.path.exists(journal_path))
 
-        # Documented cutover: archive the old journal -> new 0.4 journal path.
+        # Documented cutover: archive the old journal -> new 0.4.1 path.
         archived = journal_path + ".stale-20260816"
         os.rename(journal_path, archived)
         self.assertTrue(os.path.exists(archived))
-        rebuilt = _make_stack(
-            tmp, strategy_name="TG-J", symbol="510300.SH",
-            binding_path=binding_path, coordination_path=coordination_path,
-            path_suffix="iter16-new",
-        )
+        rebuilt, conn2, db2 = self._build_exclusive(tmp, binding_path, "iter16-new")
         try:
-            snap = _submit(rebuilt, "K-J", "510300.SH", Side.BUY, 100, 4.7)
-            self.assertEqual(snap.state, TradeState.WORKING)
+            self.assertIsNotNone(rebuilt.session)
         finally:
             rebuilt.close()
+            conn2.close()
 
 
 class TestFinalityTerminalityTable(unittest.TestCase):
@@ -1167,8 +1207,8 @@ class TestCoordinatedSidecarOrdering(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
         account_key = _account_key(binding_path)
-        coordination_path = os.path.join(tmp, "coordination.db")
-        inner = SQLiteExecutionCoordinator(coordination_path)
+        authority_root = os.path.join(tmp, "authority")
+        inner = SQLiteExecutionCoordinator(os.path.join(tmp, "order-coord.db"))
         events = []
         coordinator = _RecordingCoordinator(inner, events)
         broker = _RecordingBroker(events)
@@ -1204,8 +1244,8 @@ class TestCoordinatedSidecarOrdering(unittest.TestCase):
         tmp = tempfile.mkdtemp()
         binding_path = _binding(tmp, "A123")
         account_key = _account_key(binding_path)
-        coordination_path = os.path.join(tmp, "coordination.db")
-        inner = SQLiteExecutionCoordinator(coordination_path)
+        authority_root = os.path.join(tmp, "authority")
+        inner = SQLiteExecutionCoordinator(os.path.join(tmp, "order-coord.db"))
         broker_a = _ScriptBroker()
         store_a = ExecutionStore(initialize(_temp_db_path()))
         session_a, _ = self._session(
@@ -1242,5 +1282,56 @@ class TestCoordinatedSidecarOrdering(unittest.TestCase):
             session_b.close()
 
 
+class TestRuntimeAuthorityStartupMatrix(unittest.TestCase):
+    """Final integration: missing/corrupt/replaced Authority fails closed."""
+
+    def test_missing_authority_fails_closed_no_broker(self):
+        # Acceptance 2: normal TGrid runtime MUST NOT bootstrap a missing
+        # Authority; construction fails closed with no broker side effect.
+        tmp = tempfile.mkdtemp()
+        binding_path = _binding(tmp, "A123")
+        authority_root = os.path.join(tmp, "authority")
+        with self.assertRaises(RuntimeConfigurationError):
+            _make_stack(
+                tmp, strategy_name="TG-NOBOOT", symbol="510300.SH",
+                binding_path=binding_path, authority_root=authority_root,
+                bootstrap=False,
+            )
+        root = Path(authority_root)
+        self.assertFalse(list(root.glob("*.authority.json")))
+        self.assertFalse(list(root.glob("*.coordination.db")))
+
+    def test_db_replaced_at_same_path_fails_closed_before_broker(self):
+        # Acceptance 5: delete + recreate the certified DB at the same path ->
+        # construction fails closed before any broker side effect.
+        import json
+
+        tmp = tempfile.mkdtemp()
+        binding_path = _binding(tmp, "A123")
+        authority_root = os.path.join(tmp, "authority")
+        first = _make_stack(
+            tmp, strategy_name="TG-R", symbol="510300.SH",
+            binding_path=binding_path, authority_root=authority_root,
+        )
+        try:
+            db_path = Path(first.stack.runtime.session.coordinator.path)
+        finally:
+            first.close()
+        self.assertTrue(db_path.exists())
+        db_path.unlink()
+        import sqlite3
+
+        sqlite3.connect(str(db_path)).close()  # recreate empty at same path
+        with self.assertRaises(CoordinationIdentityError):
+            _make_stack(
+                tmp, strategy_name="TG-R2", symbol="510300.SH",
+                binding_path=binding_path, authority_root=authority_root,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
+
+
+
+

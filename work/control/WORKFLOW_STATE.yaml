@@ -4,25 +4,25 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 49
-handoff_id: "TGRID-ITER16-CORE-0.4.1-RUNTIME-AUTHORITY-INTEGRATION-20260816-049"
+handoff_seq: 50
+handoff_id: "TGRID-ITER16-CORE-0.4.1-AUTHORITY-INTEGRATION-REVIEW-READY-20260816-050"
 authorized_next:
-  - "IMPLEMENT_TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_ADAPTATION"
+  - "AUDIT_TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_INTEGRATION_ITER16"
 design_version: "1.1"
 gate: 5.5
 task_id: "TGRID-QEC-CORE-0.4.1-RUNTIME-AUTHORITY-INTEGRATION-ITER16"
-state: "IN_PROGRESS"
-owner: "dsh"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 16
-last_actor: "architect"
-last_update: "2026-08-16T15:03:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-16T16:40:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_CORE_0_4_1_RUNTIME_AUTHORITY_REV2_20260816.md"
 git_base_commit: "c7ccd65d5a5a27951b722ef672c63383ddd89813"
 implementation_commit: ""
-handoff_parent_commit: "c7ccd65d5a5a27951b722ef672c63383ddd89813"
+handoff_parent_commit: "889f3f6aa8cf89ea08a649a448ecb554c17af5e8"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
@@ -30,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_INTEGRATION_ITER16"
 pre_live_independent_audit: "REQUIRED_AFTER_TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_INTEGRATION_AUDIT"
-notes: "Core 0.4.1 Runtime Authority has completed independent architecture/code audit and PR #4 is merged. Locked public-Core production SHA: a68572decb799bcbbf1b2892fcf58ac321ce9636. Final Core audit confirms canonical OS-derived Authority root (Windows Known Folder API FOLDERID_LocalAppData; POSIX OS user database), no mutable environment fallback, production MiniQmtRuntimeConfig has no coordination_path/authority_root, normal shared runtime is verify-only bootstrap=False, first bootstrap is explicit operator CLI, Authority binds one dedicated per-account DB by canonical path + persistent db_uuid + authority_id + account_key, mismatch/recreated/corrupt/missing domain fails closed, cross-process bootstrap lock and Core 3-process formal gate pass. TGrid Iter16 final task now authorized: pin exact Core merge SHA; production shared composition must call MiniQmtRuntime.connect with neither coordinator= nor authority= overrides; remove all production coordination DB/root selection including Gate-6 --coordination-db; require prior canonical bootstrap-authority; preserve earlier 913-test functional baseline (one runtime/session authority, ordering, estimator, finality/quarantine, three-runtime distinct-symbol concurrency, same-symbol exclusion, shared-cash non-overcommit, bounded session leasing). Tests may use low-level injection only in isolated test code. No real or simulation QMT order/cancel is authorized; live_trading_allowed=false."
+notes: "TGrid Iteration 16 final integration of Core 0.4.1 Runtime Authority is complete (evidence TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_INTEGRATION_EVIDENCE_20260816.md). TGrid pin moved exactly to a68572decb799bcbbf1b2892fcf58ac321ce9636 (Core 0.4.1 merge SHA). build_qec_runtime/build_tgrid_qec_stack production shared mode calls MiniQmtRuntime.connect with no coordinator=/authority= override and no coordination_path/authority_root; Core resolves the OS-derived canonical per-account Authority (verify-only) and certifies the dedicated DB by path+db_uuid+authority_id. Production DB-selection surface removed: builder coordination_path/coordinator params and Gate-6 --coordination-db (both runners). Operator bootstrap prerequisite documented (qmt-execution-core bootstrap-authority before first strategy start); normal TGrid runtime never bootstraps and fails closed on missing/corrupt/replaced Authority/DB. Business/Core split and coordinate->TGrid sidecar->broker ordering preserved. Acceptance 1-11 all PASS with fake XtQuant/BrokerPort only, including startup-failure matrix (missing Authority; recreated DB at certified path) and same-account convergence. Gates: full TGrid pytest 915 passed (17 subtests); compileall 0; capability scan zero raw QMT order/cancel in src/; Gate-6 import/--help OK with --coordination-db gone; installed/pinned qmt-execution-core verify PASS (433,489 states / 4,461,994 edges / 0); 3.9 ast parse NONE failed. No real or simulation QMT order/cancel invoked; live_trading_allowed=false. Next: independent audit AUDIT_TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_INTEGRATION_ITER16."

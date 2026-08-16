@@ -21,6 +21,8 @@ from qmt_execution_core.domain import (
     TradeState,
 )
 from qmt_execution_core.miniqmt.binding import QmtAccountBinding
+from qmt_execution_core.miniqmt.runtime import MiniQmtRuntime, MiniQmtRuntimeConfig
+from qmt_execution_core import AccountRuntimeAuthority
 
 from tgrid.execution.models import BUY, OrderStatus
 from tgrid.execution.store import ExecutionStore
@@ -28,6 +30,7 @@ from tgrid.integrations.daily_exposure import DailyExposureLedger
 from tgrid.integrations.live_broker_adapter import LiveBrokerPolicy
 from tgrid.integrations.qec_adapter import (
     TGridEvidenceSource,
+    TGridExecutionGuard,
     TGridSidecar,
     apply_snapshot,
     make_execution_request,
@@ -199,29 +202,71 @@ class TestTGridQecStack(unittest.TestCase):
         self.store = ExecutionStore(self.conn)
         self.exposure = DailyExposureLedger(trade_date="2026-08-16", store=_DictStore())
         self.trader = FakeTrader()
-        stack = build_tgrid_qec_stack(
+
+        # Test-only composition with an INJECTED Authority root (the low-level
+        # connect(authority=...) seam is isolated to test code; production
+        # build_tgrid_qec_stack resolves the canonical Authority).
+        import json
+
+        from qmt_execution_core.coordination import account_key_from_binding_identity
+
+        evidence = _evidence()
+        guard = TGridExecutionGuard(
+            policy=_policy(),
+            environment_verified=evidence.environment_verified,
+            account_verified=evidence.account_verified,
+            broker_snapshot_verified=evidence.broker_snapshot_verified,
+            position_verified=evidence.position_verified,
+            cash_verified=evidence.cash_verified,
+            quote_verified=evidence.quote_verified,
+            kill_switch_active=evidence.kill_switch_active,
+            exposure_ready=evidence.exposure_ready,
+            exposure_used=evidence.exposure_used,
+        )
+        sidecar = TGridSidecar(
+            store=self.store, exposure=self.exposure, strategy_name="TGRID",
+            now=_now,
+        )
+        payload = json.loads(open(self.binding_path, encoding="utf-8").read())
+        store_auth = AccountRuntimeAuthority(os.path.join(self.tmp, "authority"))
+        store_auth.resolve(
+            account_key=account_key_from_binding_identity(
+                environment=str(payload["environment"]),
+                account_type=int(payload["account_type"]),
+                account_id_sha256=str(payload["account_id_sha256"]),
+            ),
+            environment=str(payload["environment"]),
+            account_type=int(payload["account_type"]),
+            account_id_sha256=str(payload["account_id_sha256"]),
+            coordination_db_path=None,
+            bootstrap=True,
+        )
+        config = MiniQmtRuntimeConfig(
             environment="simulation",
             qmt_path=self.qmt,
             binding_path=self.binding_path,
             journal_path=os.path.join(self.tmp, "journal.json"),
             lock_path=os.path.join(self.tmp, "exec.lock"),
             strategy_name="TGRID",
-            trade_date="2026-08-16",
-            store=self.store,
-            exposure=self.exposure,
-            policy=_policy(),
-            now=_now,
-            evidence=_evidence(),
+            runtime_lock_mode="shared",
+            query_delay_seconds=0,
+        )
+        runtime = MiniQmtRuntime.connect(
+            config,
+            guard=guard,
             trader_factory=lambda path, sid: self.trader,
             stock_account_factory=lambda account_id: SimpleNamespace(account_id=account_id),
             xtconstant=XtConstant,
             callback_base=object,
-            # Iteration 16: Core 0.4 shared account-level coordination.
-            runtime_lock_mode="shared",
-            coordination_path=os.path.join(self.tmp, "coordination.db"),
+            before_broker_submit=sidecar.before_broker_submit,
+            before_broker_cancel=sidecar.before_broker_cancel,
             cash_estimator=default_cash_requirement_estimator(),
+            authority=store_auth,
         )
-        return stack
+        from tgrid.execution.executor import ExecutionEngine
+
+        engine = ExecutionEngine(self.store, session=runtime.session, strategy_name="TGRID")
+        return TGridQecStack(runtime=runtime, engine=engine)
 
     def tearDown(self):
         try:

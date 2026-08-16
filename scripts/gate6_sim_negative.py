@@ -79,24 +79,11 @@ def main(argv=None) -> int:
     parser.add_argument("--trade-date", default=datetime.now().date().isoformat())
     parser.add_argument("--out", default="work/reports/gate6-sim")
     parser.add_argument("--db", default="")
-    parser.add_argument(
-        "--coordination-db",
-        default="",
-        help=(
-            "canonical account-level Core 0.4 coordination DB (shared by every "
-            "strategy process on the broker account); defaults to "
-            "work/coordination/qmt-execution-coordination.db"
-        ),
-    )
     args = parser.parse_args(argv)
 
     project = Path(__file__).resolve().parents[1]
     db = args.db or str(Path(os.environ.get("TMPDIR", project / "work")) / "gate6-sim-negative.db")
-    coordination_db = args.coordination_db or str(
-        project / "work" / "coordination" / "qmt-execution-coordination.db"
-    )
     evidence: dict = {"started_at": datetime.now().astimezone().isoformat()}
-    evidence["coordination_db"] = coordination_db
     stack = None
     conn = None
     state = {"kill_switch": False}
@@ -134,10 +121,9 @@ def main(argv=None) -> int:
                 exposure_ready=_ok,
                 exposure_used=lambda: float(exposure.used),
             ),
-            # Iteration 16: Core 0.4 shared account-level coordination with an
-            # explicit canonical coordination DB + conservative estimator.
+            # Iteration 16 final: Core 0.4.1 shared account-level coordination
+            # resolves the canonical Runtime Authority (no DB/root selection).
             runtime_lock_mode="shared",
-            coordination_path=coordination_db,
             cash_estimator=default_cash_requirement_estimator(),
         )
         evidence["session_built"] = True

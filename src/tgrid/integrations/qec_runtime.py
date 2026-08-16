@@ -1,26 +1,30 @@
-"""Production-shaped qmt-execution-core 0.4 construction (migration Iter 16).
+"""Production-shaped qmt-execution-core 0.4.1 construction (migration Iter 16 final).
 
 Routes TGrid production-shaped simulation/shadow construction onto the
 independently audited public execution core.  ``MiniQmtRuntime`` owns the QMT
-transport, broker adapter, session, journal/mutex, account-level coordination
-and live gate; TGrid owns the SQLite business ledger (OrderIntent +
+transport, broker adapter, session, journal/mutex, Account Runtime Authority
+resolution and live gate; TGrid owns the SQLite business ledger (OrderIntent +
 Reservation + daily exposure) which is persisted through the public sidecar
-seam AFTER Core 0.4 shared coordination COMMIT and BEFORE any broker side
-effect:
+seam AFTER Core shared coordination COMMIT and BEFORE any broker side effect:
 
     Core durable intent -> Core symbol/cash coordination COMMIT
     -> TGrid business sidecar COMMIT -> broker submit
 
-Iteration 16 (Core 0.4 / acf20d9): the production composition defaults to
-``runtime_lock_mode="shared"`` with an EXPLICIT canonical account-level
-``coordination_path`` (common to every strategy process sharing the broker
-account) and an EXPLICIT conservative ``CashRequirementEstimator``.  Shared
-mode without either is refused at build time (fail closed); the builder never
-defaults coordination to a strategy-specific path.  A journal bound to a
-different qmt-execution-core source/spec build is REJECTED (never silently
-migrated); the documented cutover is: reconcile the old execution under the
-old deployment, archive the old 0.3.1 journal, configure a new 0.4 journal
-path, then start the 0.4 runtime.
+Iteration 16 final (Core 0.4.1 / a68572d): the production composition uses
+``runtime_lock_mode="shared"`` with NO strategy-selected coordination DB /
+authority root.  ``MiniQmtRuntime.connect`` is called with neither
+``coordinator=`` nor ``authority=`` overrides: Core resolves the OS-derived
+canonical per-account Runtime Authority (verify-only) and certifies the
+dedicated coordination DB by canonical path + persistent db_uuid +
+authority_id.  First initialization is an explicit operator action
+(``qmt-execution-core bootstrap-authority``) — normal TGrid runtime never
+bootstraps or recreates a missing/corrupt Authority and fails closed instead.
+TGrid must still supply an explicit conservative ``CashRequirementEstimator``.
+
+Low-level injection seams (``connect(coordinator=...)`` /
+``connect(authority=...)``) exist ONLY in isolated test code — never in this
+production builder.  A journal bound to a different qmt-execution-core
+source/spec build is REJECTED (never silently migrated).
 
 No TGrid code calls raw ``order_stock`` / ``cancel_order_stock`` here — the
 public core is the ONLY QMT side-effect authority (capability scan gate).
@@ -94,9 +98,7 @@ def build_tgrid_qec_stack(
     callback_base: object | None = None,
     auto_open: bool = True,
     runtime_lock_mode: str = "shared",
-    coordination_path: object | None = None,
     cash_estimator: object | None = None,
-    coordinator: object | None = None,
 ) -> TGridQecStack:
     """Assemble the production composition: runtime + engine over the SAME session.
 
@@ -104,12 +106,12 @@ def build_tgrid_qec_stack(
     sidecar hooks wired once); the TGrid :class:`ExecutionEngine` binds to
     ``runtime.session`` instead of creating a second execution authority.
 
-    Core 0.4 (Iteration 16): ``runtime_lock_mode`` defaults to ``"shared"``
-    (multi-strategy multi-process capable).  Shared mode requires an explicit
-    account-level ``coordination_path`` (or injected ``coordinator`` for
-    tests) and an explicit conservative ``cash_estimator`` — build fails
-    closed otherwise.  ``engine.session is runtime.session`` remains the
-    one-authority identity invariant.
+    Core 0.4.1 (Iteration 16 final): ``runtime_lock_mode`` defaults to
+    ``"shared"``.  Shared mode resolves the OS-derived canonical per-account
+    Runtime Authority (verify-only) — this builder exposes NO strategy
+    coordination-DB/authority-root selection and passes no ``coordinator=`` /
+    ``authority=`` override.  ``engine.session is runtime.session`` remains
+    the one-authority identity invariant.
     """
     runtime = build_qec_runtime(
         environment=environment,
@@ -131,9 +133,7 @@ def build_tgrid_qec_stack(
         callback_base=callback_base,
         auto_open=auto_open,
         runtime_lock_mode=runtime_lock_mode,
-        coordination_path=coordination_path,
         cash_estimator=cash_estimator,
-        coordinator=coordinator,
     )
     # Lazy import: executor -> qec_adapter -> tgrid.integrations would cycle
     # through this module at import time (Iteration 15 P1-1 composition).
@@ -166,9 +166,7 @@ def build_qec_runtime(
     callback_base: object | None = None,
     auto_open: bool = True,
     runtime_lock_mode: str = "shared",
-    coordination_path: object | None = None,
     cash_estimator: object | None = None,
-    coordinator: object | None = None,
 ) -> MiniQmtRuntime:
     """Assemble a public-core runtime driven through the TGrid guard + sidecar.
 
@@ -180,23 +178,21 @@ def build_qec_runtime(
     ``TGridSidecar`` persists the TGrid SQLite OrderIntent + Reservation +
     daily exposure through ``before_broker_submit`` / ``before_broker_cancel``.
 
-    Iteration 16 (Core 0.4): ``runtime_lock_mode`` defaults to ``"shared"``.
-    Shared mode wires the runtime session as Core's
-    ``CoordinatedExecutionSession``: it REQUIRES an explicit account-level
-    ``coordination_path`` (the canonical coordination DB common to every
-    strategy process sharing the broker account) or an injected
-    ``coordinator`` (tests), plus an explicit conservative ``cash_estimator``
-    (no implicit ``qty * price`` fallback).  The builder fails closed if
-    shared mode is requested without them, and never defaults coordination to
-    a strategy-specific journal/database path.  ``exclusive`` mode remains
-    available for explicitly single-writer test/compatibility use.
+    Iteration 16 final (Core 0.4.1): ``runtime_lock_mode`` defaults to
+    ``"shared"`` and resolves the OS-derived canonical per-account Runtime
+    Authority (verify-only).  This builder provides NO coordination DB path,
+    NO authority root, and NO ``coordinator=`` / ``authority=`` injection —
+    production shared mode relies entirely on Core's canonical Authority and
+    fails closed when it is missing/corrupt/mismatched (the operator runs
+    ``qmt-execution-core bootstrap-authority`` first).  An explicit
+    conservative ``cash_estimator`` is still required for coordinated BUY.
+    ``exclusive`` mode remains available for explicitly single-writer
+    test/compatibility use.
 
     A journal bound to a different qmt-execution-core source/spec build
     (:class:`JournalIntegrityError`) is REJECTED — the builder never disables
     or bypasses the public-core hash binding and never silently migrates an
-    old 0.3.1 journal.  The documented cutover is operator-driven: reconcile
-    the old execution under the old deployment, archive the old journal,
-    configure a new 0.4 journal path, then build.
+    old journal.
 
     ``trader_factory`` / ``stock_account_factory`` / ``xtconstant`` /
     ``callback_base`` are test-only injections (fake XtQuant); production uses
@@ -223,13 +219,6 @@ def build_qec_runtime(
             "runtime_lock_mode must be exactly 'shared' or 'exclusive'"
         )
     if runtime_lock_mode == "shared":
-        if coordinator is None and coordination_path is None:
-            raise QecRuntimeError(
-                "shared runtime mode requires an explicit account-level "
-                "coordination_path (canonical coordination DB common to every "
-                "strategy process sharing the broker account) or an injected "
-                "coordinator; refusing to run shared mode without coordination"
-            )
         if cash_estimator is None:
             raise QecRuntimeError(
                 "shared runtime mode requires an explicit conservative "
@@ -240,12 +229,6 @@ def build_qec_runtime(
             raise QecRuntimeError(
                 "cash_estimator must implement estimate(request, account_snapshot)"
             )
-    if coordinator is not None and not callable(
-        getattr(coordinator, "prepare", None)
-    ):
-        raise QecRuntimeError(
-            "coordinator must implement the ExecutionCoordinator protocol"
-        )
 
     guard = TGridExecutionGuard(
         policy=policy,
@@ -271,9 +254,6 @@ def build_qec_runtime(
         strategy_name=strategy_name,
         live_trading_enabled=live_trading_enabled,
         runtime_lock_mode=runtime_lock_mode,
-        coordination_path=(
-            Path(coordination_path) if coordination_path is not None else None
-        ),
     )
     try:
         runtime = MiniQmtRuntime.connect(
@@ -286,7 +266,6 @@ def build_qec_runtime(
             auto_open=auto_open,
             before_broker_submit=sidecar.before_broker_submit,
             before_broker_cancel=sidecar.before_broker_cancel,
-            coordinator=coordinator,
             cash_estimator=cash_estimator,
         )
     except JournalIntegrityError as exc:
@@ -294,7 +273,7 @@ def build_qec_runtime(
             "journal is bound to a different qmt-execution-core source/spec "
             "build; public-core hash binding must not be disabled. Reconcile "
             "the old execution under the old deployment, archive the old "
-            "journal, and configure a new 0.4 journal path before rebuilding"
+            "journal, and configure a new 0.4.1 journal path before rebuilding"
         ) from exc
     return runtime
 
