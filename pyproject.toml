@@ -9,10 +9,17 @@ description = "TGrid QMT low-frequency T-trading engine (Gate 0 skeleton; no QMT
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
-    # PyYAML is the sole runtime dependency. It is used only to parse the YAML
-    # configuration file in tgrid.config.load_config; no other third-party
-    # runtime package is permitted at this Gate.
+    # PyYAML is used only to parse the YAML configuration file
+    # (tgrid.config.load_config); no other third-party runtime package is
+    # permitted at this Gate.
     "PyYAML>=6.0",
+    # Migration Phase A0/A (2026-08-16): TGrid consumes the independently
+    # audited reusable execution core, pinned to an EXACT reviewed commit
+    # (github.com/smhe00/qmt-execution-core, PASS_FOR_MIGRATION 0.3.1).
+    # Local developers override this pin with an editable install from the
+    # local checkout (documented in work/gates/QMT_EXECUTION_CORE/); the
+    # absolute local path is never committed here.
+    "qmt-execution-core @ git+https://github.com/smhe00/qmt-execution-core@937e6a4a1cbd54df960f9bde3ca2e91d6bc19c79",
 ]
 
 [project.scripts]

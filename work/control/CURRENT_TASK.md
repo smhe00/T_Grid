@@ -237,3 +237,39 @@ Landed in qmt-execution-core **0.3.0** (`87293e65d0c32ae10dbb94b857933c34d97fcaf
   0; wheel 0.3.0 clean-env verify; Windows mutex probes OK.
 
 **Next: Phase B** — TGrid thin adapter layer.
+
+## Phase B + C COMPLETE (2026-08-16)
+
+Evidence: `work/gates/QMT_EXECUTION_CORE/TGRID_MIGRATION_EVIDENCE_20260816.md`.
+
+- **Phase B**: `src/tgrid/integrations/qec_adapter.py`
+  (`make_execution_request`, `TGridExecutionGuard` fed by TGrid gates,
+  `TGridSidecar` pre-broker SQLite OrderIntent + Reservation + daily-exposure
+  commit with fail-closed semantics, `snapshot_status_to_tgrid`,
+  `apply_snapshot`) and `src/tgrid/integrations/qec_runtime.py`
+  (`build_qec_runtime` — production-shaped `MiniQmtRuntime` with the TGrid
+  guard + sidecar). Tests: `test_qec_adapter.py` (16), `test_qec_runtime.py` (2).
+- **Phase C**: integrated equivalence matrix (`test_qec_equivalence.py`, 15)
+  covering the migration regression list including the **dedicated
+  fill-during-cancel race -> FILLED**, restart active/cancel-pending,
+  query-None ambiguous, unknown raw status -> UNKNOWN, disconnect/reconnect
+  gates, kill switch, duplicate-id idempotency, crash-after-reservation
+  fail-closed; `test_qec_cutover.py` (2): **capability scan = zero TGrid
+  production raw QMT order/cancel call sites** (only the retained legacy
+  `xtquant_bridge.py` for equivalence) + old-vs-new lifecycle parity (both
+  paths land the same TGrid OrderIntent FILLED with reservation released).
+- **Dependency pin**: `pyproject.toml` pins `qmt-execution-core @
+  git+https://github.com/smhe00/qmt-execution-core@937e6a4a...` (exact
+  reviewed commit; no absolute local path committed; local dev uses an
+  editable install).
+- **Full TGrid regression: 1044 tests OK** (was 1009; +35); compileall 0.
+- No real or simulation QMT order/cancel invoked; `live_trading_allowed=false`.
+
+## Phase D — REMAINING (deferred, destructive)
+
+Remove/reduce TGrid's duplicated generic infrastructure (generic state
+machine, execution journal/mutex, generic BrokerPort/recovery, raw XtQuant
+bridge, generic bootstrap/event-queue) per the mapping table in the evidence
+doc, keeping TGrid-specific ledger/risk/strategy. Scoped as its own focused
+pass after the equivalence evidence is reviewed; the legacy path remains ONLY
+for the equivalence harness until then.
