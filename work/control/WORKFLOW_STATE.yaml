@@ -4,18 +4,18 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 33
-handoff_id: "TGRID-QEC-MIGRATION-ITER13-20260816-033"
+handoff_seq: 34
+handoff_id: "TGRID-QEC-PY39-COMPAT-MIGRATION-20260816-034"
 authorized_next:
-  - "TGRID-QEC-MIGRATION-PHASE1"
+  - "TGRID-QEC-PY39-COMPAT-THEN-MIGRATE"
 design_version: "1.1"
 gate: 5.5
-task_id: "TGRID-QEC-MIGRATION-PHASE1"
+task_id: "TGRID-QEC-PY39-COMPAT-THEN-MIGRATE"
 state: "IN_PROGRESS"
 owner: "dsh"
 iteration: 13
 last_actor: "architect"
-last_update: "2026-08-16T07:52:00+08:00"
+last_update: "2026-08-16T07:58:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
@@ -30,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_TGRID_QMT_EXECUTION_CORE_INTEGRATION"
 pre_live_independent_audit: "REQUIRED_AFTER_INTEGRATED_QMT_SIMULATION"
-notes: "User explicitly resumed TGrid migration to qmt-execution-core on 2026-08-16. Public-core baseline 0.2.1/2e222e1 independently PASS_FOR_MIGRATION. Iteration 13 is staged: first close the generic project-side durable-ledger seam so TGrid SQLite OrderIntent+Reservation+daily exposure commit before any broker submit; do not place side effects in ExecutionGuard and do not fork MiniQmtRuntime in TGrid. Public-core changes are allowed only when generic/broker-neutral, must bump/version-pin exact commit and re-run its full verification. Then add the TGrid adapter, prove fake/shadow old-vs-new equivalence, cut execution authority to the public core, and only then remove duplicated generic execution infrastructure. TGrid-specific Core/T-Lot/ledger/risk remains local. Python baseline must move from >=3.9 to >=3.11; no absolute local dependency path may be committed. Dedicated fill-during-cancel race test is required during migration. No real or simulation QMT order/cancel is authorized in this task. live_trading_allowed=false."
+notes: "User resumed migration. Before changing TGrid's Python baseline, DSH must establish the actual qmt-execution-core minimum Python version. First test exact public-core 0.2.1/2e222e1 on real Windows Python 3.9: full pytest, compileall, CLI verifier, wheel build/clean install/out-of-tree verifier, repeated same-process and cross-process ExecutionMutex probes, runtime-mutex contention, and read-only MiniQMT smoke if xtquant is usable under Python 3.9. No QMT order/cancel calls. If 3.9 PASS, update public core to the next patch release (normally 0.2.2), set requires-python>=3.9, add CI 3.9/3.11/3.12, and keep TGrid >=3.9. If 3.9 FAIL, record the exact incompatible feature and determine the minimum supported version from evidence; do not silently raise TGrid to 3.11. After compatibility evidence, close the generic pre-broker sidecar seam so TGrid SQLite OrderIntent+Reservation+daily exposure commits after core durable intent and before broker submit, then implement the thin TGrid adapter, prove fake/shadow equivalence including dedicated fill-during-cancel->FILLED, cut execution authority to the public core, and only then remove duplicate generic infrastructure. TGrid-specific Core/T-Lot/ledger/risk remains local. No absolute local dependency path may be committed. No real or simulation QMT order/cancel is authorized. live_trading_allowed=false."
