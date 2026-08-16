@@ -1,50 +1,61 @@
-"""Offline execution engine for the Gate 4 dry run (design §39).
+"""TGrid execution engine — TGrid-specific orchestration over the public core.
 
-:class:`ExecutionEngine` connects a strategy decision to a durable
-:class:`OrderIntent`, books the matching reservation atomically (design §18.3),
-sends to the injected broker through the shared
-:class:`~tgrid.execution.port.BrokerPort` (NODEB-001), then processes
-fills/rejects/timeouts/cancels through the design §24/§25 rules.
+Migration Phase D: the generic broker lifecycle / state machine / journal /
+mutex / recovery now live in qmt-execution-core.  :class:`ExecutionEngine`
+keeps only TGrid-specific orchestration:
 
-The engine is broker-type agnostic: it consumes only the narrow port surface
-(``place_order`` / ``cancel_order`` / ``query_order`` / ``query_trades`` /
-``query_orders``) and typed :class:`BrokerOrder` / :class:`BrokerTrade` DTOs.
-Deterministic simulation scripts (``tick_order`` etc.) live exclusively in
-:class:`~tgrid.execution.simdriver.SimulationDriver`, never here.
+* exact-type + finiteness validation of decision inputs (AUD-R1-007,
+  NODEB-I2-005) BEFORE any arithmetic, persistence or broker call;
+* idempotency guard on ``client_order_key`` (INV-013);
+* the reservation-vs-declared-capacity gate;
+* SAFE_MODE bookkeeping and the authoritative broker/local reconciliation
+  that clears it (NODEB-RR6-001 semantics, executed here against the public
+  broker surface);
+* mapping decisions to public ``ExecutionRequest`` and folding public
+  ``ExecutionSnapshot`` outcomes back into the TGrid SQLite ledger.
 
-Order of operations (INV-013 / §18.2):
-
-1. reserve (atomically with intent) -> READY_TO_SEND / NEW
-2. broker.send()
-3. record broker_order_id -> SUBMITTED
-
-A crash anywhere after step 1 leaves a recoverable intent; recovery is the
-:mod:`tgrid.execution.recovery` module's job.  The executor never re-sends a
-client_order_key it already recorded, never releases a reservation on a
-"probably filled" guess, and never lets one symbol+direction hold two pending
-strategy orders (INV-004).
+The engine drives an injected public-core ``ExecutionSession`` (broker +
+``ExecutionGuard`` + journal/mutex + the TGrid ``TGridSidecar`` pre-broker
+durable-ledger hooks).  The engine never touches raw QMT order/cancel APIs.
 """
 
 from __future__ import annotations
 
 import math
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
+
+from qmt_execution_core.domain import ExecutionRequest, TradeState
+from qmt_execution_core.session import ExecutionSession
 
 from tgrid.execution.models import BUY, SELL, OrderIntent, OrderStatus
-from tgrid.execution.port import (
-    BrokerCancelFailedError,
-    BrokerDisconnectedError,
-    BrokerError,
-    BrokerPort,
-    BrokerRejectedError,
-)
-from tgrid.execution.statemachine import TGridEvent
 from tgrid.execution.store import (
     ExecutionStore,
     ExecutionStoreError,
     IntentNotFoundError,
 )
+from tgrid.integrations.daily_exposure import DailyExposureLedger
+from tgrid.integrations.qec_adapter import (
+    TGridEvidenceSource,
+    TGridExecutionGuard,
+    TGridSidecar,
+    apply_snapshot,
+    make_execution_request,
+)
 from tgrid.risk.exceptions import TGridError
+
+__all__ = [
+    "ExecutionEngine",
+    "ExecutionError",
+    "ExecutionInputError",
+    "ExecutionResult",
+    "OrderSendFailedError",
+    "OrderReconciliationError",
+    "OrderTimeoutError",
+    "CancelFailedError",
+    "ReservationConflictError",
+]
 
 
 class ExecutionError(TGridError):
@@ -52,11 +63,11 @@ class ExecutionError(TGridError):
 
 
 class ExecutionInputError(ExecutionError):
-    """An execution argument is invalid (fail closed before use)."""
+    """A decision input failed exact-type / finiteness validation."""
 
 
 class OrderSendFailedError(ExecutionError):
-    """The broker send failed (disconnect/reject); intent stays recoverable."""
+    """The broker refused or could not accept the order."""
 
 
 class OrderReconciliationError(ExecutionError):
@@ -90,19 +101,15 @@ class ExecutionResult:
 
 
 class ExecutionEngine:
-    """Drives strategy decisions through the shared broker port.
+    """TGrid-specific orchestration driving a public-core ExecutionSession.
 
-    ``store`` (ExecutionStore) and ``broker`` (any :class:`BrokerPort` —
-    SimBroker for the dry run, LiveBrokerAdapter for pre-live) are injected; the
-    engine holds no QMT or account surface.  ``order_timeout_seconds`` and
-    ``max_reprice_attempts`` implement design §25.
-
-    ``machine`` (optional) is a :class:`~tgrid.execution.statemachine.MachineSnapshot`
-    and ``journal`` (optional) an :class:`~tgrid.execution.execution_journal.ExecutionJournal`:
-    when both are provided the engine drives the formally-verified state
-    machine through its order lifecycle and persists every transition —
-    otherwise it runs in the plain (SimBroker/dry-run) mode with no state
-    machine, preserving existing behaviour.
+    ``store`` (TGrid ``ExecutionStore``) is injected; ``broker`` is a
+    qmt-execution-core ``BrokerPort`` (``SimBroker`` for the dry run,
+    ``MiniQmtBrokerAdapter`` for pre-live via ``build_qec_runtime``).  The
+    engine builds the public session with a TGrid guard + sidecar: the guard
+    gates submissions from TGrid evidence (including this engine's SAFE_MODE),
+    and the sidecar persists the TGrid SQLite OrderIntent + Reservation +
+    daily exposure BEFORE any broker side effect.
     """
 
     def __init__(
@@ -113,15 +120,15 @@ class ExecutionEngine:
         strategy_name: str = "TGRID",
         order_timeout_seconds: int = 120,
         max_reprice_attempts: int = 2,
-        machine: object | None = None,
-        journal: object | None = None,
+        journal_path: object | None = None,
+        lock_path: object | None = None,
+        guard: object | None = None,
+        sidecar: object | None = None,
+        exposure: object | None = None,
+        evidence: TGridEvidenceSource | None = None,
     ) -> None:
         if not isinstance(store, ExecutionStore):
             raise ExecutionInputError("store must be an ExecutionStore")
-        if not isinstance(broker, BrokerPort):
-            raise ExecutionInputError(
-                "broker must implement BrokerPort (SimBroker or LiveBrokerAdapter)"
-            )
         if type(strategy_name) is not str or strategy_name == "":
             raise ExecutionInputError("strategy_name must be a non-empty string")
         if type(order_timeout_seconds) is not int or order_timeout_seconds <= 0:
@@ -135,18 +142,74 @@ class ExecutionEngine:
         self._max_reprice_attempts = max_reprice_attempts
         self._safe_mode_reason: str | None = None
         self._permanent_block_reason: str | None = None
-        self._machine = machine
-        self._journal = journal
-        if (machine is None) != (journal is None):
-            raise ExecutionInputError(
-                "machine and journal must be provided together (state-machine mode)"
+
+        # Default evidence: the engine's own gates are live suppliers
+        # (SAFE_MODE acts as the kill switch).  Production wiring passes an
+        # explicit TGridEvidenceSource via build_qec_runtime.
+        if evidence is None:
+            evidence = TGridEvidenceSource(
+                environment_verified=lambda: True,
+                account_verified=lambda: True,
+                broker_snapshot_verified=lambda: True,
+                position_verified=lambda: True,
+                cash_verified=lambda: True,
+                quote_verified=lambda: True,
+                kill_switch_active=lambda: self._safe_mode_reason is not None
+                or self._permanent_block_reason is not None,
+                exposure_ready=lambda: True,
+                exposure_used=lambda: 0.0,
             )
+        self._guard = guard or _EngineDefaultGuard(
+            kill_switch_active=evidence.kill_switch_active,
+        )
+        exposure = exposure or DailyExposureLedger()
+        self._sidecar = sidecar or TGridSidecar(
+            store=store, exposure=exposure, strategy_name=strategy_name, now=lambda: "",
+        )
+        journal_path = journal_path or str(
+            Path(tempfile.mkdtemp(prefix="tgrid-exec-")) / "journal.json"
+        )
+        lock_path = lock_path or str(
+            Path(tempfile.mkdtemp(prefix="tgrid-exec-")) / "exec.lock"
+        )
+        self._session = ExecutionSession(
+            broker=broker,
+            guard=self._guard,
+            journal_path=journal_path,
+            lock_path=lock_path,
+            execution_id=strategy_name,
+            before_broker_submit=self._sidecar.before_broker_submit,
+            before_broker_cancel=self._sidecar.before_broker_cancel,
+        )
+        self._session_opened = False
+
+    def _policy_from_broker(self):
+        # Removed in Phase D: the dry-run engine does not enforce a production
+        # policy; TGridExecutionGuard with a LiveBrokerPolicy is supplied by
+        # production wiring (build_qec_runtime).
+        return None
 
     # ------------------------------------------------------------- queries
 
     @property
     def store(self) -> ExecutionStore:
         return self._store
+
+    @property
+    def session(self) -> ExecutionSession:
+        return self._session
+
+    def close(self) -> None:
+        """Release the public session (mutex/journal) — idempotent.
+
+        Call at teardown (or before "restarting" with the same journal/lock
+        paths in tests); the OS also releases the mutex on process exit.
+        """
+        if self._session_opened:
+            try:
+                self._session.close()
+            finally:
+                self._session_opened = False
 
     @property
     def safe_mode(self) -> bool:
@@ -164,131 +227,10 @@ class ExecutionEngine:
         self._safe_mode_reason = reason
 
     def block_permanently(self, reason: str) -> None:
-        """IRREVERSIBLY disable new orders on this engine (SM9-002).
-
-        Distinct from :meth:`engage_safe_mode`: :meth:`reconcile_and_clear_safe_mode`
-        cannot clear this block, so once an execution-capable stack loses its
-        cross-process lock ownership no order path remains usable.
-        """
+        """IRREVERSIBLY disable new orders on this engine (SM9-002)."""
         if type(reason) is not str or reason == "":
             raise ExecutionInputError("block reason must be a non-empty string")
         self._permanent_block_reason = reason
-
-    def _attach_execution_authority(self, machine, journal) -> None:
-        """Internal: bind the execution state machine + journal at activate.
-
-        The journal is loaded and the machine snapshot is built ONLY after the
-        cross-process execution mutex has been acquired (SM9-002), so a losing
-        process never touches the shared journal.  Both must be provided
-        together (mirrors the constructor guard).
-        """
-        if (machine is None) != (journal is None):
-            raise ExecutionInputError(
-                "machine and journal must be provided together (state-machine mode)"
-            )
-        self._machine = machine
-        self._journal = journal
-
-    # ------------------------------------------------------ state machine
-
-    @property
-    def machine(self):
-        """The current machine snapshot (None in plain mode)."""
-        return self._machine
-
-    def _advance_machine(self, event, *, details=None, data_updates=None):
-        """Advance + persist the state machine (reverse_repo semantics).
-
-        In plain (non state-machine) mode this is a no-op.  In state-machine
-        mode every transition is atomically journaled BEFORE the external
-        side effect completes, so a crash never loses the last committed
-        machine state.
-        """
-        if self._machine is None:
-            return None
-        from tgrid.execution.statemachine import (
-            advance as advance_machine,
-            snapshot_to_payload,
-        )
-
-        self._machine = advance_machine(self._machine, event)
-        if self._journal is not None:
-            self._journal.transition(
-                event,
-                snapshot_to_payload(self._machine),
-                details=details,
-                data_updates=data_updates,
-            )
-        return self._machine
-
-    def _machine_state_is(self, *states) -> bool:
-        if self._machine is None:
-            return False
-        return self._machine.state in states
-
-    def _drive_machine_to_submission(self):
-        """Gate a submission on the machine already being READY (SM9-003A).
-
-        In state-machine mode, ``TRIGGER`` and ``SNAPSHOT_OK`` are ONLY ever
-        emitted by the trusted preflight layer (``LiveStack.prepare_snapshot``)
-        after the real trading-day/window, broker snapshot/cash and quote
-        checks succeed — never self-certified inside ``send_*``.  If the
-        machine is already at READY/INTENT this is a no-op; a machine at
-        WAIT_TRIGGER/SNAPSHOT (preflight not completed) or any other state is
-        refused.
-        """
-        if self._machine is None:
-            return
-        from tgrid.execution.statemachine import TGridState
-
-        if self._machine.state in (TGridState.READY, TGridState.INTENT):
-            return
-        if self._machine.state in (TGridState.SAFE_HALT, TGridState.DONE,
-                                   TGridState.SKIPPED):
-            raise ExecutionError(
-                f"machine is in terminal state {self._machine.state.value}; "
-                "cannot submit"
-            )
-        if self._machine.state in (TGridState.WAIT_TRIGGER,
-                                   TGridState.SNAPSHOT):
-            raise ExecutionError(
-                "machine preflight is incomplete; the trusted preflight layer "
-                "must emit TRIGGER + SNAPSHOT_OK (with verified evidence) "
-                "before submission"
-            )
-        # Any other state (NEW/PREFLIGHT/RECOVERY/ORDER_ACTIVE/CANCEL_PENDING/
-        # RECONCILE/SUBMIT_UNKNOWN) is not ready to submit.
-        raise ExecutionError(
-            f"machine is in state {self._machine.state.value}; not ready to submit"
-        )
-
-    def reconcile_and_clear_safe_mode(self) -> None:
-        """Authoritative SAFE_MODE release (NODEB-RR6-001).
-
-        This method ITSELF executes the authoritative broker/local
-        reconciliation using the engine's store + broker — it never accepts
-        caller-supplied result objects as authority, so a fabricated
-        ``MATCHED`` object cannot clear SAFE_MODE.  Unresolved outcomes
-        (UNMATCHED / INTENT_ONLY / UNKNOWN / ambiguous) keep SAFE_MODE and
-        fail closed; reservations are preserved.
-        """
-        from tgrid.execution.recovery import reconcile_open_intents
-
-        results = reconcile_open_intents(self._store, self._broker)
-        unresolved = [
-            r for r in results
-            if getattr(r, "outcome", None) in ("UNMATCHED_BROKER_ORDER", "INTENT_ONLY")
-            or getattr(r, "broker_status", None) == "UNKNOWN"
-        ]
-        if unresolved:
-            raise ExecutionError(
-                "authoritative reconciliation did not resolve all intents; "
-                "SAFE_MODE retained"
-            )
-        self._safe_mode_reason = None
-
-    def _engage_safe_mode(self, reason: str) -> None:
-        self._safe_mode_reason = reason
 
     def _require_not_safe_mode(self) -> None:
         if self._permanent_block_reason is not None:
@@ -312,6 +254,57 @@ class ExecutionEngine:
             keys.append(intent.client_order_key)
         return tuple(keys)
 
+    def reconcile_and_clear_safe_mode(self) -> None:
+        """Authoritative SAFE_MODE release (NODEB-RR6-001 semantics).
+
+        Executed HERE against the public broker surface (strict queries via
+        the public session's broker): every non-terminal intent must match a
+        known-status broker order; unresolved / UNKNOWN outcomes keep
+        SAFE_MODE and fail closed.  No caller-supplied result object can
+        clear SAFE_MODE.
+        """
+        from qmt_execution_core.domain import BrokerOrderStatus
+
+        open_intents = [
+            i for i in self._store.list_intents()
+            if i.status not in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN")
+        ]
+        orders = tuple(self._session.broker.query_orders())
+        matched_ids = set()
+        for intent in open_intents:
+            matches = [
+                o for o in orders
+                if (o.client_order_id or "") == intent.client_order_key
+                or (o.order_remark or "") == (intent.order_remark or "")
+            ]
+            if len(matches) != 1 or matches[0].status is BrokerOrderStatus.UNKNOWN:
+                raise ExecutionError(
+                    "authoritative reconciliation did not resolve all intents; "
+                    "SAFE_MODE retained"
+                )
+            matched_ids.add(matches[0].order_id)
+        # Broker orders tagged TGRID with no local intent: duplicate-order risk.
+        local_keys = {i.client_order_key for i in self._store.list_intents()}
+        for order in orders:
+            remark = getattr(order, "order_remark", "") or ""
+            if not remark.startswith("TG_"):
+                continue
+            if order.order_id in matched_ids:
+                continue
+            if (order.client_order_id or "") in local_keys:
+                continue
+            if order.status in (
+                BrokerOrderStatus.FILLED,
+                BrokerOrderStatus.CANCELLED,
+                BrokerOrderStatus.REJECTED,
+            ):
+                continue
+            raise ExecutionError(
+                "authoritative reconciliation found an unmatched TGRID broker "
+                "order; SAFE_MODE retained"
+            )
+        self._safe_mode_reason = None
+
     # -------------------------------------------------------------- actions
 
     def send_buy(
@@ -326,7 +319,7 @@ class ExecutionEngine:
         expected_available_cash: float,
         reserved_cash: float,
     ) -> ExecutionResult:
-        """Send a BUY: atomic reservation+intent, then broker, then SUBMITTED."""
+        """Send a BUY: validate, reserve via the sidecar, broker, SUBMITTED."""
         return self._send(
             side=BUY,
             client_order_key=client_order_key,
@@ -336,7 +329,7 @@ class ExecutionEngine:
             order_remark=order_remark,
             now=now,
             cash_amount=reserved_cash,
-            expected_available_cash=expected_available_cash,
+            expected_available=expected_available_cash,
         )
 
     def send_sell(
@@ -350,7 +343,7 @@ class ExecutionEngine:
         now: str,
         expected_available_qty: int,
     ) -> ExecutionResult:
-        """Send a SELL: atomic qty reservation+intent, then broker."""
+        """Send a SELL: validate, reserve via the sidecar, broker."""
         return self._send(
             side=SELL,
             client_order_key=client_order_key,
@@ -360,7 +353,7 @@ class ExecutionEngine:
             order_remark=order_remark,
             now=now,
             cash_amount=None,
-            expected_available_cash=expected_available_qty,
+            expected_available=expected_available_qty,
         )
 
     def _send(
@@ -374,7 +367,7 @@ class ExecutionEngine:
         order_remark: str,
         now: str,
         cash_amount: float | None,
-        expected_available_cash: float,
+        expected_available: object,
     ) -> ExecutionResult:
         for name, value in (
             ("client_order_key", client_order_key),
@@ -388,42 +381,31 @@ class ExecutionEngine:
             raise ExecutionInputError("side must be BUY or SELL")
         if type(qty) is not int or qty <= 0:
             raise ExecutionInputError("qty must be a positive plain int")
-        # NODEB-I2-005: reject NaN/±Inf for all price/cash/reservation values
-        # BEFORE any arithmetic, persistence or broker call.  A non-finite
-        # reserved_cash must never reach create_intent_with_reservation.
+        # NODEB-I2-005 / AUD-R1-007: reject NaN/±Inf / wrong types BEFORE any
+        # arithmetic, persistence or broker call.
         if type(limit_price) not in (int, float) or isinstance(limit_price, bool):
             raise ExecutionInputError("limit_price must be a plain number")
         if not math.isfinite(float(limit_price)) or limit_price <= 0:
             raise ExecutionInputError("limit_price must be a finite positive number")
-        # NODEB-I2-002: an unresolved broker state blocks new execution until
-        # reconciliation resolves it (no guessing, no silent continuation).
-        self._require_not_safe_mode()
-        # AUD-R1-007: exact-type validation BEFORE any arithmetic/conversion.
-        # ``expected_available_cash`` carries the caller-declared capacity; an
-        # untrusted object must never pass through int()/float() first.  BUY
-        # capacity is a non-negative number; SELL capacity is a plain
-        # non-negative int (quantity).
         if side == BUY:
-            if (type(expected_available_cash) not in (int, float)
-                    or isinstance(expected_available_cash, bool)):
+            if (type(expected_available) not in (int, float)
+                    or isinstance(expected_available, bool)):
                 raise ExecutionInputError(
                     "expected_available_cash must be a non-negative number"
                 )
-            if not math.isfinite(float(expected_available_cash)) or expected_available_cash < 0:
+            if not math.isfinite(float(expected_available)) or expected_available < 0:
                 raise ExecutionInputError(
                     "expected_available_cash must be a finite non-negative number"
                 )
             if cash_amount is None or (type(cash_amount) not in (int, float)
                                        or isinstance(cash_amount, bool)):
-                raise ExecutionInputError(
-                    "reserved cash must be a non-negative number"
-                )
+                raise ExecutionInputError("reserved cash must be a non-negative number")
             if not math.isfinite(float(cash_amount)) or cash_amount < 0:
                 raise ExecutionInputError(
                     "reserved cash must be a finite non-negative number"
                 )
         else:
-            if type(expected_available_cash) is not int or expected_available_cash < 0:
+            if type(expected_available) is not int or expected_available < 0:
                 raise ExecutionInputError(
                     "expected_available_qty must be a plain non-negative int"
                 )
@@ -441,247 +423,82 @@ class ExecutionEngine:
                 "refusing to duplicate an order intent"
             )
 
-        # 1. Reserve + intent atomically (design §18.3 / INV-012).
-        try:
-            booked = self._store.create_intent_with_reservation(
-                client_order_key=client_order_key,
-                symbol=symbol,
-                side=side,
-                qty=qty,
-                limit_price=limit_price,
-                strategy_name=self._strategy_name,
-                order_remark=order_remark,
-                created_at=now,
-                cash_amount=cash_amount,
-            )
-        except ExecutionStoreError as exc:
-            raise ReservationConflictError(
-                "reservation + intent booking failed"
-            ) from exc
-
-        # Reservation conflict gate (design §18.3): the new reservation must fit
-        # within the caller-provided capacity net of already-held reservations.
-        # Values are already exact-type validated above (AUD-R1-007); no
-        # int()/float() coercion happens on untrusted input here.
+        # Reservation conflict gate (design §18.3): the new reservation must
+        # fit within the caller-provided capacity (the sidecar creates it
+        # atomically with the intent BEFORE the broker call).
         if side == BUY:
-            if cash_amount > expected_available_cash:
-                self._store.release_reservation(booked.reservation.id, released_at=now)
+            if cash_amount > float(expected_available):
                 raise ReservationConflictError(
                     "reserved cash would exceed the available cash"
                 )
         else:
-            if qty > expected_available_cash:
-                self._store.release_reservation(booked.reservation.id, released_at=now)
+            if qty > int(expected_available):
                 raise ReservationConflictError(
                     "reserved sell qty would exceed the available T quantity"
                 )
 
-        # 2. Send to broker through the port.  In state-machine mode the
-        # durable INTENT is persisted first (reverse_repo: durable intent
-        # always precedes the external side effect), then SUBMIT_* advances
-        # the machine; a SUBMIT_EXCEPTION lands in SUBMIT_UNKNOWN so recovery
-        # must re-query by remark instead of blind re-sending.
-        self._drive_machine_to_submission()
-        self._advance_machine(
-            TGridEvent.INTENT_PERSISTED,
-            details={"client_order_key": client_order_key, "side": side},
+        # NODEB-I2-002: an unresolved broker state blocks new execution.
+        self._require_not_safe_mode()
+
+        if not self._session_opened:
+            self._session.open()
+            self._session_opened = True
+
+        # Public-core lifecycle: one order per cycle.  A completed cycle
+        # (FILLED/CANCELLED/REJECTED) must advance to the next before a new
+        # order is submitted (durable id reuse protection is preserved).
+        if self._session.machine.state in (
+            TradeState.FILLED,
+            TradeState.CANCELLED,
+            TradeState.REJECTED,
+        ):
+            self._session.next_cycle()
+
+        # The sidecar's `now` provider: point it at THIS decision's timestamp
+        # so the TGrid ledger gets the correct durable time.
+        self._sidecar._now = lambda: now
+
+        request = make_execution_request(
+            client_order_key=client_order_key,
+            symbol=symbol,
+            side=side,
+            qty=qty,
+            limit_price=limit_price,
+            strategy_name=self._strategy_name,
+            order_remark=order_remark,
         )
-        try:
-            broker_order_id = self._broker.place_order(
-                symbol=symbol, side=side, qty=qty, limit_price=limit_price,
-                client_order_key=client_order_key, order_remark=order_remark,
-            )
-        except BrokerRejectedError as exc:
-            # SM9-003D: a DEFINITIVE rejection (pre-broker local refusal such
-            # as allowlist/caps/double-enable, or a broker-side rejection with
-            # a non-positive id) means nothing was sent ambiguously.  Map to
-            # SUBMIT_REJECTED -> SAFE_HALT and close the intent/reservation
-            # definitively — never to the ambiguous SUBMIT_EXCEPTION.
-            self._advance_machine(TGridEvent.SUBMIT_REJECTED)
-            try:
-                self._store.update_intent_status(
-                    client_order_key, status=OrderStatus.REJECTED,
-                    updated_at=now,
-                )
-            except ExecutionStoreError:
-                pass  # surface the original rejection error
-            self._release(client_order_key, now=now)
-            raise OrderSendFailedError("order rejected definitively") from exc
-        except BrokerDisconnectedError as exc:
-            self._advance_machine(TGridEvent.SUBMIT_EXCEPTION)
-            raise OrderSendFailedError("broker disconnected before send") from exc
-        except BrokerError as exc:
-            self._advance_machine(TGridEvent.SUBMIT_EXCEPTION)
-            raise OrderSendFailedError("broker refused the order") from exc
-        self._advance_machine(
-            TGridEvent.SUBMIT_ACCEPTED,
-            details={"broker_order_id": broker_order_id},
+        from qmt_execution_core.exceptions import (
+            BrokerError,
+            BrokerSubmissionAmbiguous,
+            BrokerSubmissionRejected,
         )
 
-        # 3. Record broker id -> SUBMITTED (design §18.2 step 3).
         try:
-            self._store.update_intent_status(
-                client_order_key, status=OrderStatus.SUBMITTED, updated_at=now,
-                broker_order_id=broker_order_id,
-            )
-        except ExecutionStoreError as exc:
-            raise OrderReconciliationError(
-                "broker order sent but intent update failed; manual reconcile required"
+            snapshot = self._session.submit(request)
+        except (BrokerSubmissionRejected, BrokerSubmissionAmbiguous,
+                BrokerError) as exc:
+            # Public-core submission failure (incl. pre-submit health gate):
+            # surface as the TGrid send-failure contract.  An ambiguous
+            # outcome after broker acceptance is handled via
+            # recover_unknown_submission (poll), not a raised error here.
+            raise OrderSendFailedError(
+                "broker refused or could not accept the order"
             ) from exc
-
-        return ExecutionResult(
-            client_order_key=client_order_key, symbol=symbol, side=side,
-            status=OrderStatus.SUBMITTED,
-            broker_order_id=broker_order_id, filled_qty=0,
-            message="order submitted",
+        except RuntimeError as exc:
+            # e.g. "cannot submit from working": the public-core lifecycle is
+            # one order at a time — a TGrid orchestration concern.
+            raise ExecutionError(str(exc)) from exc
+        return self._result_from_snapshot(
+            snapshot, client_order_key=client_order_key, symbol=symbol,
+            side=side, now=now,
         )
-
-    def recover_unknown_submission(
-        self,
-        client_order_key: str,
-        *,
-        now: str,
-    ) -> ExecutionResult:
-        """reverse_repo ``_recover_unknown_submission`` (SUBMIT_UNKNOWN recovery).
-
-        Called after :meth:`send_buy` raised with the machine in
-        ``SUBMIT_UNKNOWN`` (broker exception after the durable intent was
-        persisted).  The **persisted intent's order_remark is the SOLE
-        recovery authority** (SM9-004): there is no caller-supplied remark
-        selector, so a caller can never associate the intent with a different
-        broker order.  All broker orders are re-queried (strict query — ``None``
-        never means empty success) and matched by that durable remark:
-
-        * exactly one matching order with matching symbol/side is classified
-          by broker status: ``SUBMITTED``/``PARTIAL`` -> ``RECOVERED_ACTIVE``,
-          ``CANCEL_REQUESTED`` -> ``RECOVERED_CANCEL_PENDING``, and
-          ``FILLED``/``CANCELED``/``REJECTED`` -> ``RECOVERED_TERMINAL``;
-        * zero matches -> ``RECOVERED_NO_MATCH`` -> SAFE_HALT — automatic
-          retry is FORBIDDEN even though no order was found (the send may
-          have reached the broker before the exception);
-        * query failure / multiple matches / identity mismatch / unknown
-          broker status -> ``RECOVERY_AMBIGUOUS`` -> SAFE_HALT + SAFE_MODE
-          (fail closed, never a silent downgrade).
-
-        Only valid in state-machine mode with the machine at SUBMIT_UNKNOWN.
-        """
-        if type(client_order_key) is not str or client_order_key == "":
-            raise ExecutionInputError(
-                "client_order_key must be a non-empty string"
-            )
-        if type(now) is not str or now == "":
-            raise ExecutionInputError("now must be a non-empty string")
-        if self._machine is None:
-            raise ExecutionError(
-                "unknown-submission recovery requires state-machine mode "
-                "(machine + journal)"
-            )
-        from tgrid.execution.statemachine import TGridState
-
-        if not self._machine_state_is(TGridState.SUBMIT_UNKNOWN):
-            raise ExecutionError(
-                "recovery only valid from SUBMIT_UNKNOWN; machine is at "
-                f"{self._machine.state.value}"
-            )
-        intent = self._store.get_intent(client_order_key)
-        # SM9-004: the persisted intent remark is the ONLY recovery identity;
-        # no caller-provided remark selector exists.
-        remark = intent.order_remark
-        if type(remark) is not str or remark == "":
-            raise ExecutionError(
-                "recovery needs a durable order remark to re-query by"
-            )
-
-        def _halt(reason: str) -> None:
-            self._advance_machine(
-                TGridEvent.RECOVERY_AMBIGUOUS,
-                details={"reason": reason},
-            )
-            self._engage_safe_mode(reason)
-
-        try:
-            orders = tuple(self._broker.query_orders())
-        except BrokerError as exc:
-            _halt("submission outcome and broker order list are ambiguous")
-            raise OrderReconciliationError(
-                "submission outcome and broker order list are ambiguous; "
-                "SAFE_MODE"
-            ) from exc
-
-        matches = [
-            order for order in orders
-            if getattr(order, "order_remark", None) == remark
-        ]
-        if len(matches) > 1:
-            _halt(f"multiple broker orders share remark {remark!r}")
-            raise OrderReconciliationError(
-                "multiple broker orders share the durable remark; SAFE_MODE"
-            )
-        if not matches:
-            # reverse_repo: RECOVERED_NO_MATCH -> SAFE_HALT; automatic retry
-            # is forbidden even though no broker order was found.
-            self._advance_machine(TGridEvent.RECOVERED_NO_MATCH)
-            raise OrderReconciliationError(
-                "no broker order matches the durable intent remark; automatic "
-                "retry is forbidden (SAFE_HALT)"
-            )
-        order = matches[0]
-        if order.symbol != intent.symbol or order.side != intent.side:
-            _halt("matching broker order identity (symbol/side) mismatch")
-            raise OrderReconciliationError(
-                "matching broker order identity mismatch; SAFE_MODE"
-            )
-
-        status = order.status
-        if status in ("SUBMITTED", "PARTIAL"):
-            event = TGridEvent.RECOVERED_ACTIVE
-        elif status == "CANCEL_REQUESTED":
-            event = TGridEvent.RECOVERED_CANCEL_PENDING
-        elif status in ("FILLED", "CANCELED", "REJECTED"):
-            event = TGridEvent.RECOVERED_TERMINAL
-        else:
-            _halt(f"matching order has unknown broker status {status!r}")
-            raise OrderReconciliationError(
-                f"matching order has unknown broker status {status!r}; "
-                "SAFE_MODE"
-            )
-        self._advance_machine(
-            event,
-            details={"broker_order_id": order.order_id, "status": status},
-        )
-        self._store.update_intent_status(
-            client_order_key, status=status, updated_at=now,
-            broker_order_id=order.order_id,
-        )
-        if status in ("FILLED", "CANCELED", "REJECTED"):
-            self._release(client_order_key, now=now)
-        return ExecutionResult(
-            client_order_key=client_order_key, symbol=intent.symbol,
-            side=intent.side, status=status,
-            broker_order_id=order.order_id, filled_qty=order.filled_qty,
-            message=f"recovered by remark: {event.value}",
-        )
-
-    # -------------------------------------------------------------- fill/poll
 
     def poll_order(self, client_order_key: str, *, now: str) -> ExecutionResult:
-        """Re-query the broker and fold fills/terminal states back into the intent.
-
-        Design §25: after any cancel attempt you must re-query, never assume.
-        Partial fills are applied against the recorded intent qty; when the
-        order reaches FILLED the reservation is released.  No simulation hook
-        is used here — broker state is read through the port only.
-
-        Event emission is state-aware (SM9-003B): while the machine is in
-        CANCEL_PENDING, pending/active broker outcomes map to
-        ``CANCEL_STILL_PENDING`` and terminal outcomes to ``CANCEL_TERMINAL``;
-        in ORDER_ACTIVE (including a spontaneous broker-side cancel) the
-        terminal outcome maps to ``ORDER_TERMINAL``.
-        """
-        from tgrid.execution.statemachine import TGridState
-
+        """Re-query the broker and fold fills/terminal states back into the intent."""
         intent = self._store.get_intent(client_order_key)
         if intent.status in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN"):
+            # Terminal intent: no broker re-query (the public session is
+            # one-cycle and a terminal observation is not a refinement).
             return ExecutionResult(
                 client_order_key=intent.client_order_key, symbol=intent.symbol,
                 side=intent.side, status=intent.status,
@@ -689,139 +506,142 @@ class ExecutionEngine:
                 filled_qty=intent.qty if intent.status == "FILLED" else 0,
                 message="intent already terminal",
             )
-        if intent.broker_order_id is None:
-            raise OrderReconciliationError(
-                "intent has no broker_order_id; reconcile before polling"
-            )
-        try:
-            order = self._broker.query_order(intent.broker_order_id)
-        except BrokerDisconnectedError as exc:
-            raise OrderReconciliationError("broker disconnected during poll") from exc
-        except BrokerError as exc:
-            raise OrderReconciliationError("broker query failed during poll") from exc
-
-        in_cancel_pending = self._machine_state_is(TGridState.CANCEL_PENDING)
-        # SM9-003B: terminal/pending outcomes select the event family by the
-        # machine state the order is being observed from.
-        terminal_event = (
-            TGridEvent.CANCEL_TERMINAL if in_cancel_pending
-            else TGridEvent.ORDER_TERMINAL
-        )
-        still_active_event = (
-            TGridEvent.CANCEL_STILL_PENDING if in_cancel_pending
-            else TGridEvent.ORDER_STILL_ACTIVE
-        )
-
-        # NODEB-I2-002: any status outside the known state machine is an
-        # explicit unresolved outcome, never a silent downgrade to SUBMITTED.
-        # The reservation is preserved and the run must be treated as unsafe.
-        if order.status == "UNKNOWN":
-            self._advance_machine(TGridEvent.ORDER_STATUS_UNKNOWN)
-            self._engage_safe_mode(
-                f"broker order {intent.broker_order_id!r} reports UNKNOWN status"
-            )
-            raise OrderReconciliationError(
-                "broker status UNKNOWN; order state unresolved — SAFE_MODE"
-            )
-
-        if order.status == "REJECTED":
-            self._advance_machine(terminal_event)
-            self._store.update_intent_status(
-                client_order_key, status=OrderStatus.REJECTED, updated_at=now,
-            )
-            self._release(client_order_key, now=now)
-            return ExecutionResult(
-                client_order_key=client_order_key, symbol=intent.symbol,
-                side=intent.side, status=OrderStatus.REJECTED,
-                broker_order_id=intent.broker_order_id, filled_qty=0,
-                message="broker rejected the order",
-            )
-        if order.status == "CANCELED":
-            self._advance_machine(terminal_event)
-            self._store.update_intent_status(
-                client_order_key, status=OrderStatus.CANCELED, updated_at=now,
-            )
-            self._release(client_order_key, now=now)
-            return ExecutionResult(
-                client_order_key=client_order_key, symbol=intent.symbol,
-                side=intent.side, status=OrderStatus.CANCELED,
-                broker_order_id=intent.broker_order_id,
-                filled_qty=order.filled_qty,
-                message="order canceled",
-            )
-
-        new_status = OrderStatus.FILLED if order.status == "FILLED" else (
-            OrderStatus.PARTIAL if order.status == "PARTIAL" else intent.status
-        )
-        if new_status == OrderStatus.FILLED:
-            self._advance_machine(terminal_event)
+        self._require_session()
+        self._sidecar._now = lambda: now
+        if self._session.machine.state in (
+            TradeState.FILLED,
+            TradeState.CANCELLED,
+            TradeState.REJECTED,
+            TradeState.CANCEL_REJECTED,
+            TradeState.FAILED,
+        ):
+            # The session already consumed the terminal observation (e.g. on
+            # restart recovery); fold the snapshot without re-polling.
+            snapshot = self._session.snapshot()
         else:
-            self._advance_machine(still_active_event)
-        if new_status != intent.status:
-            self._store.update_intent_status(
-                client_order_key, status=new_status, updated_at=now,
-            )
-        if new_status == OrderStatus.FILLED:
-            self._release(client_order_key, now=now)
-        return ExecutionResult(
-            client_order_key=client_order_key, symbol=intent.symbol,
-            side=intent.side, status=new_status,
-            broker_order_id=intent.broker_order_id,
-            filled_qty=order.filled_qty,
-            message="polled",
-            fill_price=self._last_fill_price(intent.broker_order_id),
+            snapshot = self._session.poll()
+        return self._result_from_snapshot(
+            snapshot, client_order_key=client_order_key,
+            symbol=intent.symbol, side=intent.side, now=now,
         )
-
-    def _last_fill_price(self, broker_order_id: str) -> float | None:
-        """Return the most recent fill price, or None if no fill occurred."""
-        try:
-            trades = self._broker.query_trades(broker_order_id)
-        except BrokerError:
-            return None
-        if not trades:
-            return None
-        return float(trades[-1].price)
 
     def timeout_order(self, client_order_key: str, *, now: str) -> ExecutionResult:
         """Design §25: cancel -> re-query -> reconcile; never assume unfilled."""
-        from tgrid.execution.statemachine import TGridState
-
+        self._require_session()
+        self._sidecar._now = lambda: now
         intent = self._store.get_intent(client_order_key)
         if intent.broker_order_id is None:
             raise OrderReconciliationError("intent has no broker_order_id")
-        # reverse_repo: the durable cancel intent precedes the side effect.
-        # SM9-003B: only ORDER_ACTIVE may enter CANCEL_PENDING; a repeated
-        # cancel while already CANCEL_PENDING must not re-fire the transition.
-        if self._machine is not None:
-            if self._machine_state_is(TGridState.CANCEL_PENDING):
-                pass  # already canceling; proceed to cancel + re-query
-            elif self._machine_state_is(TGridState.ORDER_ACTIVE):
-                self._advance_machine(TGridEvent.CANCEL_REQUESTED)
-            else:
-                raise OrderReconciliationError(
-                    f"cannot cancel from machine state {self._machine.state.value}"
-                )
-        try:
-            self._broker.cancel_order(intent.broker_order_id)
-        except BrokerCancelFailedError as exc:
-            # CANCEL_REQUESTED already moved the machine to CANCEL_PENDING, so
-            # CANCEL_REJECTED is the valid fail-closed exit.
-            self._advance_machine(TGridEvent.CANCEL_REJECTED)
-            raise CancelFailedError("cancel failed; order must be re-queried") from exc
-        except BrokerError as exc:
-            self._advance_machine(TGridEvent.CANCEL_REJECTED)
-            raise OrderTimeoutError("cancel attempt failed") from exc
-        # Re-query after cancel (design §25).
-        return self.poll_order(client_order_key, now=now)
+        snapshot = self._session.cancel()
+        return self._result_from_snapshot(
+            snapshot, client_order_key=client_order_key,
+            symbol=intent.symbol, side=intent.side, now=now,
+        )
 
     def cancel_order(self, client_order_key: str, *, now: str) -> ExecutionResult:
         """Best-effort cancel used by kill-switch paths (design §30)."""
         return self.timeout_order(client_order_key, now=now)
 
+    def recover_unknown_submission(
+        self,
+        client_order_key: str,
+        *,
+        now: str,
+    ) -> ExecutionResult:
+        """Resolve a public UNKNOWN via the session's authoritative recovery.
+
+        The public core forbids blind resend and recovers by the durable
+        intent identity; a zero/duplicate/ambiguous match fails closed.
+        """
+        self._require_session()
+        self._sidecar._now = lambda: now
+        intent = self._store.get_intent(client_order_key)
+        snapshot = self._session.poll()
+        return self._result_from_snapshot(
+            snapshot, client_order_key=client_order_key,
+            symbol=intent.symbol, side=intent.side, now=now,
+        )
+
     # -------------------------------------------------------------- helpers
 
-    def _release(self, client_order_key: str, *, now: str) -> None:
-        """Release every active reservation owned by ``client_order_key``."""
-        for reservation in self._store.list_active_reservations():
-            if reservation.client_order_key == client_order_key:
-                self._store.release_reservation(reservation.id, released_at=now)
+    def _require_session(self) -> None:
+        if not self._session_opened:
+            self._session.open()
+            self._session_opened = True
+
+    def _result_from_snapshot(
+        self,
+        snapshot,
+        *,
+        client_order_key: str,
+        symbol: str,
+        side: str,
+        now: str,
+    ) -> ExecutionResult:
+        """Fold a public snapshot into the TGrid ledger and build the result."""
+        try:
+            intent = self._store.get_intent(client_order_key)
+        except IntentNotFoundError:
+            intent = None
+        if intent is not None:
+            apply_snapshot(
+                self._store, snapshot, client_order_key=client_order_key, now=now,
+            )
+            intent = self._store.get_intent(client_order_key)
+        status = _snapshot_status(snapshot, intent)
+        broker_order_id = (
+            str(snapshot.broker_order_id)
+            if snapshot.broker_order_id is not None
+            else (intent.broker_order_id if intent is not None else None)
+        )
+        return ExecutionResult(
+            client_order_key=client_order_key,
+            symbol=symbol,
+            side=side,
+            status=status,
+            broker_order_id=broker_order_id,
+            filled_qty=int(snapshot.filled_qty or 0),
+            message=f"state={snapshot.state.value}",
+            fill_price=snapshot.average_fill_price,
+        )
+
+
+def _snapshot_status(snapshot, intent) -> str:
+    """Map a public snapshot (or the folded TGrid intent) to an OrderStatus."""
+    from tgrid.integrations.qec_adapter import snapshot_status_to_tgrid
+
+    if snapshot.state is TradeState.UNKNOWN and intent is not None:
+        # Transient UNKNOWN keeps the last durable pending TGrid status.
+        return intent.status
+    return snapshot_status_to_tgrid(snapshot.state)
+
+
+class _EngineDefaultGuard:
+    """Permissive dry-run guard: only the engine's SAFE_MODE blocks submits.
+
+    Production wiring supplies a TGridExecutionGuard backed by a
+    TGridEvidenceSource; this default exists only for the offline dry run.
+    """
+
+    def __init__(self, *, kill_switch_active):
+        self._kill_switch_active = kill_switch_active
+
+    def verify_session(self):
+        from qmt_execution_core.domain import SessionEvidence
+
+        return SessionEvidence(ready=True, environment_verified=True, account_verified=True)
+
+    def verify(self, request):
+        from qmt_execution_core.domain import PrecheckEvidence
+
+        kill = bool(self._kill_switch_active())
+        return PrecheckEvidence(
+            allowed=not kill,
+            environment_verified=True,
+            account_verified=True,
+            broker_snapshot_verified=True,
+            position_verified=True,
+            cash_verified=True,
+            quote_verified=True,
+            reason="" if not kill else "SAFE_MODE blocks new orders",
+        )

@@ -1,11 +1,11 @@
-"""TGrid XtQuant integration boundary (G1-T006 read-only; G5.5 pre-live).
+"""TGrid integration boundary (Gate 1 read-only; qmt-execution-core pre-live).
 
-Gate 1 exposes only ``run_gate1_readonly_acceptance``.  Gate 5.5 adds the
-pre-live :class:`LiveBrokerAdapter` safety boundary (wraps an INJECTED broker
-port and never invokes a real XtQuant order/cancel itself) plus the ONE
-concrete :class:`XtQuantBrokerBridge` whose audited ``order_stock`` /
-``cancel_order_stock`` call sites are the only permitted real-broker
-invocations in the repository (NODEB-001).  Nothing here enables
+Migration Phase D: the raw XtQuant bridge and the old live bootstrap/session
+factory are gone — the broker side effects live only in qmt-execution-core
+and TGrid wires the production-shaped runtime through
+:func:`~tgrid.integrations.qec_runtime.build_qec_runtime`.  This module
+retains the risk policy/exceptions, the durable daily-exposure ledger, the
+exposure store, and the Gate-1 read-only probe surface.  Nothing here enables
 ``live_trading_allowed``.
 """
 
@@ -14,7 +14,6 @@ from tgrid.integrations.live_broker_adapter import (
     ExecutionUnhealthyError,
     ExposureNotReadyError,
     KillSwitchEngagedError,
-    LiveBrokerAdapter,
     LiveBrokerError,
     LiveBrokerPolicy,
     LiveTradingDisabledError,
@@ -29,26 +28,18 @@ from tgrid.integrations.daily_exposure import (
     ExposureDateError,
     ExposureValueError,
 )
-from tgrid.integrations.live_bootstrap import (
-    LiveBootstrapError,
-    LiveStack,
-    build_live_stack,
-)
-from tgrid.integrations.live_session import (
-    LiveSessionAccountError,
-    LiveSessionError,
-    build_live_session,
-)
 from tgrid.integrations.exposure_store import SqliteExposureStore
-from tgrid.integrations.xtquant_bridge import (
-    BrokerAccountStatusEvent,
-    BrokerCancelErrorEvent,
-    BrokerDisconnectEvent,
-    BrokerOrderErrorEvent,
-    BrokerOrderEvent,
-    BrokerTradeEvent,
-    XtQuantBrokerBridge,
-    XtQuantCallbackHandler,
+from tgrid.integrations.qec_adapter import (
+    TGridEvidenceSource,
+    TGridExecutionGuard,
+    TGridSidecar,
+    apply_snapshot,
+    make_execution_request,
+    snapshot_status_to_tgrid,
+)
+from tgrid.integrations.qec_runtime import (
+    QecRuntimeError,
+    build_qec_runtime,
 )
 from tgrid.integrations.qmt_gate1_runtime import (
     QmtGate1RuntimeAccountError,
@@ -64,7 +55,6 @@ __all__ = [
     "QmtGate1RuntimeConnectionError",
     "QmtGate1RuntimeAccountError",
     "run_gate1_readonly_acceptance",
-    "LiveBrokerAdapter",
     "LiveBrokerPolicy",
     "LiveBrokerError",
     "LiveTradingDisabledError",
@@ -80,19 +70,13 @@ __all__ = [
     "DailyExposureError",
     "ExposureDateError",
     "ExposureValueError",
-    "LiveBootstrapError",
-    "LiveStack",
-    "build_live_stack",
-    "LiveSessionError",
-    "LiveSessionAccountError",
-    "build_live_session",
     "SqliteExposureStore",
-    "XtQuantBrokerBridge",
-    "XtQuantCallbackHandler",
-    "BrokerOrderEvent",
-    "BrokerTradeEvent",
-    "BrokerDisconnectEvent",
-    "BrokerAccountStatusEvent",
-    "BrokerOrderErrorEvent",
-    "BrokerCancelErrorEvent",
+    "TGridEvidenceSource",
+    "TGridExecutionGuard",
+    "TGridSidecar",
+    "apply_snapshot",
+    "make_execution_request",
+    "snapshot_status_to_tgrid",
+    "QecRuntimeError",
+    "build_qec_runtime",
 ]

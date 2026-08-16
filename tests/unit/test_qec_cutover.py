@@ -82,15 +82,13 @@ class TestCapabilityScan(unittest.TestCase):
 
     def test_zero_raw_qmt_call_sites_in_production_modules(self):
         sites = self._raw_call_sites()
-        # The ONLY allowed owner of raw QMT side effects is the legacy bridge
-        # (retained for equivalence during migration); the qec adapter/runtime
-        # and everything else must have ZERO.
-        offending = [s for s in sites if not s[0].endswith("xtquant_bridge.py")]
+        # Phase D: after removing the legacy bridge, TGrid production code has
+        # ZERO raw QMT order/cancel call sites anywhere in src/ — the public
+        # core is the only QMT side-effect authority.
         self.assertEqual(
-            offending, [],
-            f"raw QMT call sites outside the retained legacy bridge: {offending}",
+            sites, [],
+            f"raw QMT call sites found in TGrid src: {sites}",
         )
-        self.assertTrue(any(s[0].endswith("xtquant_bridge.py") for s in sites))
 
 
 class _FakeQecBroker:
@@ -183,7 +181,7 @@ class TestOldVsNewLifecycleEquivalence(unittest.TestCase):
         return store
 
     def _old_path_cycle(self, conn):
-        """Legacy TGrid path: ExecutionEngine + SimBroker -> FILLED."""
+        """TGrid engine path (now qec-backed): send -> script fill -> FILLED."""
         store = ExecutionStore(conn)
         broker = SimBroker()
         engine = ExecutionEngine(store, broker, strategy_name="TGRID")
@@ -192,9 +190,11 @@ class TestOldVsNewLifecycleEquivalence(unittest.TestCase):
             limit_price=4.7, order_remark="R1", now="t0",
             expected_available_cash=100000.0, reserved_cash=470.0,
         )
-        broker.get_order(result.broker_order_id).script = (("FILL", 100, 4.69),)
-        broker.tick_order(result.broker_order_id)
+        order_id = int(result.broker_order_id)
+        broker.get_order(order_id).script = (("FILL", 100, 4.69),)
+        broker.tick_order(order_id)
         engine.poll_order("K1", now="t1")
+        engine.close()
         return store
 
     def test_both_paths_land_in_filled_with_released_reservation(self):

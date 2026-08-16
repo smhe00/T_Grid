@@ -6,9 +6,10 @@ import unittest
 
 from tgrid.execution.dryrun import DryRunHarness, DryRunError
 from tgrid.execution.executor import ExecutionEngine
-from tgrid.execution.models import OrderStatus
+from tgrid.execution.models import BUY, OrderStatus
 from tgrid.execution.simbroker import SimBroker
 from tgrid.execution.store import ExecutionStore
+from tgrid.integrations.qec_adapter import make_execution_request
 from tgrid.models import GlobalConfig, SymbolConfig
 from tgrid.persistence import initialize
 from tgrid.strategy.bars import Bar, SessionWindow
@@ -197,17 +198,19 @@ class TestCrashAfterSend(unittest.TestCase):
                 order_remark="TG_0700HK_B001", created_at="t0",
                 cash_amount=42000.0,
             )
-            order_id = broker.place_order(
-                symbol="0700.HK", side="BUY", qty=100, limit_price=420.0,
-                client_order_key="K1", order_remark="TG_0700HK_B001",
-            )
+            order_id = broker.place_order(make_execution_request(
+                client_order_key="K1", symbol="0700.HK", side=BUY, qty=100,
+                limit_price=420.0, strategy_name="TGRID",
+                order_remark="TG_0700HK_B001",
+            ))
             broker.get_order(order_id).script = (("FILL", 100, 420.0),)
-            # Restart: recovery matches the intent to the broker order.
-            from tgrid.execution.recovery import reconcile_open_intents
-
-            results = reconcile_open_intents(store, broker)
-            self.assertEqual(results[0].outcome, "MATCHED")
-            self.assertEqual(results[0].matched_broker_order_id, order_id)
+            # Restart: the engine's authoritative reconciliation matches the
+            # intent to the broker order (MATCHED -> SAFE_MODE clears).
+            engine = ExecutionEngine(store, broker, strategy_name="TGRID")
+            try:
+                engine.reconcile_and_clear_safe_mode()  # no raise => MATCHED
+            finally:
+                engine.close()
         finally:
             conn.close()
 

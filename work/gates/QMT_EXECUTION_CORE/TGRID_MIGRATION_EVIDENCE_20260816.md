@@ -179,6 +179,73 @@ exposure; Core/StrategicExtra/T-Lot accounting; settlement/T+1/can_use/Core-
 floor/strategy risk; signals/anchor/VWAP/sizing/scheduling; `simbroker.py` +
 `simdriver.py` test fakes; `dryrun.py`.
 
+## Phase D — COMPLETE (2026-08-16)
+
+Destructive cleanup executed after the Iteration-14 P1 fixes (rollback safety:
+git tag `phaseD-baseline-20260816` @ `e749f16` on tgrid-github + filesystem
+backup `T_Grid_dsh_preD_backup`).
+
+**Deleted (duplicated generic infrastructure, now owned by qmt-execution-core):**
+
+```text
+src/tgrid/execution/statemachine.py
+src/tgrid/execution/execution_journal.py
+src/tgrid/execution/execution_mutex.py
+src/tgrid/execution/recovery.py
+src/tgrid/execution/port.py
+src/tgrid/integrations/xtquant_bridge.py
+src/tgrid/integrations/live_bootstrap.py
+src/tgrid/integrations/live_session.py
+```
+
+`integrations/live_broker_adapter.py` trimmed to the immutable
+`LiveBrokerPolicy` + exception vocabulary (risk gates now re-expressed through
+`TGridExecutionGuard`).
+
+**Rewired:**
+
+* `execution/simbroker.py` — implements the public-core `BrokerPort` protocol
+  (native int order ids, `ExecutionRequest`/`BrokerOrder`/`CancelRequestResult`,
+  cancel = CANCEL_PENDING until confirmed; script hooks retained);
+* `execution/executor.py` — TGrid-specific orchestration only: exact-type
+  validation, idempotency, reservation-vs-capacity gate, SAFE_MODE + the
+  authoritative broker/local reconciliation, decision -> `ExecutionRequest`,
+  snapshot -> TGrid ledger folding.  Drives an injected public-core
+  `ExecutionSession` (guard + `TGridSidecar`); auto `next_cycle` between
+  orders; terminal-intent poll short-circuit; engine `close()` releases the
+  session mutex; qec submission failures map to the TGrid error contract;
+* `execution/simdriver.py` — native int broker ids;
+* `integrations/__init__.py` / `execution/__init__.py` / `tgrid/__init__.py` —
+  exports trimmed to the retained + qec surface.
+
+**Retained TGrid-specific:** `ExecutionStore`/`OrderIntent`/`Reservation`/
+daily exposure; Core/StrategicExtra/T-Lot accounting; settlement/T+1/can_use/
+Core-floor/strategy risk; signals/anchor/VWAP/sizing/scheduling;
+`simbroker.py` + `simdriver.py` + `dryrun.py` (offline).
+
+**Tests:** deleted 6 obsolete files (generic machine/journal/mutex/bridge/live
+chain — semantics now owned by the public-core suite); rewrote
+`test_execution.py` / `test_execution_dryrun.py` / `test_gate5_remediation.py`
+/ `test_qec_cutover.py` to the qec-backed engine + SimBroker protocol.
+
+**Acceptance gates:**
+
+1. Full TGrid regression **890 tests OK** (after Phase D); 2. `compileall -q
+   src tests scripts` exit 0; 3. qmt-execution-core pinned to exact commit
+   `937e6a4`; 4. **capability scan = ZERO raw `order_stock` /
+   `order_stock_async` / `cancel_order_stock` / `cancel_order_stock_async`
+   call sites anywhere in TGrid `src/`** (no legacy exception); 5.
+   fill-during-cancel -> FILLED passes; 6. transient-UNKNOWN -> FILLED
+   business-ledger test passes; 7. evidence-source negative matrix (no
+   self-certified production guard); 8. mapping table final (above); 9. no
+   real or simulation QMT order/cancel invoked; 10. `live_trading_allowed=false`.
+
+**Note:** the legacy Gate-6 simulation runners (`scripts/gate6_sim_live.py` /
+`gate6_sim_negative.py`) still reference the deleted `build_live_session`;
+they are superseded by the `build_qec_runtime` path and require the future
+integrated-simulation authorization to be re-expressed/re-run (no simulation
+orders are authorized until the independent integration audit passes).
+
 ## Confirmations
 
 - No real or simulation QMT order/cancel invoked during B/C.

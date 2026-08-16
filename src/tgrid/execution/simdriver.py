@@ -92,13 +92,14 @@ class SimulationDriver:
             return result
         if result.broker_order_id is None:
             return result
-        order = self._broker.get_order(result.broker_order_id)
+        order_id = int(result.broker_order_id)  # public-core native int ids
+        order = self._broker.get_order(order_id)
         order.script = tuple(script)
         for _ in script:
-            self._broker.tick_order(result.broker_order_id)
+            self._broker.tick_order(order_id)
         folded = self._engine.poll_order(result.client_order_key, now=now)
         if folded.fill_price is None and result.broker_order_id is not None:
-            trades = self._broker.query_trades(result.broker_order_id)
+            trades = self._broker.query_trades(order_id)
             if trades:
                 folded = replace(folded, fill_price=float(trades[-1].price))
         return folded
@@ -109,7 +110,7 @@ class SimulationDriver:
         """Advance exactly one deterministic step, then poll the engine."""
         intent = self._engine.store.get_intent(client_order_key)
         if intent.broker_order_id is not None:
-            self._broker.tick_order(intent.broker_order_id)
+            self._broker.tick_order(int(intent.broker_order_id))
         return self._engine.poll_order(client_order_key, now=now)
 
     def timeout_order(self, client_order_key: str, *, now: str) -> ExecutionResult:
