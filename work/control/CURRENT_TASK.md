@@ -124,3 +124,47 @@ owner = architect
 authorized_next = [AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY]
 live_trading_allowed = false
 ```
+
+## Core 0.4.1 implementation COMPLETE — handed back for audit (2026-08-16)
+
+Evidence (self-certified until independent audit):
+
+```text
+qmt-execution-core feature/0.4.1-runtime-authority @ d499254
+docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md
+```
+
+- **Authority model**: `AccountAuthority` (authority_id UUID, account_key,
+  environment, account_type, account_id_sha256, canonical
+  coordination_db_path, persistent coordination_db_uuid); filename derived
+  from `account_key` under a host/user canonical root
+  (`default_authority_root()`); tests inject an explicit root only.
+- **DB identity**: new `coordination_identity(account_key, db_uuid,
+  authority_id, identity_schema_version)` table;
+  `SQLiteExecutionCoordinator(path, expected_identity=...)` verifies
+  INV-AUTH-002 on open and fails closed on any mismatch; legacy 0.4.0 DBs are
+  never silently adopted; `SQLiteExecutionCoordinator.create()` is the
+  authorized bootstrap and refuses to create over an existing file.
+- **Atomic bootstrap**: per-account OS-backed authority lock
+  (`ExecutionMutex`); concurrent first bootstrap converges on one
+  authority_id/db_uuid/domain (proven with real OS processes); corrupt or
+  missing Authority fails closed with no fallback DB.
+- **Runtime resolution**: production shared mode resolves
+  binding -> account_key -> canonical Authority -> certified DB identity ->
+  coordinator; `coordination_path` + `authority_root` are mutually exclusive;
+  legacy explicit path retained as a documented non-uniqueness-guaranteed
+  low-level mode; no broker side effect can precede Authority + DB identity
+  verification.
+- **Gates**: full pytest 108 passed (3.12 and 3.9.13 wheel); compileall 0;
+  wheel clean install + out-of-tree `qmt-execution-core verify` PASS
+  (identical source hash 4ab8173c...); release formal gate unchanged
+  (433,489 states / 4,461,994 edges / 0 violations); 3.9 parse NONE failed;
+  Windows cross-process authority bootstrap + lock contention PASS.
+- **Spec acceptance 1-14**: all PASS (in-process matrix +
+  cross-process bootstrap/lock).
+- No real or simulation QMT order/cancel invoked; `live_trading_allowed=false`.
+
+TGrid itself is UNCHANGED (pin stays `acf20d9`); the TGrid follow-up (pin
+reviewed 0.4.1 merge SHA, switch production composition to Authority
+resolution, remove production `coordination_path` / Gate-6 `--coordination-db`
+selection) is authorized only after the independent Core audit PASS + merge.

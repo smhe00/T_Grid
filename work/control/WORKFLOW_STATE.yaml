@@ -4,25 +4,25 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 43
-handoff_id: "TGRID-ITER16-CORE-0.4.1-RUNTIME-AUTHORITY-CHANGES-20260816-043"
+handoff_seq: 44
+handoff_id: "QEC-0.4.1-RUNTIME-AUTHORITY-REVIEW-READY-20260816-044"
 authorized_next:
-  - "IMPLEMENT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY"
+  - "AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY"
 design_version: "1.1"
 gate: 5.5
 task_id: "QEC-0.4.1-RUNTIME-AUTHORITY-HARDENING"
-state: "CHANGES_REQUIRED"
-owner: "dsh"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 16
-last_actor: "architect"
-last_update: "2026-08-16T12:15:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-16T15:00:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_ITER16_RUNTIME_AUTHORITY_20260816.md"
 git_base_commit: "bef47b3f4828937ad7dbda519d70d3df24a19657"
-implementation_commit: "acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692"
-handoff_parent_commit: "bef47b3f4828937ad7dbda519d70d3df24a19657"
+implementation_commit: "d4992543b7aa2496b2ba3fb7cd51b5cc74192a00"
+handoff_parent_commit: "1b0a76e179400e42165999f4271e8c1d6733580c"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692"
 live_trading_allowed: false
@@ -30,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY"
 pre_live_independent_audit: "REQUIRED_AFTER_RUNTIME_AUTHORITY_AND_TGRID_FOLLOWUP_AUDIT"
-notes: "Architect audit of TGrid Iter16 implementation bef47b3f: CHANGES_REQUIRED on one P1 architecture blocker. Iter16 functional integration is retained as accepted regression baseline (913 tests): Core 0.4 exact pin, one runtime/session authority, shared symbol/cash coordination, explicit cash estimator, coordinate->TGrid sidecar->broker ordering, finality-aware UNKNOWN/CANCEL_REJECTED/FAILED+QUARANTINED non-release, safe journal cutover, three-runtime distinct-symbol concurrency, same-symbol exclusion, shared-cash non-overcommit, quarantine/account isolation, bounded session-id leasing. Blocker: production still trusts caller-supplied coordination_path and Gate-6 exposes --coordination-db, so same account can be split across two SQLite domains. New required public-Core hardening: qmt-execution-core 0.4.1 Account Runtime Authority, specified in docs/CORE_0_4_1_RUNTIME_AUTHORITY_SPEC.md and docs/IMPLEMENTATION_TASK_V0_4_1_RUNTIME_AUTHORITY.md. Authority must be canonical per account_key and certify a dedicated DB by canonical path + persistent db_uuid + authority_id; DB metadata must bind the same identity; concurrent bootstrap OS-locked; mismatch/corruption/recreated DB fail closed; production strategy must not select arbitrary coordination_path. Implement Core first on separate PR, run formal/refinement/cross-process/Windows/Python>=3.9 gates, return for independent audit, merge only on PASS, then pin TGrid to exact reviewed Core SHA and remove production coordination_path/--coordination-db selection. No real or simulation QMT order/cancel authorized; live_trading_allowed=false."
+notes: "Core 0.4.1 Account Runtime Authority implemented and handed back for independent audit on qmt-execution-core feature/0.4.1-runtime-authority @ d499254 (evidence docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md). Scope per frozen spec docs/CORE_0_4_1_RUNTIME_AUTHORITY_SPEC.md: canonical per-account Authority (filename from account_key, host/user root), certified dedicated coordination DB by canonical path + persistent db_uuid + authority_id, coordination_identity metadata binding, OS-lock atomic bootstrap (two real processes converge on one domain), fail-closed mismatch matrix (account_key/environment/path/UUID/DB-account/DB-authority/corrupt/recreated), runtime shared mode resolves Authority (coordination_path + authority_root mutually exclusive; legacy explicit path retained as documented non-uniqueness mode), no broker side effect before Authority+DB identity verification. Gates: full pytest 108 passed on 3.12 and real Windows Python 3.9.13 (wheel install); compileall 0; wheel clean install + out-of-tree verify PASS with identical execution_source_sha256 4ab8173c...; release formal gate unchanged 433,489 states / 4,461,994 edges / 0 violations; spec acceptance 1-14 all PASS incl. cross-process bootstrap and lock contention. TGrid itself unchanged (pin acf20d9). Next: independent audit AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY; after PASS + merge, TGrid follow-up pins the reviewed merge SHA and switches production composition to Authority resolution (removing production coordination_path / Gate-6 --coordination-db). No real or simulation QMT order/cancel invoked. live_trading_allowed=false."
