@@ -115,7 +115,7 @@ class ExecutionEngine:
     def __init__(
         self,
         store: object,
-        broker: object,
+        broker: object | None = None,
         *,
         strategy_name: str = "TGRID",
         order_timeout_seconds: int = 120,
@@ -126,9 +126,15 @@ class ExecutionEngine:
         sidecar: object | None = None,
         exposure: object | None = None,
         evidence: TGridEvidenceSource | None = None,
+        session: object | None = None,
     ) -> None:
         if not isinstance(store, ExecutionStore):
             raise ExecutionInputError("store must be an ExecutionStore")
+        if (broker is None) == (session is None):
+            raise ExecutionInputError(
+                "exactly one of broker (own session) or session (injected, "
+                "runtime-owned) must be provided"
+            )
         if type(strategy_name) is not str or strategy_name == "":
             raise ExecutionInputError("strategy_name must be a non-empty string")
         if type(order_timeout_seconds) is not int or order_timeout_seconds <= 0:
@@ -166,6 +172,15 @@ class ExecutionEngine:
         self._sidecar = sidecar or TGridSidecar(
             store=store, exposure=exposure, strategy_name=strategy_name, now=lambda: "",
         )
+        if session is not None:
+            # Production composition (Iteration 15, P1-1): bind to the SAME
+            # session owned by the MiniQmtRuntime — exactly one execution
+            # authority; the runtime owns journal/mutex/sidecar/guard and
+            # final teardown.  The engine does NOT create a second session.
+            self._session = session
+            self._owns_session = False
+            self._session_opened = True
+            return
         journal_path = journal_path or str(
             Path(tempfile.mkdtemp(prefix="tgrid-exec-")) / "journal.json"
         )
@@ -181,6 +196,7 @@ class ExecutionEngine:
             before_broker_submit=self._sidecar.before_broker_submit,
             before_broker_cancel=self._sidecar.before_broker_cancel,
         )
+        self._owns_session = True
         self._session_opened = False
 
     def _policy_from_broker(self):
@@ -200,15 +216,20 @@ class ExecutionEngine:
         return self._session
 
     def close(self) -> None:
-        """Release the public session (mutex/journal) — idempotent.
+        """Release the session — idempotent.
 
-        Call at teardown (or before "restarting" with the same journal/lock
-        paths in tests); the OS also releases the mutex on process exit.
+        When the engine owns its session (broker mode) the session mutex is
+        released.  When the session is INJECTED (production composition,
+        Iteration 15 P1-1) the MiniQmtRuntime owns teardown: the engine only
+        forgets its reference so no second close path exists.
         """
         if self._session_opened:
-            try:
-                self._session.close()
-            finally:
+            if self._owns_session:
+                try:
+                    self._session.close()
+                finally:
+                    self._session_opened = False
+            else:
                 self._session_opened = False
 
     @property
@@ -645,3 +666,5 @@ class _EngineDefaultGuard:
             quote_verified=True,
             reason="" if not kill else "SAFE_MODE blocks new orders",
         )
+
+

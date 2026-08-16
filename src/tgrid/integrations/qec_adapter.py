@@ -262,8 +262,13 @@ def snapshot_status_to_tgrid(state: TradeState) -> str:
         TradeState.CANCELLING: OrderStatus.CANCEL_REQUESTED,
         TradeState.CANCELLED: OrderStatus.CANCELED,
         TradeState.REJECTED: OrderStatus.REJECTED,
-        TradeState.CANCEL_REJECTED: OrderStatus.UNKNOWN,
+        # Iteration 15 P1-2: CANCEL_REJECTED is a RECOVERABLE public state
+        # (recoverable to WORKING/PARTIAL/CANCELLING/FILLED/CANCELLED/
+        # REJECTED/FAILED); it must NOT terminalize the TGrid intent.
+        TradeState.CANCEL_REJECTED: OrderStatus.CANCEL_REQUESTED,
+        # UNKNOWN is recoverable; apply_snapshot preserves the pending status.
         TradeState.UNKNOWN: OrderStatus.UNKNOWN,
+        # FAILED is the terminal recovery-failure outcome -> TGrid UNKNOWN.
         TradeState.FAILED: OrderStatus.UNKNOWN,
     }[state]
 

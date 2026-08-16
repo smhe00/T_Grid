@@ -12,6 +12,7 @@ public core is the ONLY QMT side-effect authority (capability scan gate).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -32,6 +33,83 @@ from tgrid.integrations.qec_adapter import (
 
 class QecRuntimeError(RuntimeError):
     """Base class for qec runtime construction failures."""
+
+
+@dataclass
+class TGridQecStack:
+    """Production composition: ONE execution authority (Iteration 15, P1-1).
+
+    ``runtime`` (MiniQmtRuntime) OWNS the ExecutionSession, journal/mutex,
+    broker adapter, guard + sidecar hooks and transport teardown.  ``engine``
+    is TGrid orchestration bound to ``runtime.session`` — the SAME session
+    instance — so exactly one execution-session authority drives the QMT
+    transport.  ``close()`` releases the runtime (and therefore the session)
+    exactly once; the engine's close is a no-op for the injected session.
+    """
+
+    runtime: MiniQmtRuntime
+    engine: ExecutionEngine
+
+    def close(self) -> None:
+        self.engine.close()  # forgets the injected session (no second close)
+        self.runtime.close()  # owns session/mutex/transport teardown
+
+
+def build_tgrid_qec_stack(
+    *,
+    environment: str,
+    qmt_path: object,
+    binding_path: object,
+    journal_path: object,
+    lock_path: object,
+    strategy_name: str,
+    trade_date: str,
+    store: ExecutionStore,
+    exposure: DailyExposureLedger,
+    policy: LiveBrokerPolicy,
+    now: Callable[[], str],
+    evidence: TGridEvidenceSource,
+    live_trading_enabled: bool = False,
+    trader_factory: object | None = None,
+    stock_account_factory: object | None = None,
+    xtconstant: object | None = None,
+    callback_base: object | None = None,
+    auto_open: bool = True,
+) -> TGridQecStack:
+    """Assemble the production composition: runtime + engine over the SAME session.
+
+    The runtime owns the single ExecutionSession (with the TGrid guard +
+    sidecar hooks wired once); the TGrid :class:`ExecutionEngine` binds to
+    ``runtime.session`` instead of creating a second execution authority.
+    """
+    runtime = build_qec_runtime(
+        environment=environment,
+        qmt_path=qmt_path,
+        binding_path=binding_path,
+        journal_path=journal_path,
+        lock_path=lock_path,
+        strategy_name=strategy_name,
+        trade_date=trade_date,
+        store=store,
+        exposure=exposure,
+        policy=policy,
+        now=now,
+        evidence=evidence,
+        live_trading_enabled=live_trading_enabled,
+        trader_factory=trader_factory,
+        stock_account_factory=stock_account_factory,
+        xtconstant=xtconstant,
+        callback_base=callback_base,
+        auto_open=auto_open,
+    )
+    # Lazy import: executor -> qec_adapter -> tgrid.integrations would cycle
+    # through this module at import time (Iteration 15 P1-1 composition).
+    from tgrid.execution.executor import ExecutionEngine
+
+    engine = ExecutionEngine(
+        store, session=runtime.session, strategy_name=strategy_name,
+    )
+    return TGridQecStack(runtime=runtime, engine=engine)
 
 
 def build_qec_runtime(

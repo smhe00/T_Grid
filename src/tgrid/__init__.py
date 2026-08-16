@@ -75,7 +75,9 @@ from tgrid.integrations.qec_adapter import (
 )
 from tgrid.integrations.qec_runtime import (
     QecRuntimeError,
+    TGridQecStack,
     build_qec_runtime,
+    build_tgrid_qec_stack,
 )
 from tgrid.reporting import (
     SCHEMA_VERSION,

@@ -246,6 +246,38 @@ they are superseded by the `build_qec_runtime` path and require the future
 integrated-simulation authorization to be re-expressed/re-run (no simulation
 orders are authorized until the independent integration audit passes).
 
+## Iteration 15 — integration audit fixes (2026-08-16, audit `93f8663`)
+
+- **P1-1 (one execution authority)**: `ExecutionEngine` now accepts an
+  INJECTED `session` (exactly one of broker|session; the injected session is
+  runtime-owned — the engine never creates a second journal/mutex/session and
+  `close()` does not close it).  New `TGridQecStack` (runtime + engine bound
+  to `runtime.session`) + `build_tgrid_qec_stack()` production composition.
+  Tests: engine.session IS runtime.session; one submit -> one broker call;
+  close releases exactly once; no dual authority.
+- **P1-2 (recoverable states never terminalize)**: `TradeState.CANCEL_REJECTED`
+  now maps to nonterminal `CANCEL_REQUESTED` (was terminal UNKNOWN); UNKNOWN's
+  protection stays at `apply_snapshot` (keeps the last pending status).
+  Tests: table-driven terminality invariant + regression WORKING -> cancel
+  rejected -> ambiguous UNKNOWN -> recovery WORKING -> FILLED (one submit,
+  reservation held until terminal, released on FILLED).
+- **P1-3 (Gate-6 runners)**: `scripts/gate6_sim_live.py` +
+  `gate6_sim_negative.py` rewritten onto `build_tgrid_qec_stack` (single
+  authority; kill switch via the live `TGridEvidenceSource` holder;
+  REJECTED-status refusal detection; queue health via
+  `runtime.execution_healthy`); sim paths + qec binding resolved at runtime;
+  both pass `--help` import smoke (exit 0, no QMT connection).
+- **P2-1 (single-active-order)**: accepted explicit design constraint — one
+  `ExecutionEngine`/session is one order at a time (public-core lifecycle),
+  consistent with the ACCUMULATE dry-run scheduler (buy->fill->sell->fill,
+  `test_execution_dryrun`); the engine refuses a concurrent second send
+  (`TestSingleActiveOrderConstraint`).  Multi-strategy/multi-session is a
+  later architectural task.
+
+Full TGrid regression: **897 tests OK** (was 890; +7 Iteration-15).
+`compileall -q src tests scripts` exit 0; both Gate-6 runners `--help` exit 0;
+capability scan = ZERO raw QMT call sites in src; qec pinned `937e6a4`.
+
 ## Confirmations
 
 - No real or simulation QMT order/cancel invoked during B/C.

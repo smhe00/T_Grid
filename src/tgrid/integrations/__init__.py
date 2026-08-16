@@ -39,7 +39,9 @@ from tgrid.integrations.qec_adapter import (
 )
 from tgrid.integrations.qec_runtime import (
     QecRuntimeError,
+    TGridQecStack,
     build_qec_runtime,
+    build_tgrid_qec_stack,
 )
 from tgrid.integrations.qmt_gate1_runtime import (
     QmtGate1RuntimeAccountError,
@@ -79,4 +81,6 @@ __all__ = [
     "snapshot_status_to_tgrid",
     "QecRuntimeError",
     "build_qec_runtime",
+    "TGridQecStack",
+    "build_tgrid_qec_stack",
 ]
