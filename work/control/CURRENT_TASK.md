@@ -265,11 +265,18 @@ Evidence: `work/gates/QMT_EXECUTION_CORE/TGRID_MIGRATION_EVIDENCE_20260816.md`.
 - **Full TGrid regression: 1044 tests OK** (was 1009; +35); compileall 0.
 - No real or simulation QMT order/cancel invoked; `live_trading_allowed=false`.
 
-## Phase D — REMAINING (deferred, destructive)
+## Phase D — PAUSED (user instruction, 2026-08-16)
 
-Remove/reduce TGrid's duplicated generic infrastructure (generic state
+**NOT STARTED.** The user explicitly paused Phase D: an independent audit of
+the Phase B+C migration work will run first, and Phase D resumes only after
+that audit. No legacy execution code has been modified (the B+C commit is
+purely additive: new `qec_adapter.py` / `qec_runtime.py` modules, new tests,
+pyproject pin, control + evidence docs). The legacy path remains ONLY for the
+equivalence harness until then.
+
+Planned scope (per the mapping table in
+`work/gates/QMT_EXECUTION_CORE/TGRID_MIGRATION_EVIDENCE_20260816.md`):
+remove/reduce TGrid's duplicated generic infrastructure (generic state
 machine, execution journal/mutex, generic BrokerPort/recovery, raw XtQuant
-bridge, generic bootstrap/event-queue) per the mapping table in the evidence
-doc, keeping TGrid-specific ledger/risk/strategy. Scoped as its own focused
-pass after the equivalence evidence is reviewed; the legacy path remains ONLY
-for the equivalence harness until then.
+bridge, generic bootstrap/event-queue) while keeping TGrid-specific
+ledger/risk/strategy.
