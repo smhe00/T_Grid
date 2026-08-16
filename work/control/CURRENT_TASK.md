@@ -178,3 +178,62 @@ live_trading_allowed = false
 ```
 
 Do not run integrated QMT simulation orders until independent integration audit passes and a separate simulation authorization exists.
+
+## Phase A0 COMPLETE — Python 3.9 compatibility PASS (2026-08-16)
+
+Real **Windows Python 3.9.13** interpreter (official embeddable, temp-only,
+no system install) against qmt-execution-core:
+
+```text
+import             : OK (3.9.13)
+full pytest        : 66 passed  (pytest 7.4.4 + iniconfig 2.0.0 — the 3.9-safe
+                                 toolchain; pytest 8.x / iniconfig>=2.1 need 3.10)
+compileall         : 0
+CLI verifier       : 50 reachable states / 208 transitions / 0 unreachable /
+                     0 no-terminal-path / 0 violations (spec 62e04e05...,
+                     source 7c0411df... — identical to 3.12)
+wheel              : built on 3.9
+clean-env install  : wheel installed into the 3.9 env
+out-of-tree verify : installed-wheel verifier OK, identical hashes
+same-process mutex : repeated ExecutionMutex owner cycles OK (msvcrt on 3.9)
+runtime contention : test_same_qmt_path_allows_only_one_runtime_... PASS
+MiniQMT read-only  : xtquant NOT usable from Python 3.9 locally -> not re-run
+                     on 3.9 (recorded; 3.12 read-only smoke already passed)
+```
+
+Static scan: every `src` file parses with `ast.parse(feature_version=(3, 9))`;
+no runtime `X | Y` unions (all candidates are annotations under
+`from __future__ import annotations`; no `get_type_hints`).
+
+**Conclusion**: the previous `requires-python >=3.11` was conservative, not a
+real dependency. Compat release shipped:
+
+```text
+qmt-execution-core 0.3.1  commit 937e6a4a1cbd54df960f9bde3ca2e91d6bc19c79
+requires-python >=3.9, classifiers +3.9/+3.10, CI matrix 3.9/3.11/3.12,
+dev extra pins the exact 3.9 toolchain via environment markers.
+```
+
+NOTE: the migration request's "0.2.2" compat-release label predated the
+Phase-A 0.3.0 hook release, so the compat release is **0.3.1** carrying the
+same required properties (>=3.9, CI matrix, all 0.3.0 tests green).
+
+**TGrid stays `requires-python >=3.9`.**
+
+## Phase A COMPLETE — durable-ledger sidecar seam (2026-08-16)
+
+Landed in qmt-execution-core **0.3.0** (`87293e65d0c32ae10dbb94b857933c34d97fcaf4`):
+
+- `ExecutionSession` + `MiniQmtRuntime.connect()` accept broker-neutral,
+  backward-compatible hooks `before_broker_submit(request)` /
+  `before_broker_cancel(order_id)`;
+- no-op defaults; synchronous on the execution thread (never a callback
+  thread); raised hook proves the broker call was never invoked (fail
+  closed); no UNKNOWN -> blind retry path; hook code is inside the
+  protected-source manifest (`session.py`, `miniqmt/runtime.py`);
+- public-core suite **66 passed** (+5 hook tests: ordering, pre-submit
+  failure -> broker never called + restart FAILED no resend, pre-cancel
+  failure -> cancel never called, no-op backward compatibility); compileall
+  0; wheel 0.3.0 clean-env verify; Windows mutex probes OK.
+
+**Next: Phase B** — TGrid thin adapter layer.
