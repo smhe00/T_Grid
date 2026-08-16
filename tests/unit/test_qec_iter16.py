@@ -1,7 +1,9 @@
-"""Iteration 16 integration tests — qmt-execution-core 0.4 / acf20d9.
+"""Iteration 16 integration tests — qmt-execution-core 0.4.1 / a68572d.
 
 Authoritative plan: ``work/gates/QMT_EXECUTION_CORE/
-CORE_0_4_TGRID_INTEGRATION_PLAN_20260816.md``.
+CORE_0_4_TGRID_INTEGRATION_PLAN_20260816.md`` (Core 0.4 baseline) and the
+final integration task ``work/control/CURRENT_TASK.md`` (Core 0.4.1 Runtime
+Authority, independent audit PASS_PRELIVE).
 
 Coverage (fake XtQuant / fake BrokerPort ONLY — zero QMT order/cancel calls):
 
