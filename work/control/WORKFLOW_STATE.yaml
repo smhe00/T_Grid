@@ -4,22 +4,22 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 44
-handoff_id: "QEC-0.4.1-RUNTIME-AUTHORITY-REVIEW-READY-20260816-044"
+handoff_seq: 45
+handoff_id: "QEC-0.4.1-RUNTIME-AUTHORITY-CHANGES-20260816-045"
 authorized_next:
-  - "AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY"
+  - "FIX_QMT_EXECUTION_CORE_RUNTIME_AUTHORITY_PRODUCTION_SPLIT_BRAIN"
 design_version: "1.1"
 gate: 5.5
 task_id: "QEC-0.4.1-RUNTIME-AUTHORITY-HARDENING"
-state: "REVIEW_READY"
-owner: "architect"
+state: "CHANGES_REQUIRED"
+owner: "dsh"
 iteration: 16
-last_actor: "dsh"
-last_update: "2026-08-16T15:00:00+08:00"
+last_actor: "architect"
+last_update: "2026-08-16T14:22:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_ITER16_RUNTIME_AUTHORITY_20260816.md"
+audit_file: "work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_CORE_0_4_1_RUNTIME_AUTHORITY_CANDIDATE_20260816.md"
 git_base_commit: "bef47b3f4828937ad7dbda519d70d3df24a19657"
 implementation_commit: "d4992543b7aa2496b2ba3fb7cd51b5cc74192a00"
 handoff_parent_commit: "1b0a76e179400e42165999f4271e8c1d6733580c"
@@ -28,6 +28,6 @@ reference_commit: "acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY"
+next_independent_audit: "AUDIT_REVISED_QMT_EXECUTION_CORE_RUNTIME_AUTHORITY"
 pre_live_independent_audit: "REQUIRED_AFTER_RUNTIME_AUTHORITY_AND_TGRID_FOLLOWUP_AUDIT"
-notes: "Core 0.4.1 Account Runtime Authority implemented and handed back for independent audit on qmt-execution-core feature/0.4.1-runtime-authority @ d499254 (evidence docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md). Scope per frozen spec docs/CORE_0_4_1_RUNTIME_AUTHORITY_SPEC.md: canonical per-account Authority (filename from account_key, host/user root), certified dedicated coordination DB by canonical path + persistent db_uuid + authority_id, coordination_identity metadata binding, OS-lock atomic bootstrap (two real processes converge on one domain), fail-closed mismatch matrix (account_key/environment/path/UUID/DB-account/DB-authority/corrupt/recreated), runtime shared mode resolves Authority (coordination_path + authority_root mutually exclusive; legacy explicit path retained as documented non-uniqueness mode), no broker side effect before Authority+DB identity verification. Gates: full pytest 108 passed on 3.12 and real Windows Python 3.9.13 (wheel install); compileall 0; wheel clean install + out-of-tree verify PASS with identical execution_source_sha256 4ab8173c...; release formal gate unchanged 433,489 states / 4,461,994 edges / 0 violations; spec acceptance 1-14 all PASS incl. cross-process bootstrap and lock contention. TGrid itself unchanged (pin acf20d9). Next: independent audit AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY; after PASS + merge, TGrid follow-up pins the reviewed merge SHA and switches production composition to Authority resolution (removing production coordination_path / Gate-6 --coordination-db). No real or simulation QMT order/cancel invoked. live_trading_allowed=false."
+notes: "Independent audit of Core candidate feature/0.4.1-runtime-authority @ d4992543 returned CHANGES_REQUIRED. Accepted regression baseline: Account Runtime Authority model, persistent DB UUID + authority_id metadata, OS-lock cross-process bootstrap machinery, fail-closed identity mismatch matrix, Core 0.4 state/formal semantics, self-certified 108-test result. P1 blockers: (1) production MiniQmtRuntimeConfig still exposes caller-selectable authority_root, allowing same account_key to bootstrap two Authority/DB domains under different roots; production authority root must be canonical/non-overridable, with alternate roots isolated to low-level/test APIs only. (2) normal MiniQmtRuntime.connect calls resolve(... bootstrap=True); normal runtime must never recreate a missing Authority. Explicit operator bootstrap must be separate; deleting both established Authority+DB then starting a normal runtime must fail closed and create no replacement files. (3) production MiniQmtRuntimeConfig.coordination_path still bypasses Authority and restores 0.4.0 split-brain behavior; explicit-path support may remain only as low-level/test compatibility, not production shared-runtime configuration. P2: recompute/validate account_key from identity tuple, exactly-one DB identity row, orphan-DB recovery docs/tooling. Detailed Core-branch audit: docs/ARCHITECT_AUDIT_V0_4_1_RUNTIME_AUTHORITY.md; revised task: docs/IMPLEMENTATION_TASK_V0_4_1_RUNTIME_AUTHORITY.md. Do not merge d4992543. No TGrid Authority adaptation or Gate-6 simulation order/cancel until revised Core candidate passes audit and merge SHA is locked. live_trading_allowed=false."
