@@ -1,212 +1,196 @@
-# Current Task — Core 0.4.1 Runtime Authority → TGrid Iteration 16 Closure
+# Current Task — TGrid Iteration 16 Final: Core 0.4.1 Runtime Authority Integration
 
 ## Owner
 
-`DSH (DeepSeek Harness)` — implementation + self-review. Independent architect audit is required before any Core merge or TGrid acceptance.
+`DSH (DeepSeek Harness)` — implementation + self-review. Final independent architect audit is required before Iteration 16 acceptance.
 
 ## Status
 
-`CHANGES_REQUIRED` — TGrid Iter16 functional integration at `bef47b3f4828937ad7dbda519d70d3df24a19657` is retained as the regression baseline, but production acceptance is blocked by coordination-domain uniqueness.
+`IN_PROGRESS`
 
-Authoritative architect audit:
-
-```text
-work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_ITER16_RUNTIME_AUTHORITY_20260816.md
-```
-
-Public Core authoritative delta:
+Core Runtime Authority hardening has completed independent review and is merged. The only allowed Core production baseline is:
 
 ```text
-docs/CORE_0_4_1_RUNTIME_AUTHORITY_SPEC.md
-docs/IMPLEMENTATION_TASK_V0_4_1_RUNTIME_AUTHORITY.md
+qmt-execution-core 0.4.1
+a68572decb799bcbbf1b2892fcf58ac321ce9636
 ```
 
-Core runtime baseline remains:
-
-```text
-qmt-execution-core 0.4.0
-acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692
-```
+Core PR #4 final audited head was `970758cf797a9a7b7bc2810c7e5bf789b17285a2`; the merge SHA above is the TGrid pin target.
 
 `live_trading_allowed=false`. Do not invoke real or simulation QMT order/cancel APIs.
 
-## P1 — Implement Core 0.4.1 first
+## Objective
 
-Do not solve Runtime Authority as TGrid-local business logic.
+Finish TGrid Iteration 16 by replacing the earlier caller-selected coordination DB integration with Core 0.4.1 production Runtime Authority resolution, while preserving the accepted Iter16 execution/concurrency behavior.
 
-Implement in public `qmt-execution-core` on a separate branch/PR:
+Production authority chain must be:
 
 ```text
-actual account identity
-→ stable account_key
-→ canonical per-account Runtime Authority
-→ Authority-certified dedicated DB path + DB UUID
-→ DB identity verification
-→ SQLiteExecutionCoordinator
+QMT binding
+  -> account_key
+  -> Core OS-derived canonical Runtime Authority
+  -> Authority-certified dedicated per-account DB
+       (canonical path + db_uuid + authority_id)
+  -> SQLiteExecutionCoordinator
+  -> CoordinatedExecutionSession
+  -> TGrid ExecutionEngine
 ```
 
-Required properties:
+## P1-1 Exact Core pin
 
-- one canonical Authority file per account identity;
-- Authority filename derived from `account_key`, not chosen by strategy;
-- Authority certifies canonical DB path, persistent `db_uuid`, and `authority_id`;
-- dedicated DB metadata binds `account_key + db_uuid + authority_id`;
-- per-account OS-backed authority lock;
-- atomic concurrent bootstrap;
-- mismatch/corruption/recreated DB fails closed;
-- normal strategy runtime must not silently create/adopt a second coordination domain;
-- production shared runtime must not trust arbitrary caller `coordination_path` as uniqueness proof;
-- preserve Core 0.4 formal/refinement/shared-cash/finality/session-id/live-gate semantics;
-- Python >=3.9 and Windows safety gates remain green.
+Update TGrid dependency/reference from Core 0.4.0 `acf20d9...` to exactly:
 
-Expected release is `0.4.1`. If compatibility requires a minor version, stop and escalate rather than silently relabel.
+```text
+a68572decb799bcbbf1b2892fcf58ac321ce9636
+```
 
-## P1 — Independent Core audit before merge
+Do not pin branch/tag/latest.
 
-After implementation, hand back for independent audit. Do not merge Core until architect verdict is PASS.
+## P1-2 Production composition MUST use canonical Runtime Authority
 
-Required evidence includes:
+TGrid production construction of shared `MiniQmtRuntime` MUST:
 
-- full Core pytest;
-- compileall;
-- wheel clean install;
-- installed `qmt-execution-core verify`;
-- Python 3.9/3.11/3.12 CI;
-- Windows authority-lock/bootstrap tests;
-- cross-process same-account authority convergence;
-- DB UUID/path/account mismatch fail-closed matrix;
-- zero real/simulation QMT order/cancel.
+- set `runtime_lock_mode="shared"`;
+- call `MiniQmtRuntime.connect(...)` with neither `coordinator=` nor `authority=` overrides;
+- provide no `coordination_path` or `authority_root` (Core 0.4.1 production config no longer supports them);
+- rely on Core's canonical OS-derived Runtime Authority and verify-only runtime resolution;
+- retain one runtime-owned session -> one TGrid `ExecutionEngine` authority per strategy process.
 
-## P1 — TGrid follow-up only after reviewed Core merge
+Low-level injection seams may exist only in clearly isolated tests. Any production TGrid path using `connect(coordinator=...)` or `connect(authority=...)` is a P1 blocker because it opts out of the Runtime-Authority uniqueness guarantee.
 
-After Core 0.4.1 is independently audited and merged:
+## P1-3 Remove old DB-selection surface
 
-1. pin TGrid to the exact reviewed Core merge SHA;
-2. switch production TGrid composition to Runtime Authority resolution;
-3. remove production `coordination_path` selection;
-4. remove Gate-6 `--coordination-db` normal selection knob;
-5. retain test-only injection only where explicitly isolated;
-6. preserve the accepted Iter16 913-test functional baseline.
+Remove production plumbing that lets TGrid/strategy/operator choose the coordination DB directly, including:
 
-New TGrid tests must prove:
+- function/config arguments representing `coordination_path` / `coordination_db` for production runtime construction;
+- Gate-6 normal CLI option `--coordination-db`;
+- environment/config aliases that can route production around Runtime Authority.
 
-- same-account strategies resolve the same Authority and certified DB instance without independently receiving the DB path;
-- different accounts resolve different Authority/DB instances;
-- Authority/DB UUID mismatch prevents runtime construction before broker side effect;
-- recreated DB at the same path is rejected;
-- corrupted/missing Authority does not silently create fallback coordination;
-- three runtimes/different symbols can still be WORKING concurrently;
-- same-symbol exclusion/shared-cash/quarantine invariants remain green.
+Do not replace this with a TGrid-specific Authority path/root option.
 
-## Accepted Iter16 regression baseline
+## P1-4 Explicit operator bootstrap prerequisite
 
-Do not regress:
+Document and test the required first-use lifecycle:
 
-- exact Core 0.4 semantics and one runtime-owned session authority;
+```text
+qmt-execution-core bootstrap-authority --binding <binding-file>
+        ↓
+start TGrid shared strategy runtime
+```
+
+Normal TGrid runtime MUST NOT bootstrap or recreate a missing Authority/DB.
+
+If Authority is missing/corrupt, or the certified DB identity/path/UUID no longer matches, TGrid startup must fail closed before any broker order/cancel side effect.
+
+Do not add an automatic TGrid recovery path that deletes/recreates/adopts the coordination DB.
+
+## P1-5 Preserve TGrid business/Core responsibility split
+
+Core Authority/coordination owns:
+
+- account coordination-domain identity;
+- `(account_key,symbol)` unresolved execution claim;
+- shared BUY cash reservation across processes.
+
+TGrid keeps its existing business ledger semantics (OrderIntent / Reservation / DailyExposure etc.) and project risk rules. Do not duplicate Core Runtime Authority inside TGrid.
+
+Ordering remains:
+
+```text
+Core durable execution intent
+  -> Core symbol/cash coordination COMMIT
+  -> TGrid durable sidecar COMMIT
+  -> broker submit
+```
+
+## Required regression/acceptance tests
+
+At minimum prove with fake Broker/Fake XtQuant only:
+
+1. **Production composition has no DB/root override**
+   - runtime config contains no `coordination_path` / `authority_root`;
+   - production `MiniQmtRuntime.connect` call receives neither `coordinator=` nor `authority=`.
+
+2. **Bootstrap required**
+   - missing Authority -> normal TGrid runtime construction fails closed;
+   - no replacement Authority/DB created;
+   - broker order/cancel call count remains zero.
+
+3. **Automatic same-account convergence**
+   - after one explicit bootstrap, two/three independent TGrid strategy runtimes for the same account resolve the same Authority-backed DB without being given a DB path.
+
+4. **Different accounts isolated**
+   - different authoritative account identities resolve different Authority/DB instances.
+
+5. **DB instance replacement detection**
+   - delete/recreate DB at the certified path or alter DB UUID/authority_id -> runtime construction fails closed before broker side effect.
+
+6. **Three-process useful concurrency remains**
+   - same account, three distinct symbols can reach WORKING concurrently through three independent TGrid runtimes/sessions.
+
+7. **Same-symbol exclusion remains**
+   - same account/same symbol second process rejected before broker call.
+
+8. **Shared cash remains atomic**
+   - retain the existing cash race/non-overcommit regression using the Authority-backed DB.
+
+9. **QUARANTINED semantics remain**
+   - UNKNOWN / CANCEL_REJECTED / unresolved FAILED retains symbol claim and active cash reservation; unrelated symbol can proceed if remaining cash allows.
+
+10. **Journal cutover remains safe**
+    - do not bypass Core protected source/spec hash checks;
+    - 0.4.0/older journal is not silently reused as a 0.4.1 execution journal unless its established migration rule explicitly permits it.
+
+11. **No raw broker authority regression**
+    - TGrid `src/` has no direct raw QMT order/cancel authority outside the reviewed Core adapter/runtime path.
+
+## Validation gate
+
+Run and record:
+
+```text
+full TGrid pytest
+compileall
+Core exact-pin verification
+capability/raw-QMT scan
+three-runtime Authority-backed fake integration
+same-symbol / shared-cash / quarantine regressions
+startup failure matrix for missing/corrupt/recreated Authority DB
+```
+
+Also run the installed/pinned Core verification if the TGrid environment supports it:
+
+```text
+qmt-execution-core verify
+```
+
+No real or simulation QMT order/cancel during implementation or validation.
+
+## Accepted regression baseline
+
+Preserve the earlier Iter16 functional baseline (`bef47b3f4828937ad7dbda519d70d3df24a19657`, 913-test self-certified result), including:
+
+- one runtime/session execution authority per strategy process;
 - coordinate -> TGrid sidecar -> broker ordering;
-- explicit CashRequirementEstimator;
+- explicit `CashRequirementEstimator`;
 - UNKNOWN/CANCEL_REJECTED/FAILED+QUARANTINED non-resend/non-release;
 - safe journal cutover;
-- 3-runtime distinct-symbol concurrency;
+- three-runtime distinct-symbol concurrency;
 - same-symbol exclusion;
 - shared-cash non-overcommit;
-- quarantine and cross-account isolation;
-- bounded session-id leasing;
-- zero raw QMT order/cancel call sites in TGrid `src/`.
+- quarantine/account isolation;
+- bounded session-id leasing.
 
 ## Handoff
 
-When Core 0.4.1 implementation is review-ready:
+When implementation is complete:
 
 ```text
 state = REVIEW_READY
 owner = architect
-authorized_next = [AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY]
+authorized_next = [AUDIT_TGRID_CORE_0_4_1_RUNTIME_AUTHORITY_INTEGRATION_ITER16]
+reference_commit = a68572decb799bcbbf1b2892fcf58ac321ce9636
 live_trading_allowed = false
 ```
 
-## Core 0.4.1 implementation COMPLETE — handed back for audit (2026-08-16)
-
-Evidence (self-certified until independent audit):
-
-```text
-qmt-execution-core feature/0.4.1-runtime-authority @ d499254 (rev1)
-qmt-execution-core feature/0.4.1-runtime-authority @ 54b2cbe (rev2, after audit)
-qmt-execution-core feature/0.4.1-runtime-authority @ 689aa6c (rev3, PR #4)
-docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md
-```
-
-- **Authority model**: `AccountAuthority` (authority_id UUID, account_key,
-  environment, account_type, account_id_sha256, canonical
-  coordination_db_path, persistent coordination_db_uuid); filename derived
-  from `account_key` under a host/user canonical root
-  (`default_authority_root()`); tests inject an explicit root only.
-- **DB identity**: new `coordination_identity(account_key, db_uuid,
-  authority_id, identity_schema_version)` table;
-  `SQLiteExecutionCoordinator(path, expected_identity=...)` verifies
-  INV-AUTH-002 on open and fails closed on any mismatch; legacy 0.4.0 DBs are
-  never silently adopted; `SQLiteExecutionCoordinator.create()` is the
-  authorized bootstrap and refuses to create over an existing file.
-- **Atomic bootstrap**: per-account OS-backed authority lock
-  (`ExecutionMutex`); concurrent first bootstrap converges on one
-  authority_id/db_uuid/domain (proven with real OS processes); corrupt or
-  missing Authority fails closed with no fallback DB.
-- **Runtime resolution**: production shared mode resolves
-  binding -> account_key -> canonical Authority -> certified DB identity ->
-  coordinator; no broker side effect can precede Authority + DB identity
-  verification.
-- **Gates**: full pytest 114 passed (3.12 and 3.9.13 wheel); compileall 0;
-  wheel clean install + out-of-tree `qmt-execution-core verify` PASS
-  (identical source hash daa9bafe...); release formal gate unchanged
-  (433,489 states / 4,461,994 edges / 0 violations); 3.9 parse NONE failed;
-  Windows cross-process authority bootstrap + lock contention PASS.
-- **Spec acceptance 1-14**: all PASS (in-process matrix +
-  cross-process bootstrap/lock).
-- No real or simulation QMT order/cancel invoked; `live_trading_allowed=false`.
-
-### Audit revision rev2 (architect audit of rev1 d499254: CHANGES_REQUIRED)
-
-- P1-1: `MiniQmtRuntimeConfig.authority_root` removed from the production
-  config schema (from_json rejects it); one non-overridable host/user
-  canonical root (LOCALAPPDATA on Windows, OS user-database home on POSIX);
-  test-only injection via the low-level `MiniQmtRuntime.connect(authority=...)`.
-- P1-2: normal runtime resolves with `bootstrap=False`; a missing Authority
-  fails closed with NO replacement files; first initialization is an explicit
-  operator action via new CLI `qmt-execution-core bootstrap-authority`;
-  regressions prove deleting Authority+DB blocks the next runtime start and
-  post-bootstrap runtime resolution only verifies (no rewrite).
-- P1-3: `MiniQmtRuntimeConfig.coordination_path` removed from the production
-  shared-runtime config route (from_json rejects it); explicit-path
-  coordination only via the low-level injected `coordinator=` API
-  (documented 0.4.1 release decision — deliberate removal of the 0.4.0-only
-  field, not silent).
-- P2: `resolve()` recomputes account_key from the identity tuple and rejects
-  inconsistency; exactly one `coordination_identity` row enforced; orphan-DB
-  crash recovery documented (fail-closed).
-- Revised gates all PASS (114 tests on 3.12 + 3.9, release verify unchanged
-  PASS, bootstrap-authority CLI smoke PASS).
-
-### Audit revision rev3 (architect audit of rev2 54b2cbe: CHANGES_REQUIRED, PR #4)
-
-- P1 (canonical root non-overridable): `default_authority_root()` no longer
-  reads process environment — Windows `FOLDERID_LocalAppData` via
-  `SHGetKnownFolderPath` (ctypes), POSIX `pwd.getpwuid(os.getuid())`; both
-  fail closed (`RuntimeAuthorityError`) with no
-  LOCALAPPDATA/USERPROFILE/HOME/Path.home fallback.
-- P1 (bootstrap root override removed): production `bootstrap-authority` CLI
-  no longer exposes `--authority-root`; operator bootstrap and runtime share
-  the same module-level `default_authority_root()` resolver.
-- Regressions: Windows mutable LOCALAPPDATA → root unchanged (in-process +
-  two real processes with different LOCALAPPDATA); Known Folder failure and
-  POSIX user-db failure fail closed; bootstrap CLI has no --authority-root;
-  explicit bootstrap then normal runtime resolve the same canonical Authority
-  and verify with zero broker side effects.
-- Gates: full pytest 119 passed / 1 skipped (POSIX-only) on 3.12 and 3.9.13
-  wheel; compileall 0; wheel clean install + out-of-tree verify PASS; release
-  formal gate unchanged (433,489 / 4,461,994 / 0 violations); 3.9 parse NONE.
-- PR opened: qmt-execution-core #4 (head 689aa6c), awaiting independent audit.
-
-TGrid itself is UNCHANGED (pin stays `acf20d9`); the TGrid follow-up (pin
-reviewed 0.4.1 merge SHA, switch production composition to Authority
-resolution, remove production `coordination_path` / Gate-6 `--coordination-db`
-selection) is authorized only after the independent Core audit PASS + merge.
+Provide exact implementation commit, test counts, changed production call sites, proof that Gate-6 no longer exposes DB selection, and confirmation that no real/simulation QMT order/cancel API was invoked.
