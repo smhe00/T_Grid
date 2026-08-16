@@ -4,25 +4,25 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 36
-handoff_id: "TGRID-QEC-MIGRATION-BC-COMPLETE-20260816-036"
+handoff_seq: 37
+handoff_id: "TGRID-QEC-MIGRATION-ITER14-ARCH-REVIEW-20260816-037"
 authorized_next:
-  - "TGRID-QEC-MIGRATION-PHASE1"
+  - "TGRID-QEC-MIGRATION-ITER14"
 design_version: "1.1"
 gate: 5.5
-task_id: "TGRID-QEC-MIGRATION-PHASE1"
+task_id: "TGRID-QEC-MIGRATION-ITER14"
 state: "IN_PROGRESS"
 owner: "dsh"
-iteration: 13
-last_actor: "dsh"
-last_update: "2026-08-16T09:30:00+08:00"
+iteration: 14
+last_actor: "architect"
+last_update: "2026-08-16T08:30:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/QMT_EXECUTION_CORE/TGRID_MIGRATION_REQUEST_ITER13_20260816.md"
-git_base_commit: "e252847ecab2c5cb122af23091cd41680f901ccd"
-implementation_commit: "937e6a4a1cbd54df960f9bde3ca2e91d6bc19c79"
-handoff_parent_commit: "bf4ba7017c7eb38853a1947e966b5f49928e7002"
+audit_file: "work/gates/QMT_EXECUTION_CORE/ARCHITECT_REVIEW_BC_ITER14_20260816.md"
+git_base_commit: "06c26cfb5f70ffd9422c963c94bbc57f716a2458"
+implementation_commit: "06c26cfb5f70ffd9422c963c94bbc57f716a2458"
+handoff_parent_commit: "06c26cfb5f70ffd9422c963c94bbc57f716a2458"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "937e6a4a1cbd54df960f9bde3ca2e91d6bc19c79"
 live_trading_allowed: false
@@ -30,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_TGRID_QMT_EXECUTION_CORE_INTEGRATION"
 pre_live_independent_audit: "REQUIRED_AFTER_INTEGRATED_QMT_SIMULATION"
-notes: "User resumed migration. Before changing TGrid's Python baseline, DSH must establish the actual qmt-execution-core minimum Python version. First test exact public-core 0.2.1/2e222e1 on real Windows Python 3.9: full pytest, compileall, CLI verifier, wheel build/clean install/out-of-tree verifier, repeated same-process and cross-process ExecutionMutex probes, runtime-mutex contention, and read-only MiniQMT smoke if xtquant is usable under Python 3.9. No QMT order/cancel calls. If 3.9 PASS, update public core to the next patch release (normally 0.2.2), set requires-python>=3.9, add CI 3.9/3.11/3.12, and keep TGrid >=3.9. If 3.9 FAIL, record the exact incompatible feature and determine the minimum supported version from evidence; do not silently raise TGrid to 3.11. After compatibility evidence, close the generic pre-broker sidecar seam so TGrid SQLite OrderIntent+Reservation+daily exposure commits after core durable intent and before broker submit, then implement the thin TGrid adapter, prove fake/shadow equivalence including dedicated fill-during-cancel->FILLED, cut execution authority to the public core, and only then remove duplicate generic infrastructure. TGrid-specific Core/T-Lot/ledger/risk remains local. No absolute local dependency path may be committed. No real or simulation QMT order/cancel is authorized. live_trading_allowed=false. PHASE A0 + A COMPLETE (2026-08-16T08:45): (A0) Python 3.9 compatibility PASS on a real Windows 3.9.13 embeddable interpreter (no system install): import OK, full suite 66 passed (pytest 7.4.4 + iniconfig 2.0.0; pytest 8.x/iniconfig>=2.1 need 3.10), compileall 0, CLI verifier 50/208/0/0/0 (spec 62e04e05.../source 7c0411df... identical to 3.12), wheel build + clean-env install + out-of-tree installed-wheel verifier (identical hashes), same-process msvcrt ExecutionMutex cycles OK, runtime-mutex contention test OK; xtquant not usable from 3.9 locally so read-only MiniQMT smoke not re-run on 3.9 (recorded; 3.12 smoke already passed). Static scan: all src parses with ast feature_version=(3,9); no runtime X|Y unions (all annotations under future-annotations; no get_type_hints). CONCLUSION: requires-python >=3.11 was conservative; compat release is qmt-execution-core 0.3.1 (commit 937e6a4a1cbd54df960f9bde3ca2e91d6bc19c79, fast-forward 87293e6..937e6a4): requires-python >=3.9, classifiers +3.9/+3.10, CI matrix 3.9/3.11/3.12, dev extra pins 3.9 toolchain via markers. NOTE: the request's '0.2.2' label predated the Phase-A 0.3.0 hook release, so the compat release is 0.3.1 carrying the same properties. TGrid stays requires-python >=3.9. (A) Phase-A sidecar seam landed in 0.3.0 (87293e6): ExecutionSession + MiniQmtRuntime.connect accept before_broker_submit(request)/before_broker_cancel(order_id) (no-op default, synchronous execution-thread, AFTER core durable intent/cancel-intent and BEFORE broker side effect, raised hook proves broker call never invoked -> fail closed, no UNKNOWN blind retry; session.py/runtime.py already in protected-source manifest); public-core suite 66 passed (+5 hook tests), wheel 0.3.0 clean-env verify, mutex probes OK. NEXT: Phase B TGrid thin adapter (ExecutionRequest translation, TGrid ExecutionGuard evidence, sidecar SQLite OrderIntent+Reservation+daily-exposure pre-commit, snapshot mapping back to TGrid ledger, native int IDs preserved, callback isolation), legacy path retained for fake/shadow equivalence. PHASE B+C COMPLETE (2026-08-16T09:30, evidence work/gates/QMT_EXECUTION_CORE/TGRID_MIGRATION_EVIDENCE_20260816.md): (B) src/tgrid/integrations/qec_adapter.py (make_execution_request, TGridExecutionGuard from TGrid gates, TGridSidecar pre-broker SQLite OrderIntent+Reservation+daily-exposure commit fail-closed, snapshot_status_to_tgrid, apply_snapshot) + src/tgrid/integrations/qec_runtime.py (build_qec_runtime production-shaped MiniQmtRuntime with TGrid guard+sidecar); (C) integrated equivalence matrix test_qec_equivalence.py 15 items incl. DEDICATED fill-during-cancel race -> FILLED, restart active/cancel-pending, query-None, unknown status, disconnect/reconnect, kill switch, duplicate-id, crash-after-reservation; test_qec_cutover.py capability scan = ZERO TGrid production raw QMT order/cancel call sites (only retained legacy xtquant_bridge.py) + old-vs-new lifecycle parity (both land OrderIntent FILLED + reservation released); test_qec_runtime.py cutover builder via fakes. TGrid full regression 1044 tests OK (was 1009; +35); compileall 0. pyproject pins qmt-execution-core @ 937e6a4 (exact reviewed commit; no absolute local path). REMAINING: Phase D remove duplicate reusable infrastructure (generic state machine/journal/mutex/port/recovery/raw bridge/bootstrap/event-queue; keep TGrid ledger/risk/strategy) — destructive, scoped as its own focused pass after equivalence review; legacy path stays for equivalence only. live_trading_allowed=false; no real/simulation QMT order/cancel invoked."
+notes: "Architect reviewed additive Phase B+C migration at TGrid 06c26cf. Iteration 14 is authorized: first remove production guard self-certification in qec_runtime by injecting real current TGrid evidence sources with fail-closed negative tests; second preserve public-core recoverable UNKNOWN semantics at the qec adapter boundary so a transient UNKNOWN can later reconcile to WORKING/PARTIAL/FILLED/CANCELLED without terminalizing the TGrid business ledger; dedicated SUBMITTED->UNKNOWN->WORKING->FILLED test must prove one broker submit and final reservation release. Only after both pass, execute Phase D removal/reduction of duplicated generic execution infrastructure. After Phase D, zero raw QMT order/cancel call sites are allowed anywhere in TGrid production src, including no xtquant_bridge legacy exception. Preserve TGrid-specific ledger/Core/T-Lot/settlement/risk/strategy and useful fakes. qmt-execution-core remains pinned to 0.3.1/937e6a4 unless a truly generic public-core fix is required. No real or simulation QMT order/cancel is authorized; live_trading_allowed=false."
