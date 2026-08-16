@@ -1,4 +1,4 @@
-# Current Task — TGrid → qmt-execution-core — Iteration 15
+# Current Task — TGrid → qmt-execution-core 0.4 — Iteration 16
 
 ## Owner
 
@@ -6,80 +6,131 @@
 
 ## Status
 
-`IN_PROGRESS` — architect review of `67de19f970a5fc5079df8110ad60fc7c597d600e` returned **CHANGES_REQUIRED**.
+`IN_PROGRESS` — Core 0.4 has passed formal verification + independent architecture/code audit and is merged to public-core `main`.
 
-Authoritative review:
-
-```text
-work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_ITER15_20260816.md
-```
-
-Public core remains pinned to:
+Locked Core dependency:
 
 ```text
-qmt-execution-core 0.3.1
-commit 937e6a4a1cbd54df960f9bde3ca2e91d6bc19c79
+qmt-execution-core 0.4.0
+commit acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692
 ```
+
+Authoritative Iter16 plan:
+
+```text
+work/gates/QMT_EXECUTION_CORE/CORE_0_4_TGRID_INTEGRATION_PLAN_20260816.md
+```
+
+TGrid implementation baseline:
+
+```text
+bf6cb86814da359544ba734ffc8ae9a82a9d9047
+```
+
+Iteration 15 single-authority composition, recoverable CANCEL_REJECTED handling, Gate-6 import surface, and one-active-order-per-TGrid-engine constraint are accepted as the starting baseline and must not regress.
 
 `live_trading_allowed=false`. Do not invoke real or simulation QMT order/cancel APIs.
 
 ## Required work
 
-### P1-1 Close the production composition
+### P1-1 Pin and compose Core 0.4 exactly
 
-`MiniQmtRuntime` already owns an `ExecutionSession`; `ExecutionEngine` must not create a second execution authority around the same runtime/broker.
-
-Implement a TGrid-local production composition/facade so TGrid orchestration uses the **same `runtime.session`** owned by `MiniQmtRuntime`. Explicitly define session/transport close ownership. Prove one fake submit causes exactly one broker call and there is exactly one execution-session authority.
-
-### P1-2 Preserve recoverability of every nonterminal public state
-
-`TradeState.CANCEL_REJECTED` is recoverable in qmt-execution-core and must never terminalize the TGrid business ledger as `OrderStatus.UNKNOWN`.
-
-Add the dedicated regression:
+Update the exact qmt-execution-core git pin to:
 
 ```text
-WORKING
-→ cancel request rejected
-→ authoritative query ambiguous / public UNKNOWN
-→ later WORKING or FILLED
+acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692
 ```
 
-Same intent must remain recoverable; broker submit count remains 1; reservation remains held until a true terminal outcome and releases on FILLED/CANCELLED/REJECTED. Add a table-driven public-state/TGrid-terminality invariant test.
-
-### P1-3 Repair Gate-6 runners after Phase D
-
-Rewrite:
+Preserve one execution authority:
 
 ```text
-scripts/gate6_sim_live.py
-scripts/gate6_sim_negative.py
+MiniQmtRuntime owns runtime.session
+ExecutionEngine uses exactly runtime.session
 ```
 
-onto the new qec production composition. They currently import deleted `build_live_session`.
+No second ExecutionSession/journal/mutex authority may be constructed around the same runtime/broker.
 
-Iteration 15 permits only import/`--help` smoke tests. Do not connect for order execution and do not send/cancel any simulation or live order.
+### P1-2 Enable shared runtime/account coordination
 
-### P2-1 Resolve the single-active-order compatibility question
+Wire Core 0.4 shared mode through the TGrid production composition:
 
-Phase D now makes one `ExecutionEngine` one-active-execution-at-a-time. Either:
+```text
+runtime_lock_mode = "shared"
+coordination_path = explicit canonical account-level coordination DB
+```
 
-- prove the current TGrid scheduler guarantees this and document it as an accepted design constraint; or
-- preserve the prior required concurrent-intent behavior without weakening public-core safety.
+All strategy processes sharing the account must use the same coordination domain. Do not default to a strategy-specific DB path and do not silently run shared mode without coordination.
 
-Do not start the broader multi-strategy/multi-session/async roadmap in this iteration.
+Use Core's bounded MiniQMT session-id leasing. Strategy business code must not manage session IDs directly.
+
+### P1-3 Wire account-level shared BUY cash safely
+
+Provide an explicit conservative Core `CashRequirementEstimator` to coordinated BUY execution.
+
+Core account-level cash reservation is the cross-process authorization gate. Existing TGrid `OrderIntent + Reservation + DailyExposure` remains the TGrid business ledger and sidecar.
+
+Required order:
+
+```text
+Core durable intent
+→ Core symbol/cash coordination COMMIT
+→ TGrid business sidecar COMMIT
+→ broker submit
+```
+
+Do not add Settlement Pending local cash credit/accounting.
+
+### P1-4 Preserve finality/recovery across the business ledger
+
+Use Core 0.4 `ExecutionFinality` semantics.
+
+`UNKNOWN`, `CANCEL_REJECTED`, and `FAILED + unresolved_order=True / QUARANTINED` must not become blind-resend or premature-release permission in TGrid.
+
+Add a table-driven state/finality → TGrid business-terminality test and an UNKNOWN → recovery-failed → QUARANTINED regression.
+
+### P1-5 Safe journal cutover
+
+Do not bypass public-core source/spec hash binding.
+
+Tests/documentation must establish:
+
+```text
+old 0.3.1 journal -> rejected under 0.4 hash
+planned cutover -> reconcile old execution -> archive old journal -> new 0.4 journal path
+```
+
+No in-place silent journal migration.
+
+### P1-6 Prove three independent strategy runtimes
+
+With fake XtQuant only, create three independent TGrid/Core stacks sharing one account-level coordination DB.
+
+Required evidence:
+
+- A/B/C on different symbols can all be `WORKING` concurrently;
+- same-account/same-symbol second writer is rejected before broker call;
+- shared-cash race cannot overcommit;
+- one strategy UNKNOWN/QUARANTINED does not globally block another symbol except through its held cash;
+- same symbol on different accounts is independent;
+- runtime/session IDs are distinct as required;
+- closing/restarting one stack does not close or mutate another stack.
 
 ## Required verification
 
 - full TGrid pytest;
 - `compileall -q src tests scripts`;
-- import/`--help` smoke for both Gate-6 runners;
-- zero raw QMT order/cancel calls in TGrid `src/`;
-- exactly one production `ExecutionSession` authority per MiniQMT runtime;
+- Gate-6 import/`--help` smoke;
+- exact qec pin `acf20d9...`;
+- Python baseline remains `>=3.9`;
+- zero raw QMT order/cancel calls in TGrid production `src/`;
+- one runtime-owned execution-session authority per stack;
+- shared coordination before TGrid sidecar before broker;
+- 3-process/different-symbol concurrency;
+- same-symbol exclusion;
+- shared-cash non-overcommit;
+- recoverable/quarantined state retention;
 - fill-during-cancel → FILLED;
-- transient UNKNOWN → recovery → FILLED;
-- cancel-rejected/ambiguous → later recovery;
-- evidence negative matrix remains green;
-- qec exact pin remains `937e6a4...` unless separately justified;
+- disconnect/recovery evidence gates;
 - explicit evidence that no real or simulation QMT order/cancel was invoked.
 
 ## Handoff
@@ -89,6 +140,12 @@ When all items pass:
 ```text
 state = REVIEW_READY
 owner = architect
-authorized_next = [AUDIT_TGRID_QMT_EXECUTION_CORE_INTEGRATION_ITER15]
+authorized_next = [AUDIT_TGRID_QMT_EXECUTION_CORE_V0_4_ITER16]
 live_trading_allowed = false
+```
+
+Write evidence to:
+
+```text
+work/gates/QMT_EXECUTION_CORE/TGRID_CORE_0_4_INTEGRATION_EVIDENCE_20260816.md
 ```
