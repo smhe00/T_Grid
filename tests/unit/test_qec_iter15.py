@@ -36,6 +36,7 @@ from tgrid.integrations.qec_adapter import (
 from tgrid.integrations.qec_runtime import (
     TGridQecStack,
     build_tgrid_qec_stack,
+    default_cash_requirement_estimator,
 )
 from tgrid.persistence import initialize
 
@@ -215,6 +216,10 @@ class TestTGridQecStack(unittest.TestCase):
             stock_account_factory=lambda account_id: SimpleNamespace(account_id=account_id),
             xtconstant=XtConstant,
             callback_base=object,
+            # Iteration 16: Core 0.4 shared account-level coordination.
+            runtime_lock_mode="shared",
+            coordination_path=os.path.join(self.tmp, "coordination.db"),
+            cash_estimator=default_cash_requirement_estimator(),
         )
         return stack
 

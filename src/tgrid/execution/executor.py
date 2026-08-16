@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from qmt_execution_core.domain import ExecutionRequest, TradeState
+from qmt_execution_core.finality import ExecutionFinality, execution_finality
 from qmt_execution_core.session import ExecutionSession
 
 from tgrid.execution.models import BUY, SELL, OrderIntent, OrderStatus
@@ -600,6 +601,11 @@ class ExecutionEngine:
         now: str,
     ) -> ExecutionResult:
         """Fold a public snapshot into the TGrid ledger and build the result."""
+        # Iteration 16 (plan §6): derive the LIVE Core finality from the
+        # session machine so FAILED + QUARANTINED (unresolved broker order)
+        # never becomes a TGrid release/terminal permission.  This is the
+        # authoritative finality-aware folding path for the engine.
+        finality = execution_finality(self._session.machine)
         try:
             intent = self._store.get_intent(client_order_key)
         except IntentNotFoundError:
@@ -607,9 +613,10 @@ class ExecutionEngine:
         if intent is not None:
             apply_snapshot(
                 self._store, snapshot, client_order_key=client_order_key, now=now,
+                finality=finality,
             )
             intent = self._store.get_intent(client_order_key)
-        status = _snapshot_status(snapshot, intent)
+        status = _snapshot_status(snapshot, intent, finality=finality)
         broker_order_id = (
             str(snapshot.broker_order_id)
             if snapshot.broker_order_id is not None
@@ -627,12 +634,21 @@ class ExecutionEngine:
         )
 
 
-def _snapshot_status(snapshot, intent) -> str:
+def _snapshot_status(snapshot, intent, *, finality=None) -> str:
     """Map a public snapshot (or the folded TGrid intent) to an OrderStatus."""
     from tgrid.integrations.qec_adapter import snapshot_status_to_tgrid
 
     if snapshot.state is TradeState.UNKNOWN and intent is not None:
         # Transient UNKNOWN keeps the last durable pending TGrid status.
+        return intent.status
+    if (
+        snapshot.state is TradeState.FAILED
+        and finality is ExecutionFinality.QUARANTINED
+        and intent is not None
+    ):
+        # Iteration 16: a quarantined FAILED execution keeps the pending TGrid
+        # status (no premature release/terminal permission); the broker may
+        # still hold the unresolved order.
         return intent.status
     return snapshot_status_to_tgrid(snapshot.state)
 

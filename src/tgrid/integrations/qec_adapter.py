@@ -40,6 +40,7 @@ from qmt_execution_core.domain import (
     Side,
     TradeState,
 )
+from qmt_execution_core.finality import ExecutionFinality
 
 from tgrid.execution.models import OrderStatus
 from tgrid.execution.store import ExecutionStore
@@ -268,9 +269,38 @@ def snapshot_status_to_tgrid(state: TradeState) -> str:
         TradeState.CANCEL_REJECTED: OrderStatus.CANCEL_REQUESTED,
         # UNKNOWN is recoverable; apply_snapshot preserves the pending status.
         TradeState.UNKNOWN: OrderStatus.UNKNOWN,
-        # FAILED is the terminal recovery-failure outcome -> TGrid UNKNOWN.
+        # FAILED maps to the terminal TGrid UNKNOWN ONLY when Core finality is
+        # RESOLVED (recovery failure with no unresolved broker order).
+        # FAILED + QUARANTINED finality is guarded in apply_snapshot /
+        # snapshot_is_tgrid_terminal (Iteration 16, plan §6).
         TradeState.FAILED: OrderStatus.UNKNOWN,
     }[state]
+
+
+def snapshot_is_tgrid_terminal(
+    state: TradeState,
+    *,
+    finality: ExecutionFinality | None,
+) -> bool:
+    """Table-driven Core-state/finality -> TGrid business-terminality (plan §6).
+
+    Only PROVEN Core ``RESOLVED`` outcomes may terminalize the TGrid business
+    intent::
+
+        FILLED / CANCELLED / REJECTED          -> terminal (always RESOLVED)
+        FAILED + RESOLVED                       -> terminal (UNKNOWN)
+        FAILED + QUARANTINED (unresolved order) -> NOT terminal (quarantine)
+        UNKNOWN / CANCEL_REJECTED / OPEN        -> NOT terminal (recoverable)
+
+    ``finality=None`` (no Core machine snapshot available) defaults FAILED to
+    the legacy terminal mapping for backward compatibility; production wiring
+    (the engine) always passes the live Core finality.
+    """
+    if state in (TradeState.FILLED, TradeState.CANCELLED, TradeState.REJECTED):
+        return True
+    if state is TradeState.FAILED:
+        return finality is not ExecutionFinality.QUARANTINED
+    return False
 
 
 def apply_snapshot(
@@ -279,6 +309,7 @@ def apply_snapshot(
     *,
     client_order_key: str,
     now: str,
+    finality: ExecutionFinality | None = None,
 ) -> None:
     """Fold a public-core execution snapshot back into the TGrid SQLite ledger.
 
@@ -292,15 +323,27 @@ def apply_snapshot(
     pending TGrid status is KEPT (e.g. SUBMITTED / PARTIAL / CANCEL_REQUESTED)
     so a later authoritative public recovery (WORKING / PARTIALLY_FILLED /
     FILLED / CANCELLED) can still update the same intent.  Only a terminal
-    public recovery failure (``TradeState.FAILED``) maps to the terminal
-    TGrid ``OrderStatus.UNKNOWN``.
+    public recovery failure (``TradeState.FAILED`` with Core
+    ``ExecutionFinality.RESOLVED``) maps to the terminal TGrid
+    ``OrderStatus.UNKNOWN``.
+
+    Iteration 16 (plan §6): a ``FAILED`` snapshot whose Core finality is
+    ``ExecutionFinality.QUARANTINED`` (unresolved broker order after recovery
+    failure) is NOT a release permission — the TGrid intent stays pending and
+    its business reservation stays active, exactly like transient UNKNOWN.
+    Core retains the account-level symbol claim + cash reservation for the
+    quarantined execution; only a later authoritative RESOLVED outcome may
+    clear it.
     """
     intent = store.get_intent(client_order_key)
     if intent.status in ("FILLED", "CANCELED", "REJECTED", "UNKNOWN"):
         return
-    if snapshot.state is TradeState.UNKNOWN:
-        # Transient unresolved: keep the pending TGrid status; still persist
-        # a broker_order_id discovered by public recovery.
+    if snapshot.state is TradeState.UNKNOWN or (
+        snapshot.state is TradeState.FAILED
+        and finality is ExecutionFinality.QUARANTINED
+    ):
+        # Transient unresolved / quarantined: keep the pending TGrid status;
+        # still persist a broker_order_id discovered by public recovery.
         if snapshot.broker_order_id is not None:
             store.update_intent_status(
                 client_order_key,

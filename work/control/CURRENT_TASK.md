@@ -149,3 +149,48 @@ Write evidence to:
 ```text
 work/gates/QMT_EXECUTION_CORE/TGRID_CORE_0_4_INTEGRATION_EVIDENCE_20260816.md
 ```
+
+## Iteration 16 COMPLETE (2026-08-16)
+
+Evidence: `work/gates/QMT_EXECUTION_CORE/TGRID_CORE_0_4_INTEGRATION_EVIDENCE_20260816.md`.
+
+- **Core 0.4 baseline verified independently** in a fresh venv: pytest 88
+  passed, compileall 0, `qmt-execution-core verify` release gate PASS
+  (52 abstract states / 211 transitions; 3-process product 433,489 reachable
+  global states / 4,461,994 interleaving edges / 0 invariant violations;
+  same-account-3-distinct-symbols and cross-account-same-symbol
+  all-WORKING witnesses true; same-symbol and shared-cash contention blocked
+  with 0 violations).
+- **P1-1 pin**: `pyproject.toml` now pins exactly
+  `acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692`; single-authority composition
+  preserved (`engine.session is runtime.session` per stack; one submit -> one
+  broker call; close exactly once).
+- **P1-2 shared coordination**: `build_qec_runtime` /
+  `build_tgrid_qec_stack` default `runtime_lock_mode="shared"` and require an
+  explicit account-level `coordination_path` (or injected coordinator) and an
+  explicit conservative `CashRequirementEstimator` — build fails closed
+  otherwise; `exclusive` mode retained for single-writer use. Gate-6 runners
+  pass `--coordination-db` + `default_cash_requirement_estimator()`.
+- **P1-3 shared cash**: Core owns the account-level BUY cash reservation
+  gate (fresh authoritative `query_asset` + atomic reserve); TGrid
+  OrderIntent/Reservation/DailyExposure stays the business ledger via the
+  sidecar. Ordering proven: coordinate -> sidecar -> broker.
+- **P1-4 finality**: `snapshot_is_tgrid_terminal` table + finality-aware
+  `apply_snapshot`/engine folding; UNKNOWN / CANCEL_REJECTED /
+  FAILED+QUARANTINED are non-resend / non-release; UNKNOWN -> recovery
+  failure -> QUARANTINED regression green.
+- **P1-5 journal cutover**: 0.3.1 journals REJECTED by the 0.4 hash binding
+  (`JournalIntegrityError` -> explicit `QecRuntimeError`), never silently
+  migrated; archive + new 0.4 journal path proven.
+- **P1-6 three strategy runtimes**: fake-XtQuant stacks on 3 distinct symbols
+  concurrently WORKING; same-symbol second writer rejected before broker;
+  shared cash 100 cannot overcommit (60+50 rejected, 60+40 = 100 exactly);
+  quarantine isolation (claim + Core cash + business reservation held, other
+  symbol proceeds, same symbol blocked); account isolation (A1/A2 same symbol
+  both WORKING, per-account keys/reservations); distinct session ids, close
+  isolation, exact collision fails closed, same-name bounded fallback.
+- **Gates**: full TGrid pytest 913 passed (+16 new, 17 subtests); compileall
+  0; Gate-6 import/`--help` smoke OK; AST capability scan = ZERO raw QMT
+  order/cancel call sites; 3.9 parse check NONE failed; fill-during-cancel ->
+  FILLED and disconnect/reconnect gates green.
+- No real or simulation QMT order/cancel invoked; `live_trading_allowed=false`.

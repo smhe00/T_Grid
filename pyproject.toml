@@ -14,12 +14,16 @@ dependencies = [
     # permitted at this Gate.
     "PyYAML>=6.0",
     # Migration Phase A0/A (2026-08-16): TGrid consumes the independently
-    # audited reusable execution core, pinned to an EXACT reviewed commit
-    # (github.com/smhe00/qmt-execution-core, PASS_FOR_MIGRATION 0.3.1).
-    # Local developers override this pin with an editable install from the
-    # local checkout (documented in work/gates/QMT_EXECUTION_CORE/); the
-    # absolute local path is never committed here.
-    "qmt-execution-core @ git+https://github.com/smhe00/qmt-execution-core@937e6a4a1cbd54df960f9bde3ca2e91d6bc19c79",
+    # audited reusable execution core, pinned to an EXACT reviewed commit.
+    # Iteration 16 (2026-08-16): Core 0.4.0 / acf20d9 (PR #3 formal
+    # verification + architecture audit PASS) — shared account-level
+    # coordination (runtime_lock_mode=shared, canonical coordination DB,
+    # explicit CashRequirementEstimator, bounded session-id leasing,
+    # QUARANTINED finality). Local developers override this pin with an
+    # editable install from the local checkout (documented in
+    # work/gates/QMT_EXECUTION_CORE/); the absolute local path is never
+    # committed here.
+    "qmt-execution-core @ git+https://github.com/smhe00/qmt-execution-core@acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692",
 ]
 
 [project.scripts]
