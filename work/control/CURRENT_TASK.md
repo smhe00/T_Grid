@@ -130,7 +130,8 @@ live_trading_allowed = false
 Evidence (self-certified until independent audit):
 
 ```text
-qmt-execution-core feature/0.4.1-runtime-authority @ d499254
+qmt-execution-core feature/0.4.1-runtime-authority @ d499254 (rev1)
+qmt-execution-core feature/0.4.1-runtime-authority @ 54b2cbe (rev2, after audit)
 docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md
 ```
 
@@ -151,18 +152,38 @@ docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md
   missing Authority fails closed with no fallback DB.
 - **Runtime resolution**: production shared mode resolves
   binding -> account_key -> canonical Authority -> certified DB identity ->
-  coordinator; `coordination_path` + `authority_root` are mutually exclusive;
-  legacy explicit path retained as a documented non-uniqueness-guaranteed
-  low-level mode; no broker side effect can precede Authority + DB identity
+  coordinator; no broker side effect can precede Authority + DB identity
   verification.
-- **Gates**: full pytest 108 passed (3.12 and 3.9.13 wheel); compileall 0;
+- **Gates**: full pytest 114 passed (3.12 and 3.9.13 wheel); compileall 0;
   wheel clean install + out-of-tree `qmt-execution-core verify` PASS
-  (identical source hash 4ab8173c...); release formal gate unchanged
+  (identical source hash daa9bafe...); release formal gate unchanged
   (433,489 states / 4,461,994 edges / 0 violations); 3.9 parse NONE failed;
   Windows cross-process authority bootstrap + lock contention PASS.
 - **Spec acceptance 1-14**: all PASS (in-process matrix +
   cross-process bootstrap/lock).
 - No real or simulation QMT order/cancel invoked; `live_trading_allowed=false`.
+
+### Audit revision rev2 (architect audit of rev1 d499254: CHANGES_REQUIRED)
+
+- P1-1: `MiniQmtRuntimeConfig.authority_root` removed from the production
+  config schema (from_json rejects it); one non-overridable host/user
+  canonical root (LOCALAPPDATA on Windows, OS user-database home on POSIX);
+  test-only injection via the low-level `MiniQmtRuntime.connect(authority=...)`.
+- P1-2: normal runtime resolves with `bootstrap=False`; a missing Authority
+  fails closed with NO replacement files; first initialization is an explicit
+  operator action via new CLI `qmt-execution-core bootstrap-authority`;
+  regressions prove deleting Authority+DB blocks the next runtime start and
+  post-bootstrap runtime resolution only verifies (no rewrite).
+- P1-3: `MiniQmtRuntimeConfig.coordination_path` removed from the production
+  shared-runtime config route (from_json rejects it); explicit-path
+  coordination only via the low-level injected `coordinator=` API
+  (documented 0.4.1 release decision — deliberate removal of the 0.4.0-only
+  field, not silent).
+- P2: `resolve()` recomputes account_key from the identity tuple and rejects
+  inconsistency; exactly one `coordination_identity` row enforced; orphan-DB
+  crash recovery documented (fail-closed).
+- Revised gates all PASS (114 tests on 3.12 + 3.9, release verify unchanged
+  PASS, bootstrap-authority CLI smoke PASS).
 
 TGrid itself is UNCHANGED (pin stays `acf20d9`); the TGrid follow-up (pin
 reviewed 0.4.1 merge SHA, switch production composition to Authority

@@ -4,30 +4,30 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 45
-handoff_id: "QEC-0.4.1-RUNTIME-AUTHORITY-CHANGES-20260816-045"
+handoff_seq: 46
+handoff_id: "QEC-0.4.1-RUNTIME-AUTHORITY-REV2-REVIEW-READY-20260816-046"
 authorized_next:
-  - "FIX_QMT_EXECUTION_CORE_RUNTIME_AUTHORITY_PRODUCTION_SPLIT_BRAIN"
+  - "AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY_REV2"
 design_version: "1.1"
 gate: 5.5
 task_id: "QEC-0.4.1-RUNTIME-AUTHORITY-HARDENING"
-state: "CHANGES_REQUIRED"
-owner: "dsh"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 16
-last_actor: "architect"
-last_update: "2026-08-16T14:22:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-16T15:40:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/QMT_EXECUTION_CORE/ARCHITECT_AUDIT_CORE_0_4_1_RUNTIME_AUTHORITY_CANDIDATE_20260816.md"
 git_base_commit: "bef47b3f4828937ad7dbda519d70d3df24a19657"
-implementation_commit: "d4992543b7aa2496b2ba3fb7cd51b5cc74192a00"
-handoff_parent_commit: "1b0a76e179400e42165999f4271e8c1d6733580c"
+implementation_commit: "54b2cbea09a3d5707a12861bb65964141e1cf0fd"
+handoff_parent_commit: "a91739f53fbf289f19611d23933967db53873d57"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "acf20d9fe5cf2aede3cc0ad0e8936ecb0c5b2692"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_REVISED_QMT_EXECUTION_CORE_RUNTIME_AUTHORITY"
+next_independent_audit: "AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY_REV2"
 pre_live_independent_audit: "REQUIRED_AFTER_RUNTIME_AUTHORITY_AND_TGRID_FOLLOWUP_AUDIT"
-notes: "Independent audit of Core candidate feature/0.4.1-runtime-authority @ d4992543 returned CHANGES_REQUIRED. Accepted regression baseline: Account Runtime Authority model, persistent DB UUID + authority_id metadata, OS-lock cross-process bootstrap machinery, fail-closed identity mismatch matrix, Core 0.4 state/formal semantics, self-certified 108-test result. P1 blockers: (1) production MiniQmtRuntimeConfig still exposes caller-selectable authority_root, allowing same account_key to bootstrap two Authority/DB domains under different roots; production authority root must be canonical/non-overridable, with alternate roots isolated to low-level/test APIs only. (2) normal MiniQmtRuntime.connect calls resolve(... bootstrap=True); normal runtime must never recreate a missing Authority. Explicit operator bootstrap must be separate; deleting both established Authority+DB then starting a normal runtime must fail closed and create no replacement files. (3) production MiniQmtRuntimeConfig.coordination_path still bypasses Authority and restores 0.4.0 split-brain behavior; explicit-path support may remain only as low-level/test compatibility, not production shared-runtime configuration. P2: recompute/validate account_key from identity tuple, exactly-one DB identity row, orphan-DB recovery docs/tooling. Detailed Core-branch audit: docs/ARCHITECT_AUDIT_V0_4_1_RUNTIME_AUTHORITY.md; revised task: docs/IMPLEMENTATION_TASK_V0_4_1_RUNTIME_AUTHORITY.md. Do not merge d4992543. No TGrid Authority adaptation or Gate-6 simulation order/cancel until revised Core candidate passes audit and merge SHA is locked. live_trading_allowed=false."
+notes: "Core 0.4.1 rev2 handed back for re-audit on qmt-execution-core feature/0.4.1-runtime-authority @ 54b2cbe (rebased on architect audit commits cb87c31/8971e67; evidence docs/V0_4_1_IMPLEMENTATION_EVIDENCE.md section 7). Rev1 d499254 was CHANGES_REQUIRED (3 P1 + 3 P2). Rev2 fixes: P1-1 remove MiniQmtRuntimeConfig.authority_root from the production config schema (from_json rejects it explicitly); one non-overridable host/user canonical root (LOCALAPPDATA on Windows, OS user-database home on POSIX; no process-overridable XDG/HOME); test-only injection via low-level MiniQmtRuntime.connect(authority=...). P1-2 normal runtime resolves with bootstrap=False; missing Authority fails closed with no replacement files; explicit operator bootstrap via new CLI qmt-execution-core bootstrap-authority; regressions prove deleting both Authority+DB blocks the next runtime start and post-bootstrap runtime resolution only verifies (no rewrite). P1-3 MiniQmtRuntimeConfig.coordination_path removed from the production shared-runtime config route (from_json rejects it); explicit-path coordination only via the low-level injected coordinator= API (documented 0.4.1 release decision; deliberate removal of the 0.4.0-only field, not silent). P2: resolve() recomputes account_key from environment/account_type/account_id_sha256 and rejects an inconsistent tuple; exactly one coordination_identity row enforced (COUNT check); orphan-DB crash recovery documented (fail-closed, no auto-adopt). Gates: full pytest 114 passed on 3.12 and real Windows Python 3.9.13 (wheel install); compileall 0; wheel clean install + out-of-tree qmt-execution-core verify PASS with identical execution_source_sha256 daa9bafe...; release formal gate unchanged 433,489 states / 4,461,994 edges / 0 violations; 3.9 parse NONE failed; Windows cross-process authority bootstrap + lock contention PASS; bootstrap-authority CLI smoke PASS. TGrid unchanged (pin acf20d9). Next: independent re-audit AUDIT_QMT_EXECUTION_CORE_0_4_1_RUNTIME_AUTHORITY_REV2; after PASS + merge, TGrid follow-up pins the reviewed merge SHA and switches production composition to Authority resolution (removing production coordination_path / Gate-6 --coordination-db). No real or simulation QMT order/cancel invoked. live_trading_allowed=false."
