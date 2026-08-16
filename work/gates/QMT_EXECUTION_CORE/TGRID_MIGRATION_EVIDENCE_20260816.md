@@ -120,6 +120,65 @@ focused pass; the legacy path stays ONLY for the equivalence harness until
 then. Old and new execution authorities must never simultaneously own the
 same QMT session.
 
+## Iteration 14 — architect review fixes (2026-08-16, `a8ce610`)
+
+Architect review: `work/gates/QMT_EXECUTION_CORE/ARCHITECT_REVIEW_BC_ITER14_20260816.md`
+(`36536dd`) — B/C evidence accepted as progress, **two P1 fixes required before
+destructive Phase D**, then Phase D.
+
+- **P1-1 (self-certified guard removed)**: `build_qec_runtime` now REQUIRES a
+  live `TGridEvidenceSource` (9 mandatory suppliers: environment/account/
+  broker-snapshot/position/cash/quote/kill-switch/exposure-ready/exposure-used);
+  missing/absent evidence -> `QecRuntimeError` (fail closed); no permissive
+  defaults remain in the production builder. Negative matrix: session-level
+  evidence false -> runtime cannot open; precheck-level evidence false ->
+  submit REJECTED before the TGrid sidecar persists anything and before any
+  broker call (place_calls == 0); kill switch same.
+- **P1-2 (transient UNKNOWN not terminalizing the TGrid ledger)**:
+  `apply_snapshot` keeps the last durable pending TGrid status
+  (SUBMITTED/PARTIAL/CANCEL_REQUESTED) while the public machine is in
+  recoverable `TradeState.UNKNOWN`; only terminal `TradeState.FAILED` maps to
+  TGrid `OrderStatus.UNKNOWN`; a later authoritative recovery
+  (WORKING/PARTIAL/FILLED/CANCELLED) updates the SAME intent. Reservations
+  release only on true terminal outcomes (FILLED/CANCELED/REJECTED).
+  Dedicated regression: SUBMITTED -> public UNKNOWN -> recovery WORKING ->
+  FILLED (intent ends FILLED, reservation released, broker.place_calls == 1).
+- Full TGrid regression: **1048 tests OK** (was 1044; +4 P1 regressions).
+
+## Phase D — execution plan (destructive; authorized by `4e56925`)
+
+Acceptance gates: full TGrid regression after D; compileall; qec pinned to
+exact commit; **capability scan = zero raw order_stock/order_stock_async/
+cancel_order_stock/cancel_order_stock_async in ALL of TGrid `src/`** (no legacy
+exception); fill-during-cancel -> FILLED passes; transient-UNKNOWN -> FILLED
+passes; evidence negative matrix; mapping table final; no QMT order/cancel;
+live_trading_allowed=false.
+
+Steps (suite kept green at each step):
+
+1. Rewire `execution/simbroker.py` to the public-core `BrokerPort` protocol
+   (ExecutionRequest/BrokerOrder) so the dry-run path delegates to qec.
+2. Rework `execution/executor.py` to TGrid-specific orchestration that drives
+   a public-core `ExecutionSession` (guard + `TGridSidecar`) instead of owning
+   generic broker lifecycle/state/recovery.
+3. Delete duplicated generic modules (now owned by qmt-execution-core):
+   `execution/statemachine.py`, `execution/execution_journal.py`,
+   `execution/execution_mutex.py`, `execution/recovery.py`,
+   `execution/port.py` (generic BrokerPort/status DTOs),
+   `integrations/xtquant_bridge.py` (raw QMT bridge).
+4. Delete/reduce generic production chain: `integrations/live_broker_adapter.py`
+   risk gates re-expressed via `TGridExecutionGuard`; `live_bootstrap.py` /
+   `live_session.py` replaced by `qec_runtime.build_qec_runtime`.
+5. Update/remove the affected tests (generic machine/journal/mutex/bridge
+   tests are superseded by the public-core suite; engine/live tests reworked
+   over the qec path) until the full suite passes.
+6. Update the capability scan to assert ZERO raw QMT call sites in `src/`.
+
+Retained TGrid-specific: `ExecutionStore`/`OrderIntent`/`Reservation`/daily
+exposure; Core/StrategicExtra/T-Lot accounting; settlement/T+1/can_use/Core-
+floor/strategy risk; signals/anchor/VWAP/sizing/scheduling; `simbroker.py` +
+`simdriver.py` test fakes; `dryrun.py`.
+
 ## Confirmations
 
 - No real or simulation QMT order/cancel invoked during B/C.
