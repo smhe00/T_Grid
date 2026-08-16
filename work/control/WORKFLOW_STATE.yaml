@@ -4,18 +4,18 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 52
-handoff_id: "TGRID-GATE6-QEC-SIM-AUTHORIZED-20260817-052"
+handoff_seq: 53
+handoff_id: "TGRID-GATE6-QEC-SIM-PHASE-A-DONE-PHASE-B-WINDOW-BLOCKED-20260817-053"
 authorized_next:
-  - "RUN_GATE6_QEC_SIMULATION_CLOSED_LOOP"
+  - "RUN_GATE6_QEC_SIMULATION_CLOSED_LOOP_PHASE_B"
 design_version: "1.1"
 gate: 6
 task_id: "GATE6-QEC-SIMULATION-CLOSED-LOOP"
 state: "AUTHORIZED"
 owner: "dsh"
 iteration: 17
-last_actor: "user"
-last_update: "2026-08-17T01:22:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-17T01:40:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
@@ -30,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_GATE6_QEC_SIMULATION_EVIDENCE"
 pre_live_independent_audit: "PASS_PRELIVE"
-notes: "User explicitly authorized Gate 6 on 2026-08-17. Authorization is deliberately scoped to one bounded QMT simulation closed-loop only: first verify/bootstrap the canonical Core 0.4.1 per-account Runtime Authority and run the negative-path matrix; only after those pass may the reviewed runner place at most one BUY of exactly 100 shares of 510300.SH with qty_cap<=200 and cash_cap<=5000 CNY during the existing exchange trading-day/execution-window checks, then bounded poll and cancel/reconcile if needed. No second BUY, alternate symbol, parameter expansion, automatic Authority/DB recreation, production code change, or live/real-money order/cancel is authorized. If any code change is required, stop before broker side effect and return for review. live_trading_allowed remains false."
+notes: "Gate 6 user-authorized (simulation only). Phase A COMPLETE 2026-08-17: TGrid pin a68572d + Core verify PASS; simulation account identity resolved read-only (account_id_sha256 7424e0cd...); explicit operator bootstrap-authority performed once (authority_id 8bc66b60..., db_uuid d94a29c2..., idempotent); negative-path matrix PASS (all_refused, clean rejected labels with fresh journal, 0 symbol claims / 0 cash reservations -> zero broker-reaching submissions). Phase B DEFERRED: gate6_sim_live preflight returned is_trading_day=false + in_execution_window=false (2026-08-17T01:34+08:00); authoritative SH get_trading_dates shows last 2026-08 trading day is 2026-08-14, so 2026-08-17 Monday is non-trading. The single positive sim BUY (510300.SH qty=100, qty_cap<=200, cash_cap<=5000) was NOT placed; it will only run on a genuine trading day within the execution window. Simulation order/cancel count 0; live/real 0; no Authority/DB recreation; no production code change. live_trading_allowed=false. Evidence: work/gates/QMT_EXECUTION_CORE/GATE6_QEC_SIMULATION_PHASE_A_EVIDENCE_20260817.md. Next: retry Phase B on the next exchange trading day within the execution window (authorized_next RUN_GATE6_QEC_SIMULATION_CLOSED_LOOP_PHASE_B)."

@@ -1,0 +1,32 @@
+{
+  "all_refused": true,
+  "finished_at": "2026-08-17T01:34:20.683099+08:00",
+  "negative_results": {
+    "allowlist_non_allowed_symbol": {
+      "label": "rejected",
+      "refused": true
+    },
+    "cash_per_order": {
+      "label": "rejected",
+      "refused": true
+    },
+    "kill_switch": {
+      "label": "rejected",
+      "refused": true
+    },
+    "kill_switch_cancel_available": true,
+    "qty_cap": {
+      "label": "rejected",
+      "refused": true
+    },
+    "queue_stopped": {
+      "label": "execution_healthy false",
+      "refused": true
+    },
+    "queue_stopped_health": {
+      "execution_healthy": false
+    }
+  },
+  "session_built": true,
+  "started_at": "2026-08-17T01:34:18.890755+08:00"
+}

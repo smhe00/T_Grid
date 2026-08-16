@@ -91,3 +91,30 @@ live_trading_allowed = false
 ```
 
 Do not proceed to any live Gate-6/7 action without a separate explicit user authorization.
+
+## Phase A COMPLETE / Phase B DEFERRED (2026-08-17 01:34 +08:00)
+
+Evidence: `work/gates/QMT_EXECUTION_CORE/
+GATE6_QEC_SIMULATION_PHASE_A_EVIDENCE_20260817.md`.
+
+- **A1/A2**: TGrid pin `a68572d…` + Core verify PASS; simulation QMT path and
+  account identity resolved read-only (account_id_sha256 `7424e0cd…`,
+  qmt_path_sha256 `e5dd14a0…`).
+- **A3/A4**: explicit operator `qmt-execution-core bootstrap-authority`
+  performed once (no auto-bootstrap); canonical Authority resolved+validated
+  (authority_id `8bc66b60-…`, db_uuid `d94a29c2-…`, idempotent re-run).
+- **A5**: negative matrix PASS (`all_refused: true`, clean "rejected" labels
+  with a fresh journal); Authority-certified DB shows 0 symbol claims / 0
+  cash reservations -> zero broker-reaching submissions.
+- **Phase B deferred**: `gate6_sim_live.py` preflight returned
+  `is_trading_day=false` + `in_execution_window=false`; authoritative SH
+  `get_trading_dates` shows the last 2026-08 trading day is 2026-08-14, so
+  2026-08-17 (Monday) is a non-trading day. The single positive sim BUY was
+  NOT placed and will only run on a genuine trading day within the execution
+  window (09:30-11:28 / 13:00-15:28).
+- **Order/cancel count: 0 simulation, 0 live/real.** No Authority/DB
+  recreation, no production code change.
+
+Next: retry Phase B on the next exchange trading day within the execution
+window, under the exact authorized single-order scope (510300.SH, qty=100,
+qty_cap<=200, cash_cap<=5000).
