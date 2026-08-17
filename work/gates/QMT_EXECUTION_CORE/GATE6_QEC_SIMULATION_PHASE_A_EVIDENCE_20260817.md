@@ -68,14 +68,30 @@ in_execution_window: false
 skipped_reason     : non-trading-day
 ```
 
-Authoritative SH trading calendar via read-only `get_trading_dates`:
-the last trading date present for 2026-08 is **2026-08-14**; **2026-08-17
-(Monday) is a non-trading day** in the client's calendar. The runner
-correctly skipped the order path (fail-closed) before any connection/order.
+The runner conservatively skipped the order path (fail-closed, zero broker
+side effect, no connection) — the correct safe action given the preflight
+result.
 
-Phase B therefore remains pending a genuine exchange trading day within the
-execution window (09:30-11:28 / 13:00-15:28). The authorized single BUY
-(510300.SH, qty=100, qty_cap<=200, cash_cap<=5000) was NOT placed.
+> **Post-audit correction (P2, independent audit PASS_GATE6_SIMULATION
+> 2026-08-17):** the 01:34 result was a **calendar data-not-ready false
+> negative**, not an exchange-authoritative closure. The initial evidence
+> text described 2026-08-17 itself as a non-trading day in the client
+> calendar; the SSE 2026 closure schedule does not list 2026-08-17, and a
+> later 09:34 `get_trading_dates` query correctly returned
+> `is_trading_day=true`. The 01:34 `get_trading_dates` result had simply not
+> yet included the current day. The runner's fail-closed behavior on the
+> false negative was correct and safe (no broker side effect); the
+> mislabeling in the evidence is corrected here. Future hardening should
+> distinguish "calendar source has not yet returned the current day /
+> data-not-ready" (fail closed, but not reportable as an exchange closure)
+> from "exchange-authoritative closed day" before persisting a closure
+> claim.
+
+Phase B therefore remained pending a genuine exchange trading day within the
+execution window (09:30-11:28 / 13:00-15:28); the authorized single BUY
+(510300.SH, qty=100, qty_cap<=200, cash_cap<=5000) was NOT placed during the
+deferred preflight. (It was subsequently placed and FILLED at 09:34 — see
+`GATE6_QEC_SIMULATION_PHASE_B_EVIDENCE_20260817.md`.)
 
 ## 3. Order/cancel side-effect accounting
 
@@ -90,6 +106,7 @@ production code changes      : none
 ## 4. Safety statement
 
 - `live_trading_allowed=false`; no live or real-money order/cancel invoked.
-- Phase B was blocked by the authoritative trading-day + execution-window
-  preflight and will only be attempted when both conditions hold, under the
-  exact authorized single-order scope.
+- Phase B was deferred by the 01:34 trading-day/window preflight (a
+  fail-closed data-not-ready false negative, corrected above) and was only
+  attempted later at 09:34 when the fresh in-window query returned
+  `is_trading_day=true`, under the exact authorized single-order scope.
