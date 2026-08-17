@@ -4,30 +4,29 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 54
-handoff_id: "TGRID-GATE6-QEC-SIM-REVIEW-READY-20260817-054"
-authorized_next:
-  - "AUDIT_GATE6_QEC_SIMULATION_EVIDENCE"
+handoff_seq: 55
+handoff_id: "TGRID-GATE6-QEC-SIM-PASS-20260817-055"
+authorized_next: []
 design_version: "1.1"
 gate: 6
-task_id: "GATE6-QEC-SIMULATION-CLOSED-LOOP"
-state: "REVIEW_READY"
-owner: "architect"
+task_id: "AWAIT-EXPLICIT-USER-AUTHORIZATION-FOR-LIVE-GATE6-OR-GATE7"
+state: "PASS_GATE6_SIMULATION"
+owner: "user"
 iteration: 17
-last_actor: "dsh"
-last_update: "2026-08-17T09:40:00+08:00"
+last_actor: "independent_auditor"
+last_update: "2026-08-17T09:37:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/QMT_EXECUTION_CORE/GATE6_QEC_SIMULATION_PHASE_B_EVIDENCE_20260817.md"
-audit_base_commit: "1790812bb7ef7f6ceb35b2dcc18da49dabfc7451"
+audit_file: "work/gates/QMT_EXECUTION_CORE/GATE6_QEC_SIMULATION_INDEPENDENT_AUDIT_20260817.md"
+audit_base_commit: "f29afd027993f1f534ab0d4ad218779b6ecc9565"
 reviewed_implementation_commit: "1790812bb7ef7f6ceb35b2dcc18da49dabfc7451"
-independent_audit_commit: "9fbbfb53c7b33200420ac4168f730994250fbce5"
+independent_audit_commit: "0bb4073a7065504f953bda41b42730f349817818"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
-user_escalation_required: false
-user_escalation_reason: ""
-next_independent_audit: "AUDIT_GATE6_QEC_SIMULATION_EVIDENCE"
-pre_live_independent_audit: "PASS_PRELIVE"
-notes: "Gate 6 QEC simulation closed-loop COMPLETE (user-authorized, simulation only). Phase A (2026-08-17 01:34): TGrid pin a68572d + Core verify PASS; sim account identity resolved read-only; explicit operator bootstrap-authority once (authority_id 8bc66b60..., db_uuid d94a29c2...); negative matrix PASS (all_refused, 0 claims / 0 reservations -> zero broker-reaching submissions). Phase B (2026-08-17 09:34, trading day + morning window): simulation-account re-verified (Gate-1 environment simulation, simulation_qmt_path D:\国金QMT交易端模拟\userdata_mini, live path NOT used, binding repo_simulation); single positive BUY 510300.SH qty=100 @ 4.734 -> FILLED (broker_order_id 1090520375, filled_qty 100), no cancel needed. Post-run: Core symbol_claim 0 (RESOLVED), Core active_reserved_cash 0.0, TGrid intent FILLED + active reservations []. Order/cancel count: 1 simulation order, 0 cancel, 0 live/real; no Authority/DB recreation; no production code change. live_trading_allowed=false. Evidence: GATE6_QEC_SIMULATION_PHASE_A_EVIDENCE_20260817.md + GATE6_QEC_SIMULATION_PHASE_B_EVIDENCE_20260817.md. Hand back for independent audit AUDIT_GATE6_QEC_SIMULATION_EVIDENCE."
+user_escalation_required: true
+user_escalation_reason: "Gate-6 QMT simulation closed-loop passed independent audit. Any live/real-money order or cancel requires a separate explicit user authorization with bounded scope."
+next_independent_audit: ""
+pre_live_independent_audit: "PASS_GATE6_SIMULATION"
+notes: "Independent audit PASS_GATE6_SIMULATION for evidence commit f29afd027993f1f534ab0d4ad218779b6ecc9565 against reviewed TGrid implementation 1790812bb7ef7f6ceb35b2dcc18da49dabfc7451 and Core 0.4.1 a68572decb799bcbbf1b2892fcf58ac321ce9636. Phase A: explicit Runtime Authority bootstrap + negative matrix PASS; negative protected actions refused before broker-reaching coordination. Phase B at 09:34 +08:00: simulation account re-verified, trading-day/window checks true, exactly one 510300.SH BUY qty=100 @ fresh quote 4.734 -> FILLED 100; broker reconcile filled; no cancel. Post-run Core claim released, active_reserved_cash=0.0, TGrid intent FILLED and business reservation released. Recorded side effects: 1 simulation order / 0 simulation cancel / 0 live-real. P2 non-blocking: 01:34 QMT calendar produced a false negative for 2026-08-17; future hardening must distinguish data-not-ready from authoritative exchange closure. live_trading_allowed=false; owner=user; authorized_next empty pending separate explicit live authorization."
