@@ -1,59 +1,51 @@
-# Test Report — G2-T006
+# Test Report — WorkBuddy GitHub Protocol Handshake
 
 ## Task
-G2-T006 — Offline Position Reconciliation Decision Engine。
+`WORKBUDDY-GITHUB-HANDSHAKE-001` — verify WorkBuddy replaces DSH/Claude as the local execution
+endpoint while remaining compatible with the existing TGrid GitHub handoff protocol.
+No product tests, QMT simulation, or live broker calls authorized.
 
-## Environment
-- 默认 Python 3.12.10；全部测试纯离线（无 QMT/SQLite/filesystem/network）。
+## Protocol checks actually performed
 
-## Commands Run（完整输出见 `work/reports/tests/G2-T006-test-output.txt`）
+| # | Check | Command / Method | Result |
+|---|---|---|---|
+| 1 | Fetch remote baseline | `git fetch origin main` | ok; baseline `8812b5a…` recorded |
+| 2 | Remote head resolved | `git ls-remote --heads origin main` → `8812b5a605dfa3c273785abcb92bff9c6cb1c708` | ok |
+| 3 | Local main fast-forwarded | `git merge --ff-only 8812b5a…` | ok; local `main == remote tip` |
+| 4 | Worktree clean (tracked) | `git status -sb` | clean for tracked files (only untracked `.claude/`, `.workbuddy/`, local report json) |
+| 5 | `owner=claude` | grep `WORKFLOW_STATE.yaml` | ✔ |
+| 6 | `state=CLAUDE_READY` | grep `WORKFLOW_STATE.yaml` | ✔ |
+| 7 | `task_id` match | `WORKBUDDY-GITHUB-HANDSHAKE-001` | ✔ |
+| 8 | `authorized_next` contains task | yaml field | ✔ |
+| 9 | `handoff_seq=59` | grep | ✔ |
+| 10 | `handoff_id` match | `TGRID-WORKBUDDY-HANDSHAKE-20260818-059` | ✔ |
+| 11 | Pre-push remote-head recheck | re-fetch; require `origin/main == 8812b5a…` | ✔ unchanged → safe |
+| 12 | Allowed-files only | diff shows only the 3 allowed paths | ✔ |
+| 13 | Zero broker side effects | no QMT/order/cancel/live calls issued | ✔ (0 calls) |
 
-| 检查 | 结果 |
-|---|---|
-| `python -m unittest discover -s tests -p "test_*.py" -v` | **638 项全部 OK**（618 基线 + 20 新增） |
-| `python -m compileall -q src tests` | 退出 0 |
-| PACKAGE_SCAN（26 文件） | PASS：assert=0 / xtquant=0 / order-cancel=0 |
-| NEW_MODULE_SCAN（reconciliation.py） | asserts=0；sqlite3/open/socket/network token=none |
-| `git diff --check`（本任务文件） | exit 0 |
+## Exact handoff match
 
-## 独立 Failure Injection 重放（artifact 内全文）
+- Observed `handoff_id = TGRID-WORKBUDDY-HANDSHAKE-20260818-059`, `handoff_seq = 59`,
+  `task_id = WORKBUDDY-GITHUB-HANDSHAKE-001`, `owner = claude`, `state = CLAUDE_READY`.
+- All matched the values required in `CURRENT_TASK.md` step 6 → handshake precondition satisfied.
 
-| 输入 | 结果 |
-|---|---|
-| 决策矩阵（zero/core+strategic/mixed） | RECONCILED/MATCH，delta=0 |
-| +100（t_unit-like）/ -100 / 大 delta | SAFE_MODE/BROKER_POSITION_MISMATCH（不推断） |
-| broker<core 与 mismatch 并存 | SAFE_MODE/CORE_FLOOR_BREACH（优先级） |
-| EvilInt（`__int__/__eq__` secret） | PositionInvariantError，cause/context None、无 secret |
-| FakeConfig | PositionInvariantError |
-| 结果变异 | FrozenInstanceError（frozen） |
-| mismatch 后组件 | core/strat/opent/local 保留原值（不重分类） |
+## Files committed
 
-## 新增测试覆盖（`tests/unit/test_position_reconciliation.py`，20 项）
+```text
+work/handoff/claude_to_architect/IMPLEMENTATION_REPORT.md
+work/handoff/claude_to_architect/TEST_REPORT.md
+work/control/WORKFLOW_STATE.yaml
+```
 
-### happy path
-- zero-only、core+strategic、core+T、mixed 精确相等 → RECONCILED/MATCH，expected/delta 正确；frozen result。
+No other file changed. `git status` after commit shows only the 3 intended files staged/committed.
 
-### mismatch / 优先级
-- 正/负 delta、t_unit-like +100 不重分类、大 delta → SAFE_MODE/BROKER_POSITION_MISMATCH。
-- broker<core 优先级 → CORE_FLOOR_BREACH；core=0/broker=0 合法匹配。
+## Post-commit state returned
 
-### 校验 / dunder 隔离
-- 负数量、bool/float/str/bytes/list/dict/int-subclass、fake/subclass SymbolConfig、None → PositionInvariantError。
-- 空/空白/非 str/str-subclass symbol → PositionInvariantError。
-- EvilInt/EvilStr secret 注入不执行 dunder，异常图干净。
+- `WORKFLOW_STATE.yaml`: `state=REVIEW_READY`, `owner=architect`, `authorized_next=[]`,
+  `handoff_seq=60`, `handoff_id=TGRID-WORKBUDDY-HANDSHAKE-ACK-20260818-060`.
+- Stopped and waiting for Architect review. No further action taken.
 
-### 不变量 / AST
-- 输入组件不变、结果 data-only、无 mutation/repair callback。
-- 新模块 AST：无 assert、无 sqlite3/xtquant/order/cancel/download/subscribe/socket/filesystem/network。
+## Hard invariant
 
-## 结果汇总
-| 检查项 | 结果 |
-|---|---|
-| 638 项 unittest | OK |
-| compileall | exit 0 |
-| PACKAGE / NEW_MODULE AST 扫描 | PASS / PASS |
-| 独立 FI 重放 | 全部符合边界 |
-| 无 QMT/SQLite/账号访问 | 通过（纯离线） |
-
-## 结论
-全部检查通过。REVIEW_READY。
+`live_trading_allowed=false`. Zero product-code changes, zero QMT order/cancel calls,
+zero live broker side effects.
