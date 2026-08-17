@@ -1,7 +1,27 @@
 {
-  "finished_at": "2026-08-17T01:34:48.277670+08:00",
-  "in_execution_window": false,
-  "is_trading_day": false,
-  "skipped_reason": "non-trading-day",
-  "started_at": "2026-08-17T01:34:47.001045+08:00"
+  "bridge_constants": {
+    "account_status_ok": 0,
+    "security_account_type": 2
+  },
+  "broker_reconcile": {
+    "filled_qty": 100,
+    "status": "filled"
+  },
+  "exposure_used": 473.4,
+  "finished_at": "2026-08-17T09:34:43.203663+08:00",
+  "in_execution_window": true,
+  "is_trading_day": true,
+  "last_poll": {
+    "filled_qty": 100,
+    "status": "FILLED"
+  },
+  "quote_price": 4.734,
+  "send_result": {
+    "broker_order_id": "1090520375",
+    "filled_qty": 100,
+    "status": "FILLED"
+  },
+  "session_built": true,
+  "started_at": "2026-08-17T09:34:36.788825+08:00",
+  "terminal_state": "FILLED"
 }

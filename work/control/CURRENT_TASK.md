@@ -118,3 +118,24 @@ GATE6_QEC_SIMULATION_PHASE_A_EVIDENCE_20260817.md`.
 Next: retry Phase B on the next exchange trading day within the execution
 window, under the exact authorized single-order scope (510300.SH, qty=100,
 qty_cap<=200, cash_cap<=5000).
+
+## Phase B COMPLETE (2026-08-17 09:34 +08:00)
+
+Evidence: `work/gates/QMT_EXECUTION_CORE/
+GATE6_QEC_SIMULATION_PHASE_B_EVIDENCE_20260817.md`.
+
+- **Simulation-account re-verified before submit**: Gate-1 environment
+  `simulation`; `simulation_qmt_path=D:\国金QMT交易端模拟\userdata_mini`
+  (live path NOT used); account binding `simulation` / `repo_simulation`.
+- **Preflight**: `is_trading_day=true` (SH get_trading_dates confirms
+  2026-08-17), `in_execution_window=true` (09:34 morning window).
+- **Single positive sim BUY**: 510300.SH, qty=100, quote 4.734,
+  broker_order_id 1090520375 → **FILLED** (filled_qty 100). No cancel
+  needed; reconcile confirmed filled.
+- **Post-run state**: Core symbol_claim 0 (RESOLVED released), Core
+  active_reserved_cash 0.0, TGrid intent FILLED + active reservations [].
+- **Order/cancel count: 1 simulation order, 0 cancel, 0 live/real.** No
+  Authority/DB recreation, no production code change.
+
+Handoff: REVIEW_READY, owner=architect,
+authorized_next=[AUDIT_GATE6_QEC_SIMULATION_EVIDENCE].
