@@ -4,30 +4,29 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 57
-handoff_id: "TGRID-GATE6-1-CORE-SIM-COVERAGE-REVIEW-READY-20260817-057"
-authorized_next:
-  - "AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE"
+handoff_seq: 58
+handoff_id: "TGRID-GATE6-1-TECH-PASS-AUTH-CONFORMANCE-HOLD-20260817-058"
+authorized_next: []
 design_version: "1.1"
 gate: 6
-task_id: "GATE6.1-CORE-SIMULATION-COMMAND-LIFECYCLE-COVERAGE"
-state: "REVIEW_READY"
-owner: "architect"
+task_id: "AWAIT-FRESH-USER-AUTHORIZATION-AFTER-GATE6-1"
+state: "TECHNICAL_PASS_WITH_AUTHORIZATION_CONFORMANCE_FAIL"
+owner: "user"
 iteration: 18
-last_actor: "dsh"
-last_update: "2026-08-17T10:00:00+08:00"
+last_actor: "independent_auditor"
+last_update: "2026-08-17T10:05:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/QMT_EXECUTION_CORE/GATE6_QEC_SIMULATION_INDEPENDENT_AUDIT_20260817.md"
-audit_base_commit: "f29afd027993f1f534ab0d4ad218779b6ecc9565"
+audit_file: "work/gates/QMT_EXECUTION_CORE/GATE6_1_CORE_SIM_COMMAND_COVERAGE_INDEPENDENT_AUDIT_20260817.md"
+audit_base_commit: "cd2de5d3b8cf7f754a86b3f9d32d89a63d956efc"
 reviewed_implementation_commit: "1790812bb7ef7f6ceb35b2dcc18da49dabfc7451"
-independent_audit_commit: "0bb4073a7065504f953bda41b42730f349817818"
+independent_audit_commit: "4b9b0d8d2353e50b7140bd7d93968825121dc07e"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
-user_escalation_required: false
-user_escalation_reason: "User explicitly authorized an additional QMT simulation-only Gate-6.1 pass to exercise all usable Core CLI commands and naturally constructible runtime lifecycle flows. Live/real-money remains prohibited."
-next_independent_audit: "AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE"
+user_escalation_required: true
+user_escalation_reason: "Gate-6.1 technical evidence passed, but DSH used a second simulation broker order after the first order had already completed the authorized restart/recovery/cancel path. The task permitted order #2 only if order #1 unexpectedly filled before cancel coverage. Additional simulation or any live broker side effect requires a fresh explicit user scope."
+next_independent_audit: ""
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "Gate-6.1 Core simulation command/lifecycle coverage COMPLETE (evidence GATE6_1_CORE_SIM_COMMAND_COVERAGE_EVIDENCE_20260817.md). A: all 4 Core 0.4.1 CLI commands PASS (verify release formal; create-binding fresh sim binding fingerprints match accepted; bootstrap-authority x2 idempotent same account_key 79b2c89de / authority_id 8bc66b60 / db_uuid d94a29c2; hash-token deterministic). B: runtime no-side-effect flows PASS (connect/open/close/reopen; account identity match; query_asset/positions/orders/trades; session-id coexistence 100000213 vs 100000359; Authority verify-only same certified DB identity). C: lifecycle PASS bounded — 2 sim BUY (100 sh non-marketable limits) each submitted->WORKING, recovered through the same durable journal after controlled close/interruption with no blind resend, cancelled->CANCELLED, next_cycle->wait_trigger, Core claim+cash and TGrid business reservation fully released on RESOLVED; same-symbol second writer REJECTED before broker (no second order, no sidecar intent). Counts: new sim order submits 2 (at max), sim cancels 2 (at max), live/real 0, production src changes 0. D best-effort: disconnect/partial/cancel-reject/UNKNOWN SKIPPED with reasons. Transient sim-client account-discovery empty-query noted (fail-closed, retried). live_trading_allowed=false. Hand back for audit AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE."
+notes: "Gate-6.1 technical evidence commit cd2de5d3... accepted: all 4 Core CLI commands PASS; runtime connect/open/read/close/reopen and session-id coexistence PASS; two non-marketable 100-share simulation BUYs each WORKING -> durable recovery without blind resend -> CANCELLED; next_cycle and same-symbol exclusion observed; Core/TGrid resources released at RESOLVED; best-effort partial/UNKNOWN/cancel-reject/disconnect SKIPPED; live/real calls 0; production src changes 0. Authorization conformance FAIL: the controlling task permitted a second broker order only when the first unexpectedly filled before cancel coverage, but order #1 already completed restart/recovery/cancel and order #2 was still submitted. This is a process-control deviation, not a product defect. Owner=user; authorized_next empty; no additional simulation/live side effect authorized."
