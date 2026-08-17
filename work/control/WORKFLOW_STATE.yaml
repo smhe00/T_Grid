@@ -4,16 +4,17 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 55
-handoff_id: "TGRID-GATE6-QEC-SIM-PASS-20260817-055"
-authorized_next: []
+handoff_seq: 56
+handoff_id: "TGRID-GATE6-1-CORE-SIM-COVERAGE-AUTHORIZED-20260817-056"
+authorized_next:
+  - "RUN_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE"
 design_version: "1.1"
 gate: 6
-task_id: "AWAIT-EXPLICIT-USER-AUTHORIZATION-FOR-LIVE-GATE6-OR-GATE7"
-state: "PASS_GATE6_SIMULATION"
-owner: "user"
-iteration: 17
-last_actor: "independent_auditor"
+task_id: "GATE6.1-CORE-SIMULATION-COMMAND-LIFECYCLE-COVERAGE"
+state: "AUTHORIZED"
+owner: "dsh"
+iteration: 18
+last_actor: "architect"
 last_update: "2026-08-17T09:37:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
@@ -25,8 +26,8 @@ independent_audit_commit: "0bb4073a7065504f953bda41b42730f349817818"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
-user_escalation_required: true
-user_escalation_reason: "Gate-6 QMT simulation closed-loop passed independent audit. Any live/real-money order or cancel requires a separate explicit user authorization with bounded scope."
-next_independent_audit: ""
+user_escalation_required: false
+user_escalation_reason: "User explicitly authorized an additional QMT simulation-only Gate-6.1 pass to exercise all usable Core CLI commands and naturally constructible runtime lifecycle flows. Live/real-money remains prohibited."
+next_independent_audit: "AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE"
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "Independent audit PASS_GATE6_SIMULATION for evidence commit f29afd027993f1f534ab0d4ad218779b6ecc9565 against reviewed TGrid implementation 1790812bb7ef7f6ceb35b2dcc18da49dabfc7451 and Core 0.4.1 a68572decb799bcbbf1b2892fcf58ac321ce9636. Phase A: explicit Runtime Authority bootstrap + negative matrix PASS; negative protected actions refused before broker-reaching coordination. Phase B at 09:34 +08:00: simulation account re-verified, trading-day/window checks true, exactly one 510300.SH BUY qty=100 @ fresh quote 4.734 -> FILLED 100; broker reconcile filled; no cancel. Post-run Core claim released, active_reserved_cash=0.0, TGrid intent FILLED and business reservation released. Recorded side effects: 1 simulation order / 0 simulation cancel / 0 live-real. P2 non-blocking: 01:34 QMT calendar produced a false negative for 2026-08-17; future hardening must distinguish data-not-ready from authoritative exchange closure. live_trading_allowed=false; owner=user; authorized_next empty pending separate explicit live authorization."
+notes: "Gate-6 QMT simulation closed-loop already independently PASS. New user authorization: simulation-only Core command/lifecycle coverage. MUST run all 4 Core 0.4.1 CLI commands (verify/create-binding/bootstrap-authority/hash-token) and no-side-effect runtime/query/session/Authority flows. Lifecycle best effort: use at most 2 additional 510300.SH simulation BUY orders, qty=100 each, cash cap<=5000 each, max 2 cancels, preferably one unresolved order to cover close/restart/reconcile/cancel and next_cycle; second order only if first unexpectedly fills before normal cancel coverage. Same-symbol second-writer and disconnect/partial/UNKNOWN/cancel-reject are best-effort and may be SKIPPED when not naturally/safely constructible. No repeated orders to force corner cases. src/tgrid and Core production code must not change; a validation script under scripts/ is allowed. Any production defect stops broker-side-effect testing and returns CHANGES_REQUIRED. live_trading_allowed=false; cumulative live/real calls must remain 0."
