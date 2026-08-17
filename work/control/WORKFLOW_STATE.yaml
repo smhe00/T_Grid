@@ -4,30 +4,30 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 60
-handoff_id: "TGRID-WORKBUDDY-HANDSHAKE-ACK-20260818-060"
+handoff_seq: 61
+handoff_id: "TGRID-WORKBUDDY-HANDSHAKE-AUDIT-HOLD-20260818-061"
 authorized_next: []
 design_version: "1.1"
 gate: 6
 task_id: "WORKBUDDY-GITHUB-HANDSHAKE-001"
-state: "REVIEW_READY"
-owner: "architect"
+state: "USER_ESCALATION"
+owner: "user"
 iteration: 1
-last_actor: "workbuddy"
-last_update: "2026-08-18T07:42:00+08:00"
-git_base_commit: "72c8012a4fe74e428793b89b9b2c6a692859157d"
+last_actor: "independent_auditor"
+last_update: "2026-08-18T07:56:00+08:00"
+git_base_commit: "d0e9e8fb59679bd0700b7e1290c6f9cf112e0e2c"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/QMT_EXECUTION_CORE/GATE6_1_CORE_SIM_COMMAND_COVERAGE_INDEPENDENT_AUDIT_20260817.md"
-audit_base_commit: "cd2de5d3b8cf7f754a86b3f9d32d89a63d956efc"
-reviewed_implementation_commit: "1790812bb7ef7f6ceb35b2dcc18da49dabfc7451"
-independent_audit_commit: "4b9b0d8d2353e50b7140bd7d93968825121dc07e"
+audit_file: "work/gates/WORKBUDDY_GITHUB_HANDSHAKE_INDEPENDENT_AUDIT_20260818.md"
+audit_base_commit: "d0e9e8fb59679bd0700b7e1290c6f9cf112e0e2c"
+reviewed_implementation_commit: "d0e9e8fb59679bd0700b7e1290c6f9cf112e0e2c"
+independent_audit_commit: "b92ec1d4568620fbf4c51523ffcfc46b1f0c837a"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
-user_escalation_required: false
-user_escalation_reason: ""
-next_independent_audit: "AUDIT_WORKBUDDY_GITHUB_HANDSHAKE"
+user_escalation_required: true
+user_escalation_reason: "WorkBuddy proved the GitHub transport path works, but violated the handshake clean-worktree precondition: its own report states untracked .claude/, .workbuddy/, and a local Gate-6 report JSON were present, yet it continued to commit/push instead of STOP WRITE. User/operator must deliberately clean or preserve/move those local artifacts before any retry."
+next_independent_audit: ""
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "User explicitly authorized a communication-only WorkBuddy onboarding test. WorkBuddy is the actual local executor but MUST act under the existing protocol role name 'claude' so owner/state/handoff paths remain compatible. This handoff authorizes only protocol fetch/read/ack/report/state-update operations. Product code changes, Core changes, QMT simulation orders/cancels, and all live broker side effects remain forbidden. The prior Gate-6.1 authorization-conformance issue remains historically recorded and is NOT cleared or renewed by this handshake."
+notes: "Independent verdict: COMMUNICATION_TRANSPORT_PASS_WITH_PROTOCOL_CONFORMANCE_FAIL. WorkBuddy correctly consumed handoff seq59 and returned seq60 with only the three allowed committed paths, zero product-code changes and zero QMT/live side effects. However, the task and protocol required a clean worktree; 'tracked clean with untracked files present' does not satisfy that requirement. No retry, product work, simulation order/cancel, or live action is authorized. Prior Gate-6.1 authorization-conformance history remains unchanged."
