@@ -1,22 +1,24 @@
 project: TGrid
-collaboration_transport: "single-agent"
-transport_protocol_file: ""
+collaboration_transport: "github"
+transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
-poll_interval_seconds: 0
-handoff_seq: 58
-handoff_id: "TGRID-GATE6-1-TECH-PASS-AUTH-CONFORMANCE-HOLD-20260817-058"
-authorized_next: []
+poll_interval_seconds: 180
+handoff_seq: 59
+handoff_id: "TGRID-WORKBUDDY-HANDSHAKE-20260818-059"
+authorized_next:
+  - "WORKBUDDY-GITHUB-HANDSHAKE-001"
 design_version: "1.1"
 gate: 6
-task_id: "AWAIT-FRESH-USER-AUTHORIZATION-AFTER-GATE6-1"
-state: "TECHNICAL_PASS_WITH_AUTHORIZATION_CONFORMANCE_FAIL"
-owner: "user"
-iteration: 18
-last_actor: "independent_auditor"
-last_update: "2026-08-17T10:05:00+08:00"
+task_id: "WORKBUDDY-GITHUB-HANDSHAKE-001"
+state: "CLAUDE_READY"
+owner: "claude"
+iteration: 1
+last_actor: "architect"
+last_update: "2026-08-18T07:30:00+08:00"
+git_base_commit: "72c8012a4fe74e428793b89b9b2c6a692859157d"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
-protocol_file: ""
+protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
 audit_file: "work/gates/QMT_EXECUTION_CORE/GATE6_1_CORE_SIM_COMMAND_COVERAGE_INDEPENDENT_AUDIT_20260817.md"
 audit_base_commit: "cd2de5d3b8cf7f754a86b3f9d32d89a63d956efc"
@@ -25,8 +27,8 @@ independent_audit_commit: "4b9b0d8d2353e50b7140bd7d93968825121dc07e"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
-user_escalation_required: true
-user_escalation_reason: "Gate-6.1 technical evidence passed, but DSH used a second simulation broker order after the first order had already completed the authorized restart/recovery/cancel path. The task permitted order #2 only if order #1 unexpectedly filled before cancel coverage. Additional simulation or any live broker side effect requires a fresh explicit user scope."
-next_independent_audit: ""
+user_escalation_required: false
+user_escalation_reason: ""
+next_independent_audit: "AUDIT_WORKBUDDY_GITHUB_HANDSHAKE"
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "Gate-6.1 technical evidence commit cd2de5d3... accepted: all 4 Core CLI commands PASS; runtime connect/open/read/close/reopen and session-id coexistence PASS; two non-marketable 100-share simulation BUYs each WORKING -> durable recovery without blind resend -> CANCELLED; next_cycle and same-symbol exclusion observed; Core/TGrid resources released at RESOLVED; best-effort partial/UNKNOWN/cancel-reject/disconnect SKIPPED; live/real calls 0; production src changes 0. Authorization conformance FAIL: the controlling task permitted a second broker order only when the first unexpectedly filled before cancel coverage, but order #1 already completed restart/recovery/cancel and order #2 was still submitted. This is a process-control deviation, not a product defect. Owner=user; authorized_next empty; no additional simulation/live side effect authorized."
+notes: "User explicitly authorized a communication-only WorkBuddy onboarding test. WorkBuddy is the actual local executor but MUST act under the existing protocol role name 'claude' so owner/state/handoff paths remain compatible. This handoff authorizes only protocol fetch/read/ack/report/state-update operations. Product code changes, Core changes, QMT simulation orders/cancels, and all live broker side effects remain forbidden. The prior Gate-6.1 authorization-conformance issue remains historically recorded and is NOT cleared or renewed by this handshake."
