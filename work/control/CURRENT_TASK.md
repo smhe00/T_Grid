@@ -229,3 +229,34 @@ live_trading_allowed = false
 ```
 
 Provide the exact command transcript summary, lifecycle matrix, new order/cancel counts, SKIPPED reasons, final Core claim/reservation state, and confirmation of zero live/real-money calls.
+
+## Gate-6.1 coverage COMPLETE (2026-08-17)
+
+Evidence: `work/gates/QMT_EXECUTION_CORE/
+GATE6_1_CORE_SIM_COMMAND_COVERAGE_EVIDENCE_20260817.md`.
+
+- **A CLI (all 4) PASS**: `verify` (release formal PASS, 433,489/0);
+  `create-binding` (fresh sim binding fingerprints all match accepted);
+  `bootstrap-authority` x2 (idempotent same account_key/authority_id/db_uuid);
+  `hash-token` (deterministic, disposable string).
+- **B runtime no-side-effect PASS**: connect/open/close/reopen; account
+  identity match; query_asset/positions/orders/trades; session-id coexistence
+  (distinct 100000213/100000359, one healthy after the other); Authority
+  verify-only with the same certified DB identity.
+- **C lifecycle PASS (bounded)**: two 100-share sim BUYs (non-marketable
+  limits) were submitted and each recovered through its durable journal
+  after a controlled close/interruption (no blind resend), cancelled ->
+  CANCELLED, next_cycle -> wait_trigger, with Core claim + cash reservation
+  and TGrid business reservation fully released on RESOLVED finality;
+  same-symbol second writer REJECTED before broker (no second order, no
+  sidecar intent).
+- **Counts**: new sim order submits 2 (at max), sim cancels 2 (at max),
+  live/real 0, production src changes 0.
+- **D best-effort**: disconnect recovery / partial / cancel-reject / UNKNOWN
+  SKIPPED with reasons (only forceable by tampering/racing; covered by
+  automated tests).
+- Transient sim-client account-discovery empty-query noted (fail-closed,
+  retried, non-broker-affecting).
+
+Handoff: REVIEW_READY, owner=architect,
+authorized_next=[AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE].

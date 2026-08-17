@@ -4,18 +4,18 @@ transport_protocol_file: ""
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 0
-handoff_seq: 56
-handoff_id: "TGRID-GATE6-1-CORE-SIM-COVERAGE-AUTHORIZED-20260817-056"
+handoff_seq: 57
+handoff_id: "TGRID-GATE6-1-CORE-SIM-COVERAGE-REVIEW-READY-20260817-057"
 authorized_next:
-  - "RUN_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE"
+  - "AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE"
 design_version: "1.1"
 gate: 6
 task_id: "GATE6.1-CORE-SIMULATION-COMMAND-LIFECYCLE-COVERAGE"
-state: "AUTHORIZED"
-owner: "dsh"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 18
-last_actor: "architect"
-last_update: "2026-08-17T09:37:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-17T10:00:00+08:00"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: ""
 task_file: "work/control/CURRENT_TASK.md"
@@ -30,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: "User explicitly authorized an additional QMT simulation-only Gate-6.1 pass to exercise all usable Core CLI commands and naturally constructible runtime lifecycle flows. Live/real-money remains prohibited."
 next_independent_audit: "AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE"
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "Gate-6 QMT simulation closed-loop already independently PASS. New user authorization: simulation-only Core command/lifecycle coverage. MUST run all 4 Core 0.4.1 CLI commands (verify/create-binding/bootstrap-authority/hash-token) and no-side-effect runtime/query/session/Authority flows. Lifecycle best effort: use at most 2 additional 510300.SH simulation BUY orders, qty=100 each, cash cap<=5000 each, max 2 cancels, preferably one unresolved order to cover close/restart/reconcile/cancel and next_cycle; second order only if first unexpectedly fills before normal cancel coverage. Same-symbol second-writer and disconnect/partial/UNKNOWN/cancel-reject are best-effort and may be SKIPPED when not naturally/safely constructible. No repeated orders to force corner cases. src/tgrid and Core production code must not change; a validation script under scripts/ is allowed. Any production defect stops broker-side-effect testing and returns CHANGES_REQUIRED. live_trading_allowed=false; cumulative live/real calls must remain 0."
+notes: "Gate-6.1 Core simulation command/lifecycle coverage COMPLETE (evidence GATE6_1_CORE_SIM_COMMAND_COVERAGE_EVIDENCE_20260817.md). A: all 4 Core 0.4.1 CLI commands PASS (verify release formal; create-binding fresh sim binding fingerprints match accepted; bootstrap-authority x2 idempotent same account_key 79b2c89de / authority_id 8bc66b60 / db_uuid d94a29c2; hash-token deterministic). B: runtime no-side-effect flows PASS (connect/open/close/reopen; account identity match; query_asset/positions/orders/trades; session-id coexistence 100000213 vs 100000359; Authority verify-only same certified DB identity). C: lifecycle PASS bounded — 2 sim BUY (100 sh non-marketable limits) each submitted->WORKING, recovered through the same durable journal after controlled close/interruption with no blind resend, cancelled->CANCELLED, next_cycle->wait_trigger, Core claim+cash and TGrid business reservation fully released on RESOLVED; same-symbol second writer REJECTED before broker (no second order, no sidecar intent). Counts: new sim order submits 2 (at max), sim cancels 2 (at max), live/real 0, production src changes 0. D best-effort: disconnect/partial/cancel-reject/UNKNOWN SKIPPED with reasons. Transient sim-client account-discovery empty-query noted (fail-closed, retried). live_trading_allowed=false. Hand back for audit AUDIT_GATE6_1_CORE_SIMULATION_COMMAND_COVERAGE."
