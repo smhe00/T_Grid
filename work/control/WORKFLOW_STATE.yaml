@@ -4,18 +4,17 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 65
-handoff_id: "TGRID-GATE6-2-T0-ROUNDTRIP-FIX-20260820-065"
-authorized_next:
-  - "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
+handoff_seq: 66
+handoff_id: "TGRID-GATE6-2-T0-ROUNDTRIP-FIX-20260820-066"
+authorized_next: []
 design_version: "1.1"
 gate: 6
 task_id: "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
-state: "CHANGES_REQUIRED"
-owner: "claude"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 2
-last_actor: "architect"
-last_update: "2026-08-20T14:20:00+08:00"
+last_actor: "claude"
+last_update: "2026-08-20T14:47:22+08:00"
 git_base_commit: "032c54815ccc3f20e13761745e24ee4d2549cd94"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
@@ -31,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP_ITER2"
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "Gate-6.2 independent audit verdict CHANGES_REQUIRED. Positive evidence retained: WorkBuddy executed one simulation-only BUY100 FILLED -> SELL100 FILLED roundtrip on 513100.SH with final position 0 and zero live calls. Required fixes: remove unexpected tracked gate6-sim JSON by forward commit; acknowledge prior conflict-merge protocol deviation; prevent recovery from treating unrelated pre-existing position as TG_G62_A fill; implement unresolved leg max-one-cancel -> reconcile -> STOP; enforce quote timestamp freshness and conservative spread bound on both legs; remove committed account-specific hashed identifiers; return REVIEW_READY with authorized_next=[] after fixes. No additional broker roundtrip is required solely for these fixes; any broker side effect remains simulation-only. live_trading_allowed=false."
+notes: "Gate-6.2 iteration 2 returned REVIEW_READY to Architect. All 7 audit fixes applied and verified offline + via failure-injection (no additional broker roundtrip): P0-1 removed out-of-scope tracked gate6-sim-negative-2026-08-15.json by forward commit; P0-2 both reports now acknowledge the iteration-1 conflict-merge protocol deviation (032c548) and no longer claim a strict four-file history; P0-3 recovery skips BUY only when TG_G62_A is authoritatively FILLED and broker reflects the held qty (never from position alone); P1-1 unresolved leg performs at most one cancel through TGrid->Core then reconciles and stops; P1-2 quote freshness (<=5000ms) + spread (<=1% of ask) enforced before both submits, fail closed; P1-3 account identity derived from local ignored qec binding, no committed literals. Offline gates green: compileall 0 errors, pytest 23 passed/17 subtests, qmt-execution-core verify PASS (433,489 states, 0 violations). Iteration-1 execution (BUY100 FILLED->SELL100 FILLED, position 0, zero live calls) retained as positive evidence. live_trading_allowed=false. Awaiting AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP_ITER2."
