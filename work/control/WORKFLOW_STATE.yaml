@@ -4,18 +4,17 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 62
-handoff_id: "TGRID-GATE6-2-T0-ROUNDTRIP-20260820-062"
-authorized_next:
-  - "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
+handoff_seq: 63
+handoff_id: "TGRID-GATE6-2-T0-ROUNDTRIP-BLOCKED-PRE-BROKER-20260820-063"
+authorized_next: []
 design_version: "1.1"
 gate: 6
 task_id: "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
-state: "CLAUDE_READY"
-owner: "claude"
+state: "REVIEW_READY"
+owner: "architect"
 iteration: 1
-last_actor: "architect"
-last_update: "2026-08-20T08:54:00+08:00"
+last_actor: "dsh"
+last_update: "2026-08-20T09:40:00+08:00"
 git_base_commit: "4745fe4bc0989584781b69b782e75bdc1f3e9151"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
@@ -31,4 +30,4 @@ user_escalation_required: false
 user_escalation_reason: ""
 next_independent_audit: "AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP"
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "User explicitly authorized one bounded QMT simulation intraday T+0 roundtrip on 2026-08-20 to validate the full TGrid + Core flow. Exact symbol 513100.SH, exact BUY qty 100, SELL only the same filled 100, max BUY notional 2000 CNY, max 2 broker submits total and max 2 cancels total. Live/real calls remain prohibited. WorkBuddy may use local .git/info/exclude only for the three known local-only paths defined in CURRENT_TASK, after which git status --porcelain must be empty. No production src/Core changes; if required, stop pre-broker and report."
+notes: "Gate-6.2 T+0 roundtrip result: BLOCKED_PRE_BROKER (2026-08-20). All preflights passed except the hard 513100.SH quote requirement: the QMT simulation data feed provides NO live bid/ask for 513100.SH (tick frozen at 09:15:01 call-auction match, bid1=ask1=0, volume=0, across 09:31-09:35 while 510300.SH/510050.SH/600519.SH showed live quotes). Zero broker side effects (0 submits, 0 cancels, 0 live). Clean dedicated worktree used; Core pin a68572d verified and local checkout restored to it; no unresolved claim/reservation for 513100.SH; 2026-08-20 is a trading day; pre-broker gates PASS (compileall 0, 23 pytest + 17 subtests, core verify PASS). Handed back REVIEW_READY/owner=architect for independent audit AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP; next task needs a sim quote fix for 513100.SH or an alternate SSE T+0 instrument under a fresh authorization. live_trading_allowed=false."
