@@ -4,18 +4,19 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 61
-handoff_id: "TGRID-WORKBUDDY-HANDSHAKE-AUDIT-HOLD-20260818-061"
-authorized_next: []
+handoff_seq: 62
+handoff_id: "TGRID-GATE6-2-T0-ROUNDTRIP-20260820-062"
+authorized_next:
+  - "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
 design_version: "1.1"
 gate: 6
-task_id: "WORKBUDDY-GITHUB-HANDSHAKE-001"
-state: "USER_ESCALATION"
-owner: "user"
+task_id: "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
+state: "CLAUDE_READY"
+owner: "claude"
 iteration: 1
-last_actor: "independent_auditor"
-last_update: "2026-08-18T07:56:00+08:00"
-git_base_commit: "d0e9e8fb59679bd0700b7e1290c6f9cf112e0e2c"
+last_actor: "architect"
+last_update: "2026-08-20T08:54:00+08:00"
+git_base_commit: "4745fe4bc0989584781b69b782e75bdc1f3e9151"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
@@ -26,8 +27,8 @@ independent_audit_commit: "b92ec1d4568620fbf4c51523ffcfc46b1f0c837a"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
-user_escalation_required: true
-user_escalation_reason: "WorkBuddy proved the GitHub transport path works, but violated the handshake clean-worktree precondition: its own report states untracked .claude/, .workbuddy/, and a local Gate-6 report JSON were present, yet it continued to commit/push instead of STOP WRITE. User/operator must deliberately clean or preserve/move those local artifacts before any retry."
-next_independent_audit: ""
+user_escalation_required: false
+user_escalation_reason: ""
+next_independent_audit: "AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP"
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "Independent verdict: COMMUNICATION_TRANSPORT_PASS_WITH_PROTOCOL_CONFORMANCE_FAIL. WorkBuddy correctly consumed handoff seq59 and returned seq60 with only the three allowed committed paths, zero product-code changes and zero QMT/live side effects. However, the task and protocol required a clean worktree; 'tracked clean with untracked files present' does not satisfy that requirement. No retry, product work, simulation order/cancel, or live action is authorized. Prior Gate-6.1 authorization-conformance history remains unchanged."
+notes: "User explicitly authorized one bounded QMT simulation intraday T+0 roundtrip on 2026-08-20 to validate the full TGrid + Core flow. Exact symbol 513100.SH, exact BUY qty 100, SELL only the same filled 100, max BUY notional 2000 CNY, max 2 broker submits total and max 2 cancels total. Live/real calls remain prohibited. WorkBuddy may use local .git/info/exclude only for the three known local-only paths defined in CURRENT_TASK, after which git status --porcelain must be empty. No production src/Core changes; if required, stop pre-broker and report."
