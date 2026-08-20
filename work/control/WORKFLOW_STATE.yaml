@@ -4,31 +4,31 @@ transport_protocol_file: "TGrid_GitHub双Agent通信协议_V1.0.md"
 remote_repository: "https://github.com/smhe00/T_Grid.git"
 remote_branch: "main"
 poll_interval_seconds: 180
-handoff_seq: 64
-handoff_id: "TGRID-GATE6-2-T0-ROUNDTRIP-PASS-20260820-064"
+handoff_seq: 65
+handoff_id: "TGRID-GATE6-2-T0-ROUNDTRIP-FIX-20260820-065"
 authorized_next:
   - "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
 design_version: "1.1"
 gate: 6
 task_id: "GATE6.2-T0-INTRADAY-ROUNDTRIP-20260820"
-state: "REVIEW_READY"
-owner: "architect"
-iteration: 1
-last_actor: "workbuddy"
-last_update: "2026-08-20T11:18:51+08:00"
-git_base_commit: "4745fe4bc0989584781b69b782e75bdc1f3e9151"
+state: "CHANGES_REQUIRED"
+owner: "claude"
+iteration: 2
+last_actor: "architect"
+last_update: "2026-08-20T14:20:00+08:00"
+git_base_commit: "032c54815ccc3f20e13761745e24ee4d2549cd94"
 design_file: "TGrid_QMT_低频做T交易引擎开发设计文档_V1.1.md"
 protocol_file: "TGrid_双Agent协作与Gate验收协议_V1.0.md"
 task_file: "work/control/CURRENT_TASK.md"
-audit_file: "work/gates/WORKBUDDY_GITHUB_HANDSHAKE_INDEPENDENT_AUDIT_20260818.md"
-audit_base_commit: "d0e9e8fb59679bd0700b7e1290c6f9cf112e0e2c"
-reviewed_implementation_commit: "d0e9e8fb59679bd0700b7e1290c6f9cf112e0e2c"
-independent_audit_commit: "b92ec1d4568620fbf4c51523ffcfc46b1f0c837a"
+audit_file: "work/gates/GATE_6/GATE6_2_T0_INTRADAY_ROUNDTRIP_AUDIT_20260820.md"
+audit_base_commit: "032c54815ccc3f20e13761745e24ee4d2549cd94"
+reviewed_implementation_commit: "032c54815ccc3f20e13761745e24ee4d2549cd94"
+independent_audit_commit: "f78e1165fb5e2f6ef54b2e8078f5ea2fe49f8a7d"
 reference_repository: "https://github.com/smhe00/qmt-execution-core"
 reference_commit: "a68572decb799bcbbf1b2892fcf58ac321ce9636"
 live_trading_allowed: false
 user_escalation_required: false
 user_escalation_reason: ""
-next_independent_audit: "AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP"
+next_independent_audit: "AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP_ITER2"
 pre_live_independent_audit: "PASS_GATE6_SIMULATION"
-notes: "Gate-6.2 T+0 roundtrip result: ROUNDTRIP_PASS (2026-08-20). The full TGrid + Core execution chain was validated on the QMT simulation account only: BUY 100 -> FILLED (broker order <sanitized>, submit 11:01) -> SELL same 100 -> FILLED (broker order <sanitized>, submit 11:09) -> live position 513100.SH = 0 (closed). Counts: sim BUY submits 1, sim SELL submits 1, cancels 0, live order/cancel calls 0, product src changes 0. All resource invariants clean: TGrid active reservations 0, Core symbol_claim 513100 unresolved 0, Core active cash reservation 0. This supersedes the architect's earlier BLOCKED_PRE_BROKER handoff (b6a5c25, seq 63) which was caused by a transient sim-feed quote freeze for 513100.SH at 09:40; the feed recovered and the roundtrip executed successfully. Runner bug fixed (OrderIntent has no filled_qty) and an idempotent already-closed short-circuit added so a re-run cannot double-trade. Awaiting architect independent audit AUDIT_GATE6_2_T0_INTRADAY_ROUNDTRIP. live_trading_allowed=false."
+notes: "Gate-6.2 independent audit verdict CHANGES_REQUIRED. Positive evidence retained: WorkBuddy executed one simulation-only BUY100 FILLED -> SELL100 FILLED roundtrip on 513100.SH with final position 0 and zero live calls. Required fixes: remove unexpected tracked gate6-sim JSON by forward commit; acknowledge prior conflict-merge protocol deviation; prevent recovery from treating unrelated pre-existing position as TG_G62_A fill; implement unresolved leg max-one-cancel -> reconcile -> STOP; enforce quote timestamp freshness and conservative spread bound on both legs; remove committed account-specific hashed identifiers; return REVIEW_READY with authorized_next=[] after fixes. No additional broker roundtrip is required solely for these fixes; any broker side effect remains simulation-only. live_trading_allowed=false."
